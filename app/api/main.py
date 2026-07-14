@@ -3,11 +3,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from app.agents.supervisor import build_agent_graph
 from app.config.settings import get_settings
 from app.db.connection import close_pool,get_pool
 from app.rag.embedder import NomicEmbedder
 from app.rag.sync.scheduler import scheduler,setup_scheduler
 from app.api.middleware.auth import auth_middleware,router as auth_router
+from app.api.middleware.metrics import metrics_middleware
 from app.api.routes import admin,chat,feedback,history
 @asynccontextmanager
 async def lifespan(app):
@@ -19,12 +22,18 @@ async def lifespan(app):
     })
     if valid_langsmith:
         os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
-    pool=await get_pool(); setup_scheduler(pool,NomicEmbedder())
-    yield
-    if scheduler.running: scheduler.shutdown(wait=False)
+    pool=await get_pool()
+    setup_scheduler(pool,NomicEmbedder())
+    async with AsyncPostgresSaver.from_conn_string(settings.database_url) as checkpointer:
+        await checkpointer.setup()
+        app.state.agent_graph = build_agent_graph(pool, checkpointer)
+        yield
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
     await close_pool()
 app=FastAPI(title="Google Workspace AI Agent",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+app.middleware("http")(metrics_middleware)
 app.middleware("http")(auth_middleware)
 app.include_router(auth_router); app.include_router(chat.router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
 app.mount("/metrics",make_asgi_app())

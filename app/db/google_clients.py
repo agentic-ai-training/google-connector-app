@@ -25,7 +25,19 @@ def _load_creds():
     return creds
 
 _creds = _load_creds()
+class _MissingCredentialsService:
+    def __init__(self, api):
+        self.api = api
+
+    def __getattr__(self, name):
+        raise RuntimeError(
+            f"Google credentials are unavailable; cannot use {self.api} API"
+        )
+
+
 def _service(name, version):
+    if _creds is None:
+        return _MissingCredentialsService(name)
     return build(name, version, credentials=_creds, cache_discovery=False)
 
 gmail_service = _service("gmail", "v1")

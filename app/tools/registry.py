@@ -1,18 +1,57 @@
 import base64
+import io
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
 from pathlib import Path
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
+from app.tools.base import instrument_tool
 
 def _headers(msg): return {h["name"].lower():h["value"] for h in msg.get("payload",{}).get("headers",[])}
-def _body(payload):
-    data=payload.get("body",{}).get("data")
-    if data:
-        return base64.urlsafe_b64decode(data+"===").decode(errors="replace")
-    return "\n".join(_body(p) for p in payload.get("parts",[]) if p.get("mimeType","text/plain").startswith("text/plain"))
+def _decode(data):
+    return base64.urlsafe_b64decode(data + "===").decode(errors="replace")
+
+
+def _parts(payload):
+    yield payload
+    for part in payload.get("parts", []):
+        yield from _parts(part)
+
+
+def _body(payload, mime="text/plain"):
+    values = []
+    for part in _parts(payload):
+        if part.get("mimeType", "text/plain").startswith(mime):
+            data = part.get("body", {}).get("data")
+            if data:
+                values.append(_decode(data))
+    return "\n".join(values)
 def _gmail(msg):
-    h=_headers(msg); return {"id":msg["id"],"thread_id":msg.get("threadId"),"sender":h.get("from"),"recipients":[h.get("to","")],"subject":h.get("subject"),"body_plain":_body(msg.get("payload",{})),"labels":msg.get("labelIds",[]),"snippet":msg.get("snippet"),"received_at":h.get("date")}
+    h = _headers(msg)
+    sender_name, sender = parseaddr(h.get("from", ""))
+    recipients = [address for _, address in getaddresses([
+        h.get("to", ""), h.get("cc", ""), h.get("bcc", "")
+    ]) if address]
+    try:
+        received = parsedate_to_datetime(h.get("date", "")).isoformat()
+    except (TypeError, ValueError):
+        received = None
+    attachments = [
+        part.get("filename") for part in _parts(msg.get("payload", {}))
+        if part.get("filename")
+    ]
+    labels = msg.get("labelIds", [])
+    return {
+        "id": msg["id"], "thread_id": msg.get("threadId"), "sender": sender,
+        "sender_name": sender_name, "recipients": recipients,
+        "subject": h.get("subject"), "body_plain": _body(msg.get("payload", {})),
+        "body_html": _body(msg.get("payload", {}), "text/html"),
+        "labels": labels, "has_attachments": bool(attachments),
+        "attachment_names": attachments, "snippet": msg.get("snippet"),
+        "received_at": received, "is_read": "UNREAD" not in labels,
+        "is_starred": "STARRED" in labels,
+    }
 
 @tool("search_gmail", description="Google Workspace operation")
 def search_gmail(query:str,max_results:int=10,after_date:str|None=None):
@@ -65,7 +104,28 @@ def search_drive(query:str,mime_type:str|None=None,max_results:int=10):
     q=f"fullText contains '{query.replace(chr(39),chr(92)+chr(39))}' and trashed=false"+(f" and mimeType='{mime_type}'" if mime_type else "")
     return g.drive_service.files().list(q=q,pageSize=max_results,fields="files(id,name,mimeType,webViewLink,modifiedTime,parents)").execute().get("files",[])
 @tool("get_drive_file", description="Google Workspace operation")
-def get_drive_file(file_id:str): return g.drive_service.files().get(fileId=file_id,fields="*").execute()
+def get_drive_file(file_id:str):
+    metadata = g.drive_service.files().get(fileId=file_id,fields="*").execute()
+    mime = metadata.get("mimeType", "")
+    content = None
+    if mime == "application/vnd.google-apps.document":
+        content = g.drive_service.files().export(
+            fileId=file_id, mimeType="text/plain"
+        ).execute().decode(errors="replace")
+    elif mime == "application/vnd.google-apps.spreadsheet":
+        content = g.drive_service.files().export(
+            fileId=file_id, mimeType="text/csv"
+        ).execute().decode(errors="replace")
+    elif mime.startswith("text/"):
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(
+            buffer, g.drive_service.files().get_media(fileId=file_id)
+        )
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        content = buffer.getvalue().decode(errors="replace")
+    return {"metadata": metadata, "content": content}
 @tool("upload_drive_file", description="Google Workspace operation")
 def upload_drive_file(file_path:str,parent_folder_id:str|None=None,name:str|None=None): return g.drive_service.files().create(body={"name":name or Path(file_path).name,**({"parents":[parent_folder_id]} if parent_folder_id else {})},media_body=MediaFileUpload(file_path),fields="id,name,webViewLink").execute()
 @tool("share_drive_file", description="Google Workspace operation")
@@ -107,8 +167,24 @@ def complete_task(task_id:str,tasklist_id:str="@default"): return g.tasks_servic
 @tool("search_contacts", description="Google Workspace operation")
 def search_contacts(query:str,max_results:int=10): return g.people_service.people().searchContacts(query=query,readMask="names,emailAddresses,phoneNumbers,organizations,biographies,photos",pageSize=max_results).execute().get("results",[])
 @tool("get_contact", description="Google Workspace operation")
-def get_contact(email:str): return search_contacts.func(email,10)
+def get_contact(email:str): return g.people_service.people().searchContacts(query=email,readMask="names,emailAddresses,phoneNumbers,organizations,biographies,photos",pageSize=10).execute().get("results",[])
 @tool("list_chat_spaces", description="Google Workspace operation")
 def list_chat_spaces(): return g.chat_service.spaces().list().execute().get("spaces",[])
 @tool("send_chat_message", description="Google Workspace operation")
 def send_chat_message(space_id:str,text:str): return g.chat_service.spaces().messages().create(parent=space_id,body={"text":text}).execute()
+
+
+_TOOL_NAMES = (
+    "search_gmail", "get_gmail_message", "send_gmail", "reply_gmail",
+    "label_gmail", "trash_gmail", "list_gmail_threads",
+    "list_calendar_events", "get_calendar_event", "create_calendar_event",
+    "update_calendar_event", "delete_calendar_event", "check_calendar_availability",
+    "search_drive", "get_drive_file", "upload_drive_file", "share_drive_file",
+    "move_drive_file", "read_google_doc", "create_google_doc",
+    "append_to_google_doc", "read_google_sheet", "write_google_sheet",
+    "append_to_google_sheet", "create_google_sheet", "list_tasks", "create_task",
+    "complete_task", "search_contacts", "get_contact", "list_chat_spaces",
+    "send_chat_message",
+)
+for _name in _TOOL_NAMES:
+    globals()[_name] = instrument_tool(globals()[_name])

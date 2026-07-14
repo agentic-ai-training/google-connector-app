@@ -7,10 +7,26 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: agent_db
+          POSTGRES_USER: agent_user
+          POSTGRES_PASSWORD: agent_pass_2024
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U agent_user -d agent_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt
+      - run: alembic upgrade head
       - run: pytest tests/ -v
+        env:
+          RUN_INTEGRATION_TESTS: '1'
       - run: pip install flake8 && flake8 app/ --max-line-length=100

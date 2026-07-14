@@ -1,8 +1,12 @@
 import json
+import time
+from contextvars import ContextVar
 from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import ConfigDict
 from app.mlops.metrics import tool_errors, tool_latency
+
+tool_session_id: ContextVar[str | None] = ContextVar("tool_session_id", default=None)
 
 class GoogleWorkspaceBaseTool(BaseTool):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -36,3 +40,53 @@ class GoogleWorkspaceBaseTool(BaseTool):
         tool_latency.labels(self.name).observe(elapsed)
         if error:
             tool_errors.labels(self.name).inc()
+
+
+class GoogleWorkspaceTool(GoogleWorkspaceBaseTool):
+    """Instrumented adapter that gives every concrete tool the shared base behavior."""
+
+    wrapped: Any
+
+    def _run(self, **kwargs):
+        started = time.perf_counter()
+        try:
+            result = self.wrapped.invoke(kwargs)
+            self._track_metric(time.perf_counter() - started)
+            return result
+        except Exception:
+            self._track_metric(time.perf_counter() - started, error=True)
+            raise
+
+    async def _arun(self, **kwargs):
+        started = time.perf_counter()
+        try:
+            result = await self.wrapped.ainvoke(kwargs)
+            elapsed = time.perf_counter() - started
+            self._track_metric(elapsed)
+            if self.db_pool and self.embedder:
+                from app.tools.persistence import persist_tool_result
+                await persist_tool_result(
+                    self.name, kwargs, result, self.db_pool, self.embedder
+                )
+            await self._log_task(
+                tool_session_id.get(), self.name, kwargs, result,
+                "success", total_latency_ms=int(elapsed * 1000),
+            )
+            return result
+        except Exception as exc:
+            elapsed = time.perf_counter() - started
+            self._track_metric(elapsed, error=True)
+            await self._log_task(
+                tool_session_id.get(), self.name, kwargs, {}, "error",
+                error_msg=str(exc), total_latency_ms=int(elapsed * 1000),
+            )
+            raise
+
+
+def instrument_tool(tool: BaseTool) -> GoogleWorkspaceTool:
+    return GoogleWorkspaceTool(
+        name=tool.name,
+        description=tool.description,
+        args_schema=tool.args_schema,
+        wrapped=tool,
+    )

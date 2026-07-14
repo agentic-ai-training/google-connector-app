@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     google_credentials_path: str = "./credentials.json"
     jwt_secret_key: str = "change-this-in-production-use-256-bit-random-string"
     jwt_algorithm: str = "HS256"
+    admin_emails: str = "achintyat256@gmail.com"
     railway_url: str = ""
     neon_database_url: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

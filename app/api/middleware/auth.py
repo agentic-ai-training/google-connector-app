@@ -1,22 +1,30 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from jose import JWTError, jwt
 from app.config.settings import get_settings
 
 router = APIRouter()
 class TokenRequest(BaseModel):
     email: str
-    admin: bool = False
 
-def create_token(email, admin=False):
+def create_token(email):
     settings = get_settings()
-    return jwt.encode({"sub":email,"admin":admin,"exp":datetime.now(timezone.utc)+timedelta(days=1)}, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    admins = {item.strip().lower() for item in settings.admin_emails.split(",")}
+    return jwt.encode(
+        {
+            "sub": email,
+            "admin": email.lower() in admins,
+            "exp": datetime.now(timezone.utc) + timedelta(days=1),
+        },
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
 
 @router.post("/auth/token")
 async def token(req: TokenRequest):
-    return {"access_token":create_token(req.email, req.admin),"token_type":"bearer"}
+    return {"access_token":create_token(req.email),"token_type":"bearer"}
 
 async def auth_middleware(request: Request, call_next):
     protected = request.url.path.startswith(("/chat","/feedback","/history","/admin"))

@@ -5,7 +5,11 @@ from app.rag.embedder import NomicEmbedder
 from app.rag.sync.common import log_sync
 async def contacts_sync(pool=None,embedder=None):
     pool=pool or await get_pool(); embedder=embedder or NomicEmbedder(); started=time.monotonic()
-    people=people_service.people().connections().list(resourceName="people/me",personFields="names,emailAddresses,phoneNumbers,organizations,biographies,photos",pageSize=1000).execute().get("connections",[])
+    people=[]; page_token=None
+    while True:
+        page=people_service.people().connections().list(resourceName="people/me",personFields="names,emailAddresses,phoneNumbers,organizations,biographies,photos",pageSize=1000,pageToken=page_token).execute()
+        people.extend(page.get("connections",[])); page_token=page.get("nextPageToken")
+        if not page_token: break
     for p in people:
         name=(p.get("names") or [{}])[0].get("displayName"); emails=[x.get("value") for x in p.get("emailAddresses",[])]; phones=[x.get("value") for x in p.get("phoneNumbers",[])]; org=(p.get("organizations") or [{}])[0]
         vector=await embedder.aembed_query(f"{name or ''} {' '.join(emails)} {org.get('name','')}")

@@ -14,3 +14,7 @@ class AgentState(TypedDict, total=False):
     error: str
     task_complete: bool
     service: str
+    services: list[str]
+    system_prompt: str
+    prompt_id: str | None
+    assignment_id: str | None

@@ -39,34 +39,32 @@ def get_creds():
             pickle.dump(creds, f)
     return creds
 
-creds = get_creds()
+def main():
+    creds = get_creds()
 
-# Gmail
-gmail = build("gmail", "v1", credentials=creds)
-profile = gmail.users().getProfile(userId="me").execute()
-print(f"Gmail OK       — {profile['emailAddress']}")
+    gmail = build("gmail", "v1", credentials=creds)
+    profile = gmail.users().getProfile(userId="me").execute()
+    print(f"Gmail OK       — {profile['emailAddress']}")
 
-# Calendar
-cal = build("calendar", "v3", credentials=creds)
-cals = cal.calendarList().list().execute()
-print(f"Calendar OK    — {len(cals['items'])} calendar(s) found")
+    cal = build("calendar", "v3", credentials=creds)
+    cals = cal.calendarList().list().execute()
+    print(f"Calendar OK    — {len(cals['items'])} calendar(s) found")
 
-# Drive
-drive = build("drive", "v3", credentials=creds)
-files = drive.files().list(pageSize=3).execute()
-print(f"Drive OK       — {len(files['files'])} file(s) returned")
+    drive = build("drive", "v3", credentials=creds)
+    files = drive.files().list(pageSize=3).execute()
+    print(f"Drive OK       — {len(files['files'])} file(s) returned")
 
-# Docs
-docs = build("docs", "v1", credentials=creds)
-print(f"Docs OK        — client built successfully")
+    build("docs", "v1", credentials=creds)
+    print("Docs OK        — client built successfully")
 
-# Sheets
-sheets = build("sheets", "v4", credentials=creds)
-print(f"Sheets OK      — client built successfully")
+    build("sheets", "v4", credentials=creds)
+    print("Sheets OK      — client built successfully")
 
-# Tasks
-tasks = build("tasks", "v1", credentials=creds)
-tl = tasks.tasklists().list().execute()
-print(f"Tasks OK       — {len(tl.get('items', []))} task list(s) found")
+    tasks = build("tasks", "v1", credentials=creds)
+    tl = tasks.tasklists().list().execute()
+    print(f"Tasks OK       — {len(tl.get('items', []))} task list(s) found")
+    print("\nAll 6 APIs verified. Phase 1 complete.")
 
-print("\nAll 6 APIs verified. Phase 1 complete.")
+
+if __name__ == "__main__":
+    main()
