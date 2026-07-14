@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+credentials.json
+token.pkl
+web/node_modules
+web/.next
+mobile/build
+.pytest_cache

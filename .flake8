@@ -1,0 +1,4 @@
+[flake8]
+ignore = E,W,F401,F403,F405
+exclude = .venv,migrations,web,mobile
+max-line-length = 100
