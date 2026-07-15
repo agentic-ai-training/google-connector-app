@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     langchain_api_key: str = ""
     langchain_project: str = "google-agent"
     google_credentials_path: str = "./credentials.json"
+    google_token_path: str = "./token.pkl"
+    google_token_json: str = ""
     jwt_secret_key: str = "change-this-in-production-use-256-bit-random-string"
     jwt_algorithm: str = "HS256"
     admin_emails: str = "achintyat256@gmail.com"

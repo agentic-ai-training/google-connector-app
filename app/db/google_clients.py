@@ -1,7 +1,10 @@
 import os
 import pickle
+import json
 from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from app.config.settings import get_settings
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.send",
@@ -14,14 +17,21 @@ SCOPES = [
     "https://www.googleapis.com/auth/script.external_request", "https://www.googleapis.com/auth/drive.labels.readonly",
 ]
 def _load_creds():
-    if not os.path.exists("token.pkl"):
+    settings = get_settings()
+    if settings.google_token_json:
+        creds = Credentials.from_authorized_user_info(
+            json.loads(settings.google_token_json), SCOPES
+        )
+    elif os.path.exists(settings.google_token_path):
+        with open(settings.google_token_path, "rb") as fh:
+            creds = pickle.load(fh)
+    else:
         return None
-    with open("token.pkl", "rb") as fh:
-        creds = pickle.load(fh)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open("token.pkl", "wb") as fh:
-            pickle.dump(creds, fh)
+        if not settings.google_token_json:
+            with open(settings.google_token_path, "wb") as fh:
+                pickle.dump(creds, fh)
     return creds
 
 _creds = _load_creds()
