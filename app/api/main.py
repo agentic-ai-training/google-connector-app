@@ -1,8 +1,8 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import make_asgi_app
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, make_asgi_app
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -68,3 +68,8 @@ app.include_router(auth_router); app.include_router(chat.router); app.include_ro
 app.mount("/metrics",make_asgi_app())
 @app.get("/health")
 async def health(): return {"status":"ok"}
+
+
+@app.get("/monitoring/metrics", include_in_schema=False)
+async def monitoring_metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
