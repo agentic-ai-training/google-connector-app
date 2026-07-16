@@ -11,6 +11,7 @@ from ragas import evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import AnswerRelevancy, Faithfulness, LLMContextRecall
+from ragas.run_config import RunConfig
 
 from app.config.settings import get_settings
 from app.db.connection import close_pool, get_pool
@@ -33,7 +34,9 @@ async def main():
         ]
         evaluator_llm = LangchainLLMWrapper(
             ChatGroq(
-                model=settings.groq_fast_model,
+                # Evaluation is a high-volume offline workload. Keep the 70B
+                # quality-model allowance available for user-facing requests.
+                model=settings.groq_fallback_model,
                 api_key=settings.groq_api_key,
                 temperature=0,
             )
@@ -49,6 +52,8 @@ async def main():
             AnswerRelevancy(
                 llm=evaluator_llm,
                 embeddings=evaluator_embeddings,
+                # Groq supports one completion per request (n=1).
+                strictness=1,
             ),
             LLMContextRecall(llm=evaluator_llm),
         ]
@@ -58,6 +63,8 @@ async def main():
             metrics=metrics,
             llm=evaluator_llm,
             embeddings=evaluator_embeddings,
+            run_config=RunConfig(timeout=600, max_retries=5, max_workers=2),
+            raise_exceptions=True,
         )
         frame = scores.to_pandas()
         for index, example in enumerate(examples):

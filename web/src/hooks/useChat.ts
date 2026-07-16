@@ -3,7 +3,7 @@
 import {useState} from "react";
 
 export type Message={role:"user"|"assistant";content:string};
-export type CurrentUser={email:string;google_connected:boolean};
+export type CurrentUser={email:string;google_connected:boolean;missing_scopes?:string[]};
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
 
 export function getToken(){

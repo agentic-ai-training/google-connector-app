@@ -18,6 +18,7 @@ from app.db.connection import get_pool
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import (
     delete_google_credentials,
+    google_connection_status,
     save_google_credentials,
 )
 
@@ -159,12 +160,14 @@ async def token(req: TokenRequest):
 @router.get("/auth/me")
 async def me(request: Request):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        connected = bool(await conn.fetchval(
-            "SELECT 1 FROM google_oauth_credentials WHERE user_id=$1",
-            request.state.user_id,
-        ))
-    return {"email": request.state.user_id, "google_connected": connected}
+    connected, missing_scopes = await google_connection_status(
+        pool, request.state.user_id
+    )
+    return {
+        "email": request.state.user_id,
+        "google_connected": connected,
+        "missing_scopes": missing_scopes,
+    }
 
 
 @router.delete("/auth/google")

@@ -11,7 +11,9 @@ from app.agents.supervisor import (
     supervisor_node,
 )
 from app.api.middleware.auth import create_token
-from app.api.routes.chat import classify_graph_results
+from app.api.routes.chat import capability_answer, classify_graph_results
+from app.db.google_clients import SCOPES
+from app.db.oauth_credentials import missing_google_scopes
 from jose import jwt
 from app.config.settings import get_settings
 
@@ -25,7 +27,7 @@ def test_context_packer_orders_by_score():
 
 @pytest.mark.parametrize(
     "service",
-    ["gmail", "calendar", "drive", "docs", "sheets", "tasks", "chat", "contacts"],
+    ["gmail", "calendar", "drive", "docs", "sheets", "tasks", "chat", "contacts", "meet"],
 )
 def test_service_subgraph_module_exports_callable(service):
     module = importlib.import_module(f"app.agents.subagents.{service}_agent")
@@ -158,3 +160,18 @@ def test_admin_claim_is_derived_from_email():
     )
     assert admin["admin"] is True
     assert user["admin"] is False
+
+
+def test_capability_questions_are_answered_without_an_llm_call():
+    answer = capability_answer("And other than Drive and Gmail, what about Meet?")
+    assert answer is not None
+    assert "Google Meet" in answer
+    assert capability_answer("Search Gmail for invoices") is None
+
+
+def test_added_google_scopes_require_fresh_consent():
+    assert missing_google_scopes(SCOPES) == []
+    without_meet = [scope for scope in SCOPES if "meetings.space" not in scope]
+    missing = missing_google_scopes(without_meet)
+    assert "https://www.googleapis.com/auth/meetings.space.created" in missing
+    assert "https://www.googleapis.com/auth/meetings.space.readonly" in missing
