@@ -14,9 +14,6 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
   deploy-web:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./web
     steps:
       - uses: actions/checkout@v5
       - name: Deploy frontend with current Vercel CLI
