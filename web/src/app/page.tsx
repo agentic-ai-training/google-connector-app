@@ -16,7 +16,9 @@ export default function Home(){
     let active=true;
     const fragment=new URLSearchParams(window.location.hash.slice(1));
     const returnedToken=fragment.get("access_token");
+    const returnedError=fragment.get("oauth_error");
     if(returnedToken){localStorage.setItem("agent_token",returnedToken);history.replaceState(null,"",window.location.pathname);}
+    if(returnedError){localStorage.removeItem("agent_token");queueMicrotask(()=>{if(active){setAuthError(returnedError);setAuthLoading(false)}});history.replaceState(null,"",window.location.pathname);}
     let id=localStorage.getItem("agent_session");
     if(!id){id=crypto.randomUUID();localStorage.setItem("agent_session",id);}
     queueMicrotask(()=>{if(active)setSession(id)});

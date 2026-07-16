@@ -10,6 +10,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 from jose import JWTError, jwt
+from oauthlib.oauth2 import OAuth2Error
 from pydantic import BaseModel
 
 from app.config.settings import get_public_url, get_settings
@@ -103,6 +104,7 @@ async def google_login(return_to: str | None = Query(default=None)):
 @router.get("/auth/google/callback")
 async def google_callback(code: str, state: str):
     settings = get_settings()
+    return_to = settings.frontend_url.rstrip("/")
     try:
         state_data = jwt.decode(
             state, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
@@ -126,6 +128,11 @@ async def google_callback(code: str, state: str):
         await save_google_credentials(await get_pool(), email, flow.credentials)
         token = create_token(email)
         fragment = urlencode({"access_token": token})
+        return RedirectResponse(f"{return_to}/#{fragment}", status_code=302)
+    except OAuth2Error:
+        fragment = urlencode({
+            "oauth_error": "Authorization expired or was already used. Please sign in again."
+        })
         return RedirectResponse(f"{return_to}/#{fragment}", status_code=302)
     except (JWTError, ValueError, KeyError) as exc:
         raise HTTPException(400, f"Google OAuth failed: {exc}") from exc
