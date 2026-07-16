@@ -21,7 +21,10 @@ export default function Home(){
     if(!id){id=crypto.randomUUID();localStorage.setItem("agent_session",id);}
     queueMicrotask(()=>{if(active)setSession(id)});
     if(!getToken()){queueMicrotask(()=>{if(active)setAuthLoading(false)});return()=>{active=false};}
-    currentUser().then(value=>{if(active)setUser(value)}).catch(error=>{
+    currentUser().then(value=>{
+      if(!value.google_connected){localStorage.removeItem("agent_token");throw new Error("Connect your Google account to continue");}
+      if(active)setUser(value);
+    }).catch(error=>{
       localStorage.removeItem("agent_token");if(active)setAuthError(error instanceof Error?error.message:"Sign-in failed");
     }).finally(()=>{if(active)setAuthLoading(false)});
     return()=>{active=false};
