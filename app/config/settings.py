@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     google_oauth_client_json: str = ""
     google_oauth_client_path: str = "./google-oauth-web.json"
     frontend_url: str = "http://localhost:3000"
+    google_oauth_redirect_uri: str = ""
     allow_dev_auth: bool = False
     jwt_secret_key: str = "change-this-in-production-use-256-bit-random-string"
     jwt_algorithm: str = "HS256"

@@ -57,6 +57,9 @@ def _client_config():
 
 
 def _callback_url():
+    configured = get_settings().google_oauth_redirect_uri
+    if configured:
+        return configured
     public_url = get_public_url()
     if public_url:
         return f"{public_url}/auth/google/callback"
