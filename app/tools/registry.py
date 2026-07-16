@@ -173,6 +173,34 @@ def list_chat_spaces(): return g.chat_service.spaces().list().execute().get("spa
 @tool("send_chat_message", description="Google Workspace operation")
 def send_chat_message(space_id:str,text:str): return g.chat_service.spaces().messages().create(parent=space_id,body={"text":text}).execute()
 
+def _meet_space_name(meeting_code_or_name: str) -> str:
+    return (meeting_code_or_name if meeting_code_or_name.startswith("spaces/")
+            else f"spaces/{meeting_code_or_name}")
+
+@tool("create_meet_space", description="Create an instant Google Meet space and return its joining URL and meeting code")
+def create_meet_space():
+    return g.meet_service.spaces().create(body={}).execute()
+
+@tool("get_meet_space", description="Get a Google Meet space by meeting code or spaces/... resource name")
+def get_meet_space(meeting_code_or_name: str):
+    return g.meet_service.spaces().get(
+        name=_meet_space_name(meeting_code_or_name)
+    ).execute()
+
+@tool("list_meet_conferences", description="List recent Google Meet conference records")
+def list_meet_conferences(max_results: int = 10):
+    return g.meet_service.conferenceRecords().list(
+        pageSize=max_results
+    ).execute().get("conferenceRecords", [])
+
+@tool("list_meet_participants", description="List participants for a Google Meet conferenceRecords/... resource")
+def list_meet_participants(conference_record: str, max_results: int = 100):
+    parent = (conference_record if conference_record.startswith("conferenceRecords/")
+              else f"conferenceRecords/{conference_record}")
+    return g.meet_service.conferenceRecords().participants().list(
+        parent=parent, pageSize=max_results
+    ).execute().get("participants", [])
+
 
 _TOOL_NAMES = (
     "search_gmail", "get_gmail_message", "send_gmail", "reply_gmail",
@@ -184,7 +212,8 @@ _TOOL_NAMES = (
     "append_to_google_doc", "read_google_sheet", "write_google_sheet",
     "append_to_google_sheet", "create_google_sheet", "list_tasks", "create_task",
     "complete_task", "search_contacts", "get_contact", "list_chat_spaces",
-    "send_chat_message",
+    "send_chat_message", "create_meet_space", "get_meet_space",
+    "list_meet_conferences", "list_meet_participants",
 )
 for _name in _TOOL_NAMES:
     globals()[_name] = instrument_tool(globals()[_name])

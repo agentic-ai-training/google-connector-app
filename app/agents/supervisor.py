@@ -16,7 +16,7 @@ from app.tools.base import GoogleWorkspaceBaseTool, tool_session_id
 from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
 
-SERVICES = ("gmail", "calendar", "drive", "docs", "sheets", "tasks", "chat", "contacts")
+SERVICES = ("gmail", "calendar", "drive", "docs", "sheets", "tasks", "chat", "contacts", "meet")
 ALIASES = {
     "email": "gmail",
     "mail": "gmail",
@@ -27,6 +27,8 @@ ALIASES = {
     "spreadsheet": "sheets",
     "task": "tasks",
     "contact": "contacts",
+    "video call": "meet",
+    "google meet": "meet",
 }
 
 FAILED_TOOL_PATTERN = re.compile(
@@ -75,6 +77,8 @@ def get_toolsets() -> dict[str, list[BaseTool]]:
         "tasks": [tools.list_tasks, tools.create_task, tools.complete_task],
         "contacts": [tools.search_contacts, tools.get_contact],
         "chat": [tools.list_chat_spaces, tools.send_chat_message],
+        "meet": [tools.create_meet_space, tools.get_meet_space,
+                 tools.list_meet_conferences, tools.list_meet_participants],
     }
 
 
@@ -176,9 +180,8 @@ def make_service_node(service: str, pool=None):
             if len(chosen) > 1:
                 available = [tool for group in toolsets.values() for tool in group]
             by_name = {tool.name: tool for tool in available}
-            llm = get_llm(
-                state.get("model_to_use", "groq_fast")
-            ).bind_tools(available)
+            model_choice = state.get("model_to_use", "groq_fast")
+            llm = get_llm(model_choice).bind_tools(available)
             context = state.get("retrieved_context", "")
             system = state.get("system_prompt") or (
                 "You are a precise Google Workspace automation agent. Plan before "
@@ -197,7 +200,12 @@ def make_service_node(service: str, pool=None):
                         response = await llm.ainvoke(messages)
                         break
                     except Exception as exc:
-                        if "tool_use_failed" not in str(exc):
+                        error_text = str(exc).lower()
+                        if "rate_limit" in error_text or "rate limit" in error_text:
+                            llm = get_llm(model_choice, fallback=True).bind_tools(available)
+                            response = await llm.ainvoke(messages)
+                            break
+                        if "tool_use_failed" not in error_text:
                             raise
                         if attempt:
                             response = recover_rejected_tool_call(exc)

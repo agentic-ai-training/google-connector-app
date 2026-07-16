@@ -7,12 +7,12 @@ async def route_model_node(state):
         if any(term in text for term in DEEP_TERMS)
         else "groq_fast"
     }
-def get_llm(model_choice):
+def get_llm(model_choice, *, fallback=False):
     settings=get_settings()
     if not settings.groq_api_key or "your_" in settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
     from langchain_groq import ChatGroq
-    model = (
+    model = settings.groq_fallback_model if fallback else (
         settings.groq_reasoning_model
         if model_choice == "groq_reasoning"
         else settings.groq_fast_model
@@ -23,4 +23,5 @@ def get_llm(model_choice):
         temperature=.3,
         timeout=45,
         max_retries=1,
+        max_tokens=settings.groq_max_tokens,
     )

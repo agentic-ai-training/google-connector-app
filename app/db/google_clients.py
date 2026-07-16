@@ -16,6 +16,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/contacts", "https://www.googleapis.com/auth/chat.messages",
     "https://www.googleapis.com/auth/chat.spaces.readonly", "https://www.googleapis.com/auth/script.projects",
     "https://www.googleapis.com/auth/script.external_request", "https://www.googleapis.com/auth/drive.labels.readonly",
+    "https://www.googleapis.com/auth/meetings.space.created",
+    "https://www.googleapis.com/auth/meetings.space.readonly",
 ]
 def _load_creds():
     settings = get_settings()

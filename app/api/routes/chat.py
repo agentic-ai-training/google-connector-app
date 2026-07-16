@@ -14,6 +14,26 @@ from app.db.prompt_service import get_prompt, record_metric
 
 router = APIRouter()
 
+CAPABILITIES = (
+    "I can work with Gmail, Google Calendar, Drive, Docs, Sheets, Tasks, "
+    "Google Chat, Contacts, and Google Meet. For Meet I can create an instant "
+    "meeting link, inspect a meeting space, list recent conference records, and "
+    "list conference participants. I can also schedule Calendar events with a "
+    "Google Meet link. Tell me the action and any required names, dates, or IDs."
+)
+
+
+def capability_answer(message: str) -> str | None:
+    text = " ".join(message.lower().split())
+    capability_phrases = (
+        "what can you do", "can you only", "what about google meet",
+        "what about meet", "other operations", "which operations",
+        "what operations", "your capabilities",
+    )
+    if any(phrase in text for phrase in capability_phrases):
+        return CAPABILITIES
+    return None
+
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=50_000)
@@ -36,6 +56,7 @@ async def chat(req: ChatRequest, request: Request):
     google_credentials = await load_google_credentials(pool, request.state.user_id)
     if google_credentials is None and not get_settings().allow_dev_auth:
         raise HTTPException(403, "Connect your Google account before chatting")
+    direct_answer = capability_answer(req.message)
     prompt, assignment_id = await get_prompt(
         "supervisor_system", req.session_id, pool=pool
     )
@@ -60,6 +81,22 @@ async def chat(req: ChatRequest, request: Request):
                 req.message,
             )
         try:
+            if direct_answer is not None:
+                final = direct_answer
+                model_used = "deterministic-capabilities"
+                task_complete = True
+                for token in final.split(" "):
+                    yield f"data: {json.dumps({'token': token + ' ', 'done': False})}\n\n"
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        """INSERT INTO conversation_history
+                           (session_id,user_id,role,content,tool_calls,tool_results,
+                            model_used)
+                           VALUES($1,$2,'assistant',$3,'[]'::jsonb,'[]'::jsonb,$4)""",
+                        req.session_id, request.state.user_id, final, model_used,
+                    )
+                yield f"data: {json.dumps({'token': '', 'done': True, 'session_id': req.session_id})}\n\n"
+                return
             credential_token = request_google_credentials.set(google_credentials)
             graph = request.app.state.agent_graph
             initial = {
