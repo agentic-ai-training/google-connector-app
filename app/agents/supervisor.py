@@ -10,7 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.router import get_llm, route_model_node
 from app.agents.state import AgentState
-from app.mlops.metrics import tool_errors, tool_latency
+from app.mlops.metrics import llm_latency, tool_errors, tool_latency
 from app.tools.base import GoogleWorkspaceBaseTool, tool_session_id
 from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
@@ -188,6 +188,7 @@ def make_service_node(service: str, pool=None):
             results = []
             for _ in range(8):
                 for attempt in range(2):
+                    llm_started = time.perf_counter()
                     try:
                         response = await llm.ainvoke(messages)
                         break
@@ -198,6 +199,10 @@ def make_service_node(service: str, pool=None):
                             response = recover_rejected_tool_call(exc)
                             if response is None:
                                 raise
+                    finally:
+                        llm_latency.labels(
+                            state.get("model_to_use", "groq_fast")
+                        ).observe(time.perf_counter() - llm_started)
                 messages.append(response)
                 calls = getattr(response, "tool_calls", [])
                 if not calls:

@@ -17,4 +17,10 @@ def get_llm(model_choice):
         if model_choice == "groq_reasoning"
         else settings.groq_fast_model
     )
-    return ChatGroq(model=model,api_key=settings.groq_api_key,temperature=.3)
+    return ChatGroq(
+        model=model,
+        api_key=settings.groq_api_key,
+        temperature=.3,
+        timeout=45,
+        max_retries=1,
+    )
