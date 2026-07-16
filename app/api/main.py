@@ -15,13 +15,17 @@ from app.api.routes import admin,chat,feedback,history
 @asynccontextmanager
 async def lifespan(app):
     settings=get_settings()
-    valid_langsmith = settings.langchain_api_key and "your_" not in settings.langchain_api_key
+    langsmith_key = settings.langsmith_api_key or settings.langchain_api_key
+    valid_langsmith = bool(langsmith_key and "your_" not in langsmith_key)
     os.environ.update({
         "LANGCHAIN_TRACING_V2": settings.langchain_tracing_v2 if valid_langsmith else "false",
         "LANGCHAIN_PROJECT": settings.langchain_project,
+        "LANGSMITH_TRACING": settings.langsmith_tracing if valid_langsmith else "false",
+        "LANGSMITH_PROJECT": settings.langsmith_project,
     })
     if valid_langsmith:
-        os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
+        os.environ["LANGCHAIN_API_KEY"] = langsmith_key
+        os.environ["LANGSMITH_API_KEY"] = langsmith_key
     pool=await get_pool()
     setup_scheduler(pool,NomicEmbedder())
     async with AsyncPostgresSaver.from_conn_string(settings.database_url) as checkpointer:

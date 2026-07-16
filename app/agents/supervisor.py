@@ -144,7 +144,9 @@ def make_service_node(service: str, pool=None):
             if len(chosen) > 1:
                 available = [tool for group in toolsets.values() for tool in group]
             by_name = {tool.name: tool for tool in available}
-            llm = get_llm(state.get("model_to_use", "groq")).bind_tools(available)
+            llm = get_llm(
+                state.get("model_to_use", "groq_fast")
+            ).bind_tools(available)
             context = state.get("retrieved_context", "")
             system = state.get("system_prompt") or (
                 "You are a precise Google Workspace automation agent. Plan before "

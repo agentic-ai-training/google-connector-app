@@ -18,8 +18,8 @@ def test_context_packer_orders_by_score():
 
 @pytest.mark.asyncio
 async def test_model_router():
-    assert (await route_model_node({"message": "search gmail"}))["model_to_use"] == "groq"
-    assert (await route_model_node({"message": "analyse and plan"}))["model_to_use"] == "deepseek"
+    assert (await route_model_node({"message": "search gmail"}))["model_to_use"] == "groq_fast"
+    assert (await route_model_node({"message": "analyse and plan"}))["model_to_use"] == "groq_reasoning"
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_service_node_executes_tool(monkeypatch):
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("gmail")({
         "message": "echo",
-        "model_to_use": "groq",
+        "model_to_use": "groq_fast",
         "services": ["gmail"],
         "session_id": "test",
     })
