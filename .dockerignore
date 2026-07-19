@@ -9,4 +9,6 @@ token.pkl
 web/node_modules
 web/.next
 mobile/build
+mobile/.dart_tool
+mobile/.gradle
 .pytest_cache

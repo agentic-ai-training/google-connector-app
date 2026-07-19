@@ -26,3 +26,38 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations: {summary: "Google tool errors increased"}
+      - alert: ModelRateLimitSpike
+        expr: sum(rate(agent_run_failures_total{category="rate_limit"}[15m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Model quota or rate-limit failures increased"}
+      - alert: AwaitingApprovalBacklog
+        expr: agent_run_queue_depth{status="awaiting_approval"} > 10
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "High-risk actions are waiting for administrator review"}
+      - alert: PartialRunSpike
+        expr: sum(rate(agent_run_transitions_total{status="partial"}[15m])) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Partial workflows increased; inspect retained artifacts"}
+      - alert: ArtifactCleanupNeedsAttention
+        expr: agent_artifact_cleanup_requests{status=~"failed|manual_required"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Artifact compensation needs operator attention"}
+      - alert: ImprovementNotificationFailed
+        expr: agent_improvement_notifications{status="failed"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "A governed improvement notification failed"}
+      - alert: OllamaEmbeddingUnavailable
+        expr: agent_ollama_model_loaded == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Ollama embedding model is unavailable"}
+      - alert: EmbeddingLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(agent_embedding_duration_seconds_bucket{status="success"}[15m]))) > 10
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Embedding p95 latency exceeds ten seconds"}

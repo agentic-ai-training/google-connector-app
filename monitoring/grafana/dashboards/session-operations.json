@@ -30,7 +30,7 @@
     {
       "type":"table","title":"Current and recent runs","gridPos":{"h":12,"w":24,"x":0,"y":5},
       "datasource":{"type":"postgres","uid":"postgres-reporting"},
-      "targets":[{"format":"table","rawSql":"SELECT run_id,session_id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,left(request,160) AS task,status,current_phase,functional_completion,duration_ms,total_tokens,error_category,incident_summary->>'breaking_point' AS breaking_point,queued_at FROM reporting.session_summary WHERE queued_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY queued_at DESC LIMIT 250","refId":"A"}]
+      "targets":[{"format":"table","rawSql":"SELECT run_id,session_id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,left(request,160) AS task,status,current_phase,technical_completion,functional_completion,user_visible_completion,side_effect_integrity,duration_ms,total_tokens,error_category,incident_summary->>'breaking_point' AS breaking_point,deployment_version,queued_at FROM reporting.session_summary WHERE queued_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY queued_at DESC LIMIT 250","refId":"A"}]
     },
     {
       "type":"table","title":"Step timeline","gridPos":{"h":11,"w":24,"x":0,"y":17},
@@ -41,10 +41,65 @@
       "type":"table","title":"Improvement queue","gridPos":{"h":9,"w":24,"x":0,"y":28},
       "datasource":{"type":"postgres","uid":"postgres-reporting"},
       "targets":[{"format":"table","rawSql":"SELECT * FROM reporting.improvement_queue ORDER BY created_at DESC LIMIT 100","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Verified and partial artifacts","gridPos":{"h":10,"w":12,"x":0,"y":37},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT artifact_id,run_id,artifact_type,url,verification_status,sharing_state,cleanup_state,safe_to_delete,run_status,deployment_version,created_at FROM reporting.artifact_cleanup WHERE created_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY created_at DESC LIMIT 200","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Failure and breaking-point trends","gridPos":{"h":10,"w":12,"x":12,"y":37},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT day,error_category,status,runs,round(average_completion::numeric,1) AS avg_functional_completion FROM reporting.failure_summary_daily WHERE day BETWEEN $__timeFrom() AND $__timeTo() ORDER BY day DESC,runs DESC","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Model and token usage","gridPos":{"h":10,"w":8,"x":0,"y":47},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT day,model,component,status,calls,input_tokens,output_tokens,round(p95_ms::numeric,0) AS p95_ms FROM reporting.model_token_usage WHERE day BETWEEN $__timeFrom() AND $__timeTo() ORDER BY day DESC,calls DESC","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Google tool reliability","gridPos":{"h":10,"w":8,"x":8,"y":47},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT day,tool_name,status,attempts,round(avg_ms::numeric,0) AS avg_ms,round(p95_ms::numeric,0) AS p95_ms FROM reporting.tool_reliability WHERE day BETWEEN $__timeFrom() AND $__timeTo() ORDER BY day DESC,attempts DESC","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Retrieval quality and latency","gridPos":{"h":10,"w":8,"x":16,"y":47},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT day,mode,requests,round(avg_returned::numeric,1) AS avg_returned,round(avg_used::numeric,1) AS avg_used,round(avg_ms::numeric,0) AS avg_ms FROM reporting.retrieval_quality WHERE day BETWEEN $__timeFrom() AND $__timeTo() ORDER BY day DESC,requests DESC","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Canary guardrails and rollback decisions","gridPos":{"h":11,"w":12,"x":0,"y":57},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT proposal_key,title,proposal_status,risk_level,canary_status,cohort,control_version,candidate_version,evaluation_passed,regressions,rollback_reason,started_at,ended_at FROM reporting.canary_evaluations ORDER BY coalesce(ended_at,started_at) DESC NULLS LAST LIMIT 100","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Prompt experiment results","gridPos":{"h":11,"w":12,"x":12,"y":57},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT name,prompt_name,status,arm,total_requests,round(avg_latency_ms::numeric,0) AS avg_latency_ms,round(avg_rating::numeric,2) AS avg_rating,round(avg_faithfulness::numeric,2) AS avg_faithfulness,round(avg_relevancy::numeric,2) AS avg_relevancy,round(error_rate_pct::numeric,2) AS error_rate_pct,round(completion_rate_pct::numeric,2) AS completion_rate_pct,winner FROM reporting.prompt_experiment_results ORDER BY coalesce(ended_at,started_at) DESC NULLS LAST","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Authorized security and approval audit","gridPos":{"h":11,"w":24,"x":0,"y":68},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT event_type,actor,status,occurred_at,CASE WHEN subject_user IS NULL THEN NULL ELSE regexp_replace(subject_user,'(^.).*(@.*$)','\\1***\\2') END AS subject_user,details FROM reporting.security_audit WHERE occurred_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY occurred_at DESC LIMIT 250","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Multi-objective workflow evaluation","gridPos":{"h":11,"w":24,"x":0,"y":79},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT day,policy_name,policy_version,candidate,samples,round(task_success::numeric,3) AS task_success,round(plan_correctness::numeric,3) AS plan_correctness,round(tool_correctness::numeric,3) AS tool_correctness,round(artifact_correctness::numeric,3) AS artifact_correctness,round(recovery_success::numeric,3) AS recovery_success,round(side_effect_integrity::numeric,3) AS side_effect_integrity,round(user_satisfaction::numeric,3) AS user_satisfaction,round(retrieval_quality::numeric,3) AS retrieval_quality,round(avg_latency_ms::numeric,0) AS avg_latency_ms,round(avg_tokens::numeric,0) AS avg_tokens FROM reporting.workflow_evaluation WHERE day BETWEEN $__timeFrom() AND $__timeTo() ORDER BY day DESC,policy_version","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Artifact compensation decisions","gridPos":{"h":10,"w":12,"x":0,"y":90},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT id,run_id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,artifact_type,external_id,action,status,cleanup_state,error_message,requested_at,completed_at FROM reporting.artifact_compensation ORDER BY requested_at DESC LIMIT 200","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Improvement notification delivery","gridPos":{"h":10,"w":12,"x":12,"y":90},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT proposal_key,proposal_status,channel,event_type,status,external_reference,error_message,created_at,sent_at FROM reporting.improvement_notifications ORDER BY created_at DESC LIMIT 200","refId":"A"}]
     }
   ],
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":1
+  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":3
 }

@@ -1,32 +1,17 @@
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-import pickle, os
+from pathlib import Path
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-    "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/drive.activity.readonly",
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/tasks",
-    "https://www.googleapis.com/auth/contacts.readonly",
-    "https://www.googleapis.com/auth/contacts",
-    "https://www.googleapis.com/auth/chat.messages",
-    "https://www.googleapis.com/auth/chat.spaces.readonly",
-    "https://www.googleapis.com/auth/script.projects",
-    "https://www.googleapis.com/auth/script.external_request",
-    "https://www.googleapis.com/auth/drive.labels.readonly",
-]
+from app.db.google_clients import SCOPES
+
+TOKEN_PATH = Path("token.json")
 
 def get_creds():
     creds = None
-    if os.path.exists("token.pkl"):
-        with open("token.pkl", "rb") as f:
-            creds = pickle.load(f)
+    if TOKEN_PATH.exists():
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -35,8 +20,7 @@ def get_creds():
                 "credentials.json", SCOPES
             )
             creds = flow.run_local_server(port=0)
-        with open("token.pkl", "wb") as f:
-            pickle.dump(creds, f)
+        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     return creds
 
 def main():
@@ -63,7 +47,10 @@ def main():
     tasks = build("tasks", "v1", credentials=creds)
     tl = tasks.tasklists().list().execute()
     print(f"Tasks OK       — {len(tl.get('items', []))} task list(s) found")
-    print("\nAll 6 APIs verified. Phase 1 complete.")
+    meet = build("meet", "v2", credentials=creds)
+    assert meet is not None
+    print("Meet OK        — client built successfully")
+    print("\nAll 7 API surfaces verified. Phase 1 complete.")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
-from jose import JWTError, jwt
+import jwt
 from oauthlib.oauth2 import OAuth2Error
 from pydantic import BaseModel
 
@@ -121,7 +121,7 @@ async def google_callback(code: str, state: str):
             state, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
         )
         if state_data.get("purpose") != "google-oauth":
-            raise JWTError("invalid purpose")
+            raise jwt.InvalidTokenError("invalid purpose")
         return_to = _safe_return_to(state_data.get("return_to"))
         config = _client_config()
         code_verifier = state_data["code_verifier"]
@@ -150,7 +150,7 @@ async def google_callback(code: str, state: str):
             "oauth_error": "Authorization expired or was already used. Please sign in again."
         })
         return RedirectResponse(f"{return_to}/#{fragment}", status_code=302)
-    except (JWTError, ValueError, KeyError) as exc:
+    except (jwt.PyJWTError, ValueError, KeyError) as exc:
         raise HTTPException(400, f"Google OAuth failed: {exc}") from exc
 
 
@@ -223,7 +223,7 @@ async def auth_middleware(request: Request, call_next):
         request.state.is_admin = bool(payload.get("admin"))
     except HTTPException as exc:
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-    except (JWTError, KeyError, IndexError):
+    except (jwt.PyJWTError, KeyError, IndexError):
         return JSONResponse(
             {"detail": "Invalid or missing bearer token"}, status_code=401
         )

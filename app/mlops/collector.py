@@ -2,8 +2,10 @@ import asyncio
 from contextlib import suppress
 
 from app.mlops.metrics import (
+    artifact_cleanup_queue,
     embedding_queue,
     improvement_queue,
+    improvement_notifications,
     run_queue_depth,
     stale_runs,
 )
@@ -17,6 +19,12 @@ PROPOSAL_STATES = (
     "awaiting_review", "approved_for_canary", "canary_active",
     "awaiting_promotion", "approved_for_publication", "rolled_back",
 )
+CLEANUP_STATES = (
+    "awaiting_confirmation", "approved", "rejected", "executing", "completed",
+    "failed", "manual_required",
+)
+NOTIFICATION_CHANNELS = ("admin", "grafana", "email", "github")
+NOTIFICATION_STATES = ("queued", "sent", "skipped", "failed")
 
 
 async def collect_operational_metrics(pool):
@@ -26,6 +34,11 @@ async def collect_operational_metrics(pool):
         embedding_queue.labels(state).set(0)
     for state in PROPOSAL_STATES:
         improvement_queue.labels(state).set(0)
+    for state in CLEANUP_STATES:
+        artifact_cleanup_queue.labels(state).set(0)
+    for channel in NOTIFICATION_CHANNELS:
+        for state in NOTIFICATION_STATES:
+            improvement_notifications.labels(channel, state).set(0)
     async with pool.acquire() as conn:
         for row in await conn.fetch(
             "SELECT status,count(*) AS count FROM agent_runs WHERE deleted_at IS NULL GROUP BY status"
@@ -42,6 +55,15 @@ async def collect_operational_metrics(pool):
             "SELECT status,count(*) AS count FROM improvement_proposals GROUP BY status"
         ):
             improvement_queue.labels(row["status"]).set(row["count"])
+        for row in await conn.fetch(
+            "SELECT status,count(*) AS count FROM artifact_cleanup_requests GROUP BY status"
+        ):
+            artifact_cleanup_queue.labels(row["status"]).set(row["count"])
+        for row in await conn.fetch(
+            """SELECT channel,status,count(*) AS count FROM improvement_notifications
+               GROUP BY channel,status"""
+        ):
+            improvement_notifications.labels(row["channel"], row["status"]).set(row["count"])
 
 
 async def metrics_collection_loop(pool, stop_event: asyncio.Event):

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.db.connection import get_pool
+from app.evaluation.collector import record_run_evaluation
 
 router = APIRouter()
 ALLOWED_CATEGORIES = {
@@ -136,4 +137,6 @@ async def feedback(req: FeedbackRequest, request: Request):
                 json.dumps({"expected_result": _sanitize(req.expected_result)}),
                 _dataset_split(request.state.user_id),
             )
+    if req.run_id:
+        await record_run_evaluation(pool, req.run_id)
     return {"status": "recorded", "learning_candidate": req.consented_for_learning}

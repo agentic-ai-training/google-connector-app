@@ -38,19 +38,6 @@ class GoogleWorkspaceBaseTool(BaseTool):
                 json.dumps(input_data, default=str), json.dumps(output_data, default=str), status,
                 error_msg, llm_latency_ms, total_latency_ms, model_used)
 
-    async def _embed_and_upsert(self, table, id_val, text, extra_fields):
-        if not self.embedder or not self.db_pool:
-            return
-        if table not in {"gmail_messages", "calendar_events", "drive_documents", "contacts", "chat_messages"}:
-            raise ValueError("Unsupported embedding table")
-        embedding = await self.embedder.aembed_query(text)
-        keys = list(extra_fields)
-        columns = ",".join(["id", "embedding", *keys])
-        values = ",".join(f"${i}" for i in range(1, len(keys)+3))
-        updates = ",".join(["embedding=EXCLUDED.embedding", *(f"{k}=EXCLUDED.{k}" for k in keys), "synced_at=now()"])
-        async with self.db_pool.acquire() as conn:
-            await conn.execute(f"INSERT INTO {table} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}", id_val, embedding, *extra_fields.values())
-
     def _track_metric(self, elapsed, error=False):
         tool_latency.labels(self.name).observe(elapsed)
         if error:

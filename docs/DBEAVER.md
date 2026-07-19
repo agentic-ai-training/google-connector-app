@@ -32,7 +32,7 @@ Create/rotate the role with `scripts/configure_reporting_role.sql` using the Neo
 - Port: `5433` (container port remains 5432)
 - Database/user: `agent_db` / `agent_user`
 
-Never commit DBeaver credentials or a Neon owner URL. Use the reporting views for run status, timelines, failures, tokens, retrieval, artifacts, improvements, and canaries.
+Never commit DBeaver credentials or a Neon owner URL. Use the reporting views for run status, timelines, failures, tokens, retrieval, artifacts, compensation, evaluations, notifications, improvements, and canaries.
 
 ## Reporting relationship map
 
@@ -43,10 +43,14 @@ erDiagram
   IMPROVEMENT_QUEUE ||--o{ CANARY_EVALUATIONS : proposal_key
   PROMPT_EXPERIMENT_RESULTS }o--|| PROMPTS : prompt_name
   SECURITY_AUDIT }o--o| SESSION_SUMMARY : run_id
+  SESSION_SUMMARY ||--o{ WORKFLOW_EVALUATION : run_id
+  ARTIFACT_CLEANUP ||--o{ ARTIFACT_COMPENSATION : artifact_id
+  IMPROVEMENT_QUEUE ||--o{ IMPROVEMENT_NOTIFICATIONS : proposal_key
 ```
 
-Refresh the `reporting` schema after migration 006. The dedicated role can select
+Refresh the `reporting` schema after migration 007. The dedicated role can select
 `session_summary`, `step_timeline`, `failure_summary_daily`, `model_token_usage`,
 `tool_reliability`, `retrieval_quality`, `artifact_cleanup`, `improvement_queue`,
-`canary_evaluations`, `prompt_experiment_results`, and `security_audit`. It still
+`canary_evaluations`, `prompt_experiment_results`, `security_audit`,
+`workflow_evaluation`, `artifact_compensation`, and `improvement_notifications`. It still
 cannot read encrypted OAuth credential rows.

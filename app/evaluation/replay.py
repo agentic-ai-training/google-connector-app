@@ -29,6 +29,9 @@ class ReplayResult:
     status: str
     technical_completion: float
     functional_completion: float
+    artifact_correctness: float
+    recovery_success: float
+    side_effect_integrity: float
     first_breaking_point: str | None
     steps: list[ReplayStepResult]
     artifacts: dict[str, dict[str, Any]]
@@ -182,6 +185,15 @@ def replay_case(case: dict[str, Any]) -> ReplayResult:
         case_id=case["id"], status=actual_status,
         technical_completion=round(completed * 100 / total, 2),
         functional_completion=100.0 if all(expectation_checks) else 0.0,
+        artifact_correctness=100.0 if all(expectation_checks) else 0.0,
+        recovery_success=(
+            100.0 if not case.get("fail_once") or actual_status == "completed" else 0.0
+        ),
+        side_effect_integrity=(
+            100.0 if not failed or not successful_ids
+            or all(workspace.artifacts[item].get("deleted") for item in successful_ids)
+            else 0.0
+        ),
         first_breaking_point=first_breaking_point,
         steps=results,
         artifacts={key: copy.deepcopy(value) for key, value in workspace.artifacts.items()},

@@ -1,17 +1,45 @@
 import random
+import json
 from uuid import UUID
 
 
-async def get_prompt(name, session_id, model_target="groq/llama-3.3-70b", pool=None):
+async def _experiment_arm(conn, experiment) -> str:
+    if experiment["selection_policy"] != "thompson":
+        return (
+            "variant" if random.random() < float(experiment["traffic_split"])
+            else "control"
+        )
+    rows = await conn.fetch(
+        """SELECT pa.arm,count(pm.id) AS total,
+                  count(pm.id) FILTER(WHERE pm.task_completed AND NOT pm.error_occurred
+                                      AND coalesce(pm.user_rating,1)>0) AS successes
+           FROM prompt_assignments pa LEFT JOIN prompt_metrics pm
+             ON pm.assignment_id=pa.id
+           WHERE pa.experiment_id=$1 GROUP BY pa.arm""",
+        experiment["id"],
+    )
+    observations = {row["arm"]: row for row in rows}
+    samples = {}
+    for arm in ("control", "variant"):
+        total = int(observations.get(arm, {}).get("total", 0))
+        successes = int(observations.get(arm, {}).get("successes", 0))
+        samples[arm] = random.betavariate(1 + successes, 1 + total - successes)
+    return max(samples, key=samples.get)
+
+
+async def get_prompt(
+    name, session_id, model_target="groq/llama-3.3-70b", pool=None,
+    risk_level="low",
+):
     from app.db.connection import get_pool
 
     pool = pool or await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         experiment = await conn.fetchrow(
             """SELECT * FROM prompt_experiments
-               WHERE prompt_name=$1 AND status='running'
+               WHERE prompt_name=$1 AND status='running' AND validated AND $2='low'
                ORDER BY started_at DESC LIMIT 1""",
-            name,
+            name, risk_level,
         )
         if experiment:
             assigned = await conn.fetchrow(
@@ -26,11 +54,7 @@ async def get_prompt(name, session_id, model_target="groq/llama-3.3-70b", pool=N
                 prompt = dict(assigned)
                 assignment_id = prompt.pop("assignment_id")
                 return prompt, assignment_id
-            arm = (
-                "variant"
-                if random.random() < float(experiment["traffic_split"])
-                else "control"
-            )
+            arm = await _experiment_arm(conn, experiment)
             prompt_id = experiment[f"{arm}_id"]
             assignment_id = await conn.fetchval(
                 """INSERT INTO prompt_assignments
@@ -68,18 +92,21 @@ async def record_metric(pool=None, **values):
         raise ValueError("At least one prompt metric value is required")
     async with pool.acquire() as conn:
         await conn.execute(
-            f"INSERT INTO prompt_metrics({','.join(columns)}) "
+            f"INSERT INTO prompt_metrics({','.join(columns)}) "  # nosec B608
             f"VALUES({','.join(f'${i + 1}' for i in range(len(columns)))})",
             *(values[key] for key in columns),
         )
 
 
 async def create_experiment(name, prompt_name, control_id, variant_id,
-                            traffic_split=.5, notes=None, pool=None):
+                            traffic_split=.5, notes=None, selection_policy="ab",
+                            pool=None):
     from app.db.connection import get_pool
 
     if not 0 <= traffic_split <= 1:
         raise ValueError("traffic_split must be between 0 and 1")
+    if selection_policy not in {"ab", "thompson"}:
+        raise ValueError("selection_policy must be ab or thompson")
     pool = pool or await get_pool()
     async with pool.acquire() as conn:
         prompts = await conn.fetch(
@@ -90,16 +117,37 @@ async def create_experiment(name, prompt_name, control_id, variant_id,
             raise ValueError("Both prompts must exist and match prompt_name")
         row = await conn.fetchrow(
             """INSERT INTO prompt_experiments
-               (name,prompt_name,control_id,variant_id,traffic_split,notes)
-               VALUES($1,$2,$3,$4,$5,$6) RETURNING *""",
+               (name,prompt_name,control_id,variant_id,traffic_split,notes,
+                selection_policy,status)
+               VALUES($1,$2,$3,$4,$5,$6,$7,'draft') RETURNING *""",
             name,
             prompt_name,
             UUID(str(control_id)),
             UUID(str(variant_id)),
             traffic_split,
             notes,
+            selection_policy,
         )
         return dict(row)
+
+
+async def activate_experiment(name, actor, evidence, pool=None):
+    """Human-gated activation; runtime assignment remains low-risk only."""
+    from app.db.connection import get_pool
+
+    if not evidence or not evidence.get("suite_version"):
+        raise ValueError("versioned offline evaluation evidence is required")
+    pool = pool or await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE prompt_experiments SET status='running',validated=TRUE,
+                 validated_by=$2,validated_at=now(),validation_evidence=$3::jsonb
+               WHERE name=$1 AND status='draft' RETURNING *""",
+            name, actor, json.dumps(evidence),
+        )
+    if not row:
+        raise ValueError("draft experiment not found")
+    return dict(row)
 
 
 async def conclude_experiment(name, winner, pool=None):

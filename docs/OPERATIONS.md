@@ -37,6 +37,22 @@ and content hash. Material changes invalidate the reviewed hash. A measured pass
 canary is mandatory before the second human publication decision. No email or Chat
 notification is sent automatically because those are external writes.
 
+Every proposal and canary conclusion also creates a durable notification ledger.
+The protected Admin UI and Grafana channels are marked delivered immediately because
+they are internal views over the same sanitized database facts. Email and GitHub are
+marked skipped until their narrowly scoped credentials exist and the administrator
+approves that external publication path. Approval never edits trusted OKF or runtime
+policy directly: it authorizes a selected-user canary; only the later promotion
+approval can publish the already hash-frozen candidate.
+
+After final promotion approval, the **Publish sanitized draft PR** button creates a
+new branch containing only `.improvement-proposals/<key>.md` and opens a draft PR;
+it never auto-merges. It requires `GITHUB_PROPOSAL_REPOSITORY` and a short-lived
+GitHub App installation token in `GITHUB_PROPOSAL_TOKEN` with Contents and Pull
+requests write permission only for this repository. **Send sanitized review email**
+is a separate confirmation and requires `ADMIN_NOTIFICATION_EMAIL` plus the
+administrator's connected Google account.
+
 ## Rollback
 
 1. Stop the worker so no new step is claimed.
@@ -59,6 +75,11 @@ callback URI in Google Cloud. Never log access/refresh tokens.
 Created artifacts are retained and reported by default. Delete, revoke sharing, or
 cancel a Calendar event only through an explicit approved action. The system never
 interprets a failed later step as permission to delete an earlier verified artifact.
+The browser first calls `cleanup-request`; preserve completes without an external
+write, while delete/cancel/revoke/retry returns an action hash. Only a matching,
+unexpired `cleanup-decision` executes it. Deletion is limited to resources created by
+that run and marked safe; legacy sharing records without a verified permission ID are
+reported as `manual_required` rather than guessing which permission to revoke.
 
 ## Legacy tenant-safe RAG import
 

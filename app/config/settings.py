@@ -1,6 +1,11 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+INSECURE_JWT_SECRETS = {
+    "",
+    "change-this-in-production-use-256-bit-random-string",
+}
+
 class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_fast_model: str = "llama-3.3-70b-versatile"
@@ -16,7 +21,6 @@ class Settings(BaseSettings):
     langsmith_tracing: str = "true"
     langsmith_project: str = "google-agent"
     google_credentials_path: str = "./credentials.json"
-    google_token_path: str = "./token.pkl"
     google_token_json: str = ""
     google_oauth_client_json: str = ""
     google_oauth_client_path: str = "./google-oauth-web.json"
@@ -50,6 +54,8 @@ class Settings(BaseSettings):
     workflow_retention_days: int = 90
     aggregate_retention_days: int = 365
     admin_notification_email: str = ""
+    github_proposal_repository: str = "agentic-ai-training/google-connector-app"
+    github_proposal_token: str = ""
     grafana_cloud_prometheus_url: str = ""
     grafana_cloud_prometheus_username: str = ""
     grafana_cloud_api_key: str = ""
@@ -70,3 +76,15 @@ def get_public_url() -> str:
     if settings.railway_public_domain:
         return f"https://{settings.railway_public_domain.strip('/')}"
     return ""
+
+
+def validate_runtime_security(settings: Settings) -> None:
+    """Refuse production startup when authentication cannot be trusted."""
+    secret = settings.jwt_secret_key.strip()
+    if not settings.allow_dev_auth and (
+        secret in INSECURE_JWT_SECRETS or len(secret.encode("utf-8")) < 32
+    ):
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be a non-placeholder secret of at least 32 bytes "
+            "when ALLOW_DEV_AUTH is false"
+        )

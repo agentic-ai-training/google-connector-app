@@ -8,7 +8,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from app.agents.supervisor import build_agent_graph
-from app.config.settings import get_settings
+from app.config.settings import get_settings, validate_runtime_security
 from app.db.connection import close_pool,get_pool
 from app.rag.embedder import NomicEmbedder
 from app.rag.sync.scheduler import scheduler,setup_scheduler
@@ -24,6 +24,7 @@ from app.okf.loader import sync_bundle
 @asynccontextmanager
 async def lifespan(app):
     settings=get_settings()
+    validate_runtime_security(settings)
     langsmith_key = settings.langsmith_api_key or settings.langchain_api_key
     valid_langsmith = bool(langsmith_key and "your_" not in langsmith_key)
     os.environ.update({

@@ -49,11 +49,15 @@ async def delete_user_data(pool, user_id: str) -> dict[str, int]:
             "INSERT INTO deletion_requests(user_id,status) VALUES($1,'running') RETURNING id",
             user_id,
         )
-        for table in (
-            "rag_chunks", "feedback", "conversation_history", "agent_runs",
-            "google_oauth_credentials",
-        ):
-            status = await conn.execute(f"DELETE FROM {table} WHERE user_id=$1", user_id)
+        deletion_queries = (
+            ("rag_chunks", "DELETE FROM rag_chunks WHERE user_id=$1"),
+            ("feedback", "DELETE FROM feedback WHERE user_id=$1"),
+            ("conversation_history", "DELETE FROM conversation_history WHERE user_id=$1"),
+            ("agent_runs", "DELETE FROM agent_runs WHERE user_id=$1"),
+            ("google_oauth_credentials", "DELETE FROM google_oauth_credentials WHERE user_id=$1"),
+        )
+        for table, query in deletion_queries:
+            status = await conn.execute(query, user_id)
             report[table] = int(status.rsplit(" ", 1)[-1])
         await conn.execute(
             """UPDATE deletion_requests SET status='completed',completed_at=now(),report=$1::jsonb

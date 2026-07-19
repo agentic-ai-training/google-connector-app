@@ -34,3 +34,23 @@ embedding_queue = Gauge(
 improvement_queue = Gauge(
     "agent_improvement_proposals", "Governed proposals by lifecycle state", ["status"]
 )
+artifact_cleanup_queue = Gauge(
+    "agent_artifact_cleanup_requests", "Artifact compensation requests by state", ["status"]
+)
+improvement_notifications = Gauge(
+    "agent_improvement_notifications", "Improvement notifications by channel and state",
+    ["channel", "status"],
+)
+embedding_duration = Histogram(
+    "agent_embedding_duration_seconds", "Ollama embedding latency", ["operation", "status"]
+)
+embedding_input_chars = Histogram(
+    "agent_embedding_input_chars", "Characters submitted to the embedding model",
+    ["operation"], buckets=(100, 500, 1000, 2000, 4000, 6000, 12000, 24000),
+)
+embedding_overflows = Counter(
+    "agent_embedding_context_overflows_total", "Embedding context-overflow retries"
+)
+ollama_model_loaded = Gauge(
+    "agent_ollama_model_loaded", "Whether the configured embedding model answered successfully"
+)
