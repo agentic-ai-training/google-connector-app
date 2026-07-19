@@ -30,6 +30,10 @@ class TokenRequest(BaseModel):
     email: str
 
 
+class DeleteDataRequest(BaseModel):
+    confirmation: str
+
+
 def create_token(email: str):
     settings = get_settings()
     admins = {item.strip().lower() for item in settings.admin_emails.split(",")}
@@ -165,6 +169,7 @@ async def me(request: Request):
     )
     return {
         "email": request.state.user_id,
+        "admin": bool(getattr(request.state, "is_admin", False)),
         "google_connected": connected,
         "missing_scopes": missing_scopes,
     }
@@ -176,11 +181,21 @@ async def disconnect_google(request: Request):
     return {"status": "disconnected"}
 
 
+@router.post("/auth/account-data/delete")
+async def delete_account_data(body: DeleteDataRequest, request: Request):
+    if body.confirmation != "DELETE MY DATA":
+        raise HTTPException(409, "Type DELETE MY DATA to confirm irreversible deletion")
+    from app.runs.retention import delete_user_data
+    report = await delete_user_data(await get_pool(), request.state.user_id)
+    return {"status": "deleted", "tables": report}
+
+
 async def auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
     protected = request.url.path.startswith(
-        ("/chat", "/feedback", "/history", "/admin", "/auth/me")
+        ("/chat", "/runs", "/sessions", "/feedback", "/history", "/admin", "/auth/me",
+         "/auth/account-data")
     ) or (request.url.path == "/auth/google" and request.method == "DELETE")
     if not protected:
         return await call_next(request)
@@ -195,6 +210,7 @@ async def auth_middleware(request: Request, call_next):
         if request.url.path.startswith("/admin") and not payload.get("admin"):
             raise HTTPException(403, "Admin access required")
         request.state.user_id = payload["sub"]
+        request.state.is_admin = bool(payload.get("admin"))
     except HTTPException as exc:
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     except (JWTError, KeyError, IndexError):

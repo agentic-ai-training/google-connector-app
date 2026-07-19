@@ -88,5 +88,125 @@ def test_feedback_preserves_retrieved_context():
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
-        assert response.json() == {"status": "recorded"}
-        assert json.loads(client.portal.call(seed_and_read, True)) == context
+        assert response.json() == {"status": "recorded", "learning_candidate": False}
+        stored = client.portal.call(seed_and_read, True)
+        assert (json.loads(stored) if isinstance(stored, str) else stored) == context
+
+
+def test_durable_high_risk_run_requires_action_bound_approval():
+    from app.api.main import app
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/auth/token", json={"email": "user@example.com"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post(
+            "/runs",
+            headers=headers,
+            json={
+                "message": "Send an email to another@example.com",
+                "session_id": f"run-test-{uuid.uuid4()}",
+            },
+        )
+        assert created.status_code == 202
+        payload = created.json()
+        assert payload["status"] == "awaiting_approval"
+        run = client.get(f"/runs/{payload['run_id']}", headers=headers).json()
+        assert run["approval"]["action_hash"]
+        rejected = client.post(
+            f"/runs/{payload['run_id']}/approve",
+            headers=headers,
+            json={
+                "approved": False,
+                "action_hash": run["approval"]["action_hash"],
+                "note": "integration test",
+            },
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["status"] == "cancelled"
+        final = client.get(f"/runs/{payload['run_id']}", headers=headers).json()
+        assert final["status"] == "cancelled"
+        events = client.get(
+            f"/runs/{payload['run_id']}/events", headers=headers
+        ).json()["events"]
+        assert any(event["event_type"] == "approval_rejected" for event in events)
+
+
+def test_run_idempotency_and_cross_user_isolation():
+    from app.api.main import app
+
+    with TestClient(app) as client:
+        first_token = client.post(
+            "/auth/token", json={"email": "first@example.com"}
+        ).json()["access_token"]
+        second_token = client.post(
+            "/auth/token", json={"email": "second@example.com"}
+        ).json()["access_token"]
+        first = {"Authorization": f"Bearer {first_token}"}
+        second = {"Authorization": f"Bearer {second_token}"}
+        key = f"idempotency-{uuid.uuid4()}"
+        body = {
+            "message": "List recent Gmail messages",
+            "session_id": f"isolation-{uuid.uuid4()}",
+            "idempotency_key": key,
+        }
+        created = client.post("/runs", headers=first, json=body).json()
+        duplicate = client.post("/runs", headers=first, json=body).json()
+        assert duplicate["run_id"] == created["run_id"]
+        assert duplicate["created"] is False
+        assert client.get(f"/runs/{created['run_id']}", headers=second).status_code == 404
+        assert client.get(
+            f"/sessions/{body['session_id']}/runs", headers=second
+        ).json() == {"runs": []}
+
+
+def test_worker_executes_dependency_steps_and_recovers_expired_lease():
+    from types import SimpleNamespace
+
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run, get_run
+    from app.runs.worker import claim_run, execute_run
+
+    class FakeGraph:
+        def __init__(self):
+            self.services = []
+
+        async def ainvoke(self, state, config):
+            self.services.append(state["forced_service"])
+            service = state["forced_service"]
+            return {
+                "output": f"verified {service}",
+                "tool_results": [{"id": f"{service}-resource"}],
+                "task_complete": True,
+            }
+
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            run, _ = await create_run(
+                pool, "worker@example.com",
+                "List recent Gmail messages and Drive files",
+                f"worker-{uuid.uuid4()}", f"worker-{uuid.uuid4()}",
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE agent_runs SET status='running',lease_owner='dead-worker',
+                       lease_expires_at=now()-interval '1 minute',
+                       queued_at=now()-interval '100 years' WHERE id=$1""",
+                    run["id"],
+                )
+            claimed = await claim_run(pool, "replacement-worker")
+            graph = FakeGraph()
+            fake_app = SimpleNamespace(state=SimpleNamespace(agent_graph=graph))
+            await execute_run(fake_app, pool, claimed)
+            completed = await get_run(pool, run["id"], "worker@example.com")
+            return completed, graph.services
+
+        completed, services = client.portal.call(exercise)
+        assert completed["status"] == "completed"
+        assert [step["status"] for step in completed["steps"]] == [
+            "completed", "completed",
+        ]
+        assert services == ["gmail", "drive"]

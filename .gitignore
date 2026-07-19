@@ -4,6 +4,7 @@ token.pkl
 .venv/
 __pycache__/
 .env
+backups/
 .env.local
 .env.production
 .vercel/

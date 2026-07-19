@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
@@ -13,7 +14,13 @@ from app.rag.embedder import NomicEmbedder
 from app.rag.sync.scheduler import scheduler,setup_scheduler
 from app.api.middleware.auth import auth_middleware,router as auth_router
 from app.api.middleware.metrics import metrics_middleware
-from app.api.routes import admin,chat,feedback,history
+from app.api.routes import admin,chat,feedback,history,runs
+from app.runs.worker import worker_loop
+from app.runs.retention import retention_loop
+from app.rag.jobs import embedding_worker_loop
+from app.improvements.analyzer import improvement_analysis_loop
+from app.mlops.collector import metrics_collection_loop
+from app.okf.loader import sync_bundle
 @asynccontextmanager
 async def lifespan(app):
     settings=get_settings()
@@ -29,6 +36,8 @@ async def lifespan(app):
         os.environ["LANGCHAIN_API_KEY"] = langsmith_key
         os.environ["LANGSMITH_API_KEY"] = langsmith_key
     pool=await get_pool()
+    if settings.okf_enabled:
+        await sync_bundle(pool)
     setup_scheduler(pool,NomicEmbedder())
     # A single long-lived connection is unsafe with serverless Postgres providers
     # such as Neon: the provider may retire it while the Railway process stays up.
@@ -46,7 +55,27 @@ async def lifespan(app):
         checkpointer = AsyncPostgresSaver(checkpoint_pool)
         await checkpointer.setup()
         app.state.agent_graph = build_agent_graph(pool, checkpointer)
+        worker_stop = asyncio.Event()
+        retention_stop = asyncio.Event()
+        worker_task = None
+        retention_task = asyncio.create_task(retention_loop(pool, retention_stop))
+        embedding_task = asyncio.create_task(embedding_worker_loop(pool, retention_stop))
+        improvement_task = asyncio.create_task(
+            improvement_analysis_loop(pool, retention_stop)
+        ) if settings.governed_improvements_enabled else None
+        metrics_task = asyncio.create_task(metrics_collection_loop(pool, retention_stop))
+        if settings.durable_runs_enabled and settings.embedded_worker_enabled:
+            worker_task = asyncio.create_task(worker_loop(app, pool, worker_stop))
         yield
+        worker_stop.set()
+        retention_stop.set()
+        if worker_task:
+            await worker_task
+        await retention_task
+        await embedding_task
+        if improvement_task:
+            await improvement_task
+        await metrics_task
     if scheduler.running:
         scheduler.shutdown(wait=False)
     await close_pool()
@@ -64,7 +93,7 @@ app.add_middleware(
 )
 app.middleware("http")(metrics_middleware)
 app.middleware("http")(auth_middleware)
-app.include_router(auth_router); app.include_router(chat.router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
+app.include_router(auth_router); app.include_router(chat.router); app.include_router(runs.router); app.include_router(runs.sessions_router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
 app.mount("/metrics",make_asgi_app())
 @app.get("/health")
 async def health(): return {"status":"ok"}

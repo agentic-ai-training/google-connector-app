@@ -27,4 +27,16 @@ class NomicEmbedder:
         )
         return response["embeddings"][0]
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        return await asyncio.gather(*(self.aembed_query(t) for t in texts))
+        vectors = []
+        for offset in range(0, len(texts), 8):
+            batch = [text[:6000] for text in texts[offset:offset + 8]]
+            try:
+                response = await asyncio.to_thread(
+                    self.client.embed, model=self.model, input=batch
+                )
+                vectors.extend(response["embeddings"])
+            except ResponseError:
+                # Preserve per-item overflow handling without unbounded concurrency.
+                for text in batch:
+                    vectors.append(await self.aembed_query(text))
+        return vectors

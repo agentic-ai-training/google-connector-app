@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
@@ -7,6 +8,11 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
 from app.tools.base import instrument_tool
+
+
+def _request_id(action, *values):
+    canonical = "|".join([action, *(str(value) for value in values)])
+    return hashlib.sha256(canonical.encode()).hexdigest()[:32]
 
 def _headers(msg): return {h["name"].lower():h["value"] for h in msg.get("payload",{}).get("headers",[])}
 def _decode(data):
@@ -63,6 +69,7 @@ def get_gmail_message(message_id:str): return _gmail(g.gmail_service.users().mes
 @tool("send_gmail", description="Google Workspace operation")
 def send_gmail(to:str,subject:str,body:str,cc:str|None=None):
     msg=MIMEText(body); msg["to"]=to; msg["subject"]=subject
+    msg["Message-ID"] = f"<{_request_id('gmail',to,subject,body,cc)}@google-connector-agent>"
     if cc: msg["cc"]=cc
     return g.gmail_service.users().messages().send(userId="me",body={"raw":base64.urlsafe_b64encode(msg.as_bytes()).decode()}).execute()
 @tool("reply_gmail", description="Google Workspace operation")
@@ -84,7 +91,7 @@ def get_calendar_event(event_id:str,calendar_id:str="primary"): return g.calenda
 @tool("create_calendar_event", description="Google Workspace operation")
 def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True):
     body={"summary":title,"start":{"dateTime":start_datetime},"end":{"dateTime":end_datetime},"description":description,"attendees":[{"email":x} for x in attendees or []]}
-    if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{abs(hash((title,start_datetime))) }"}}
+    if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{_request_id('meet',title,start_datetime,end_datetime)}"}}
     return g.calendar_service.events().insert(calendarId="primary",body=body,conferenceDataVersion=1,sendUpdates="all").execute()
 @tool("update_calendar_event", description="Google Workspace operation")
 def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None):
@@ -171,7 +178,7 @@ def get_contact(email:str): return g.people_service.people().searchContacts(quer
 @tool("list_chat_spaces", description="Google Workspace operation")
 def list_chat_spaces(): return g.chat_service.spaces().list().execute().get("spaces",[])
 @tool("send_chat_message", description="Google Workspace operation")
-def send_chat_message(space_id:str,text:str): return g.chat_service.spaces().messages().create(parent=space_id,body={"text":text}).execute()
+def send_chat_message(space_id:str,text:str): return g.chat_service.spaces().messages().create(parent=space_id,body={"text":text},requestId=_request_id("chat",space_id,text)).execute()
 
 def _meet_space_name(meeting_code_or_name: str) -> str:
     return (meeting_code_or_name if meeting_code_or_name.startswith("spaces/")

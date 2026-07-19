@@ -16,6 +16,11 @@ from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 from jose import jwt
 from app.config.settings import get_settings
+from app.runs.planner import build_plan, classify_request
+from app.okf.loader import load_bundle
+from pathlib import Path
+from app.rag.chunking import chunk_gmail, chunk_sheet
+from app.runs.worker import verify_step
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -175,3 +180,77 @@ def test_added_google_scopes_require_fresh_consent():
     missing = missing_google_scopes(without_meet)
     assert "https://www.googleapis.com/auth/meetings.space.created" in missing
     assert "https://www.googleapis.com/auth/meetings.space.readonly" in missing
+
+
+def test_high_risk_external_write_requires_confirmation():
+    policy = classify_request(
+        "Create a sheet, share it with user@example.com, and send a Chat message"
+    )
+    assert policy["risk_level"] == "high"
+    assert policy["requires_approval"] is True
+    plan, _ = build_plan("Schedule a meeting and invite user@example.com")
+    assert plan.steps[0].requires_approval is True
+
+
+def test_multi_service_plan_is_dependency_ordered():
+    plan, _ = build_plan(
+        "Find Gmail senders, create a Sheet, send its link in Chat, and schedule a Calendar meeting"
+    )
+    assert [step.service for step in plan.steps] == [
+        "gmail", "sheets", "chat", "calendar",
+    ]
+    assert plan.steps[0].dependencies == []
+    assert plan.steps[1].dependencies == [plan.steps[0].id]
+    assert plan.steps[-1].dependencies == [plan.steps[-2].id]
+
+
+def test_write_verification_requires_stable_artifact_evidence():
+    step = {"read_only": False}
+    ok, _, artifacts = verify_step(step, {
+        "task_complete": True,
+        "tool_results": [{"spreadsheetId": "sheet-1", "spreadsheetUrl": "https://example"}],
+    })
+    assert ok is True
+    assert artifacts[0]["external_id"] == "sheet-1"
+    failed, message, _ = verify_step(step, {
+        "task_complete": True, "tool_results": [{"success": True}],
+    })
+    assert failed is False
+    assert "resource ID or URL" in message
+
+
+def test_explicit_confirmation_opt_out_is_respected():
+    policy = classify_request(
+        "Send the email to user@example.com without asking for confirmation"
+    )
+    assert policy["risk_level"] == "high"
+    assert policy["requires_approval"] is False
+    assert policy["approval_bypassed"] is True
+
+
+def test_live_operations_skip_rag_and_semantic_questions_use_it():
+    assert classify_request("List my latest Gmail messages")["rag_mode"] == "none"
+    assert classify_request(
+        "Find conceptually related historical documents about pricing"
+    )["rag_mode"] == "hybrid"
+
+
+def test_okf_bundle_is_valid():
+    documents, errors = load_bundle(Path("knowledge"))
+    assert not errors
+    assert {item["concept_type"] for item in documents} >= {
+        "index", "policy", "workflow", "capability", "runbook",
+    }
+
+
+def test_source_aware_chunking_removes_quoted_mail_and_preserves_sheet_headers():
+    email = chunk_gmail({
+        "subject": "Budget", "sender": "a@example.com", "received_at": "today",
+        "body_plain": "Current answer.\nOn Monday someone wrote:\nOld repeated history",
+        "thread_id": "thread-1",
+    })
+    assert "Current answer" in email[0].content
+    assert "Old repeated history" not in email[0].content
+    sheet = chunk_sheet({"values": [["Name", "Email"], ["A", "a@example.com"]]})
+    assert "Name | Email" in sheet[0].content
+    assert "A | a@example.com" in sheet[0].content

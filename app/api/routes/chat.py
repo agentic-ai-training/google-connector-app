@@ -11,6 +11,7 @@ from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.config.settings import get_settings
 from app.db.prompt_service import get_prompt, record_metric
+from app.runs.planner import classify_request
 
 router = APIRouter()
 
@@ -52,9 +53,18 @@ def classify_graph_results(node_output: dict) -> tuple[list | None, list | None]
 
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request):
+    settings = get_settings()
+    if not settings.legacy_chat_enabled:
+        raise HTTPException(410, "Legacy chat is disabled; use the durable runs API")
+    policy = classify_request(req.message)
+    if policy["requires_approval"]:
+        raise HTTPException(
+            409,
+            "This request contains a high-risk external write. Use the durable run flow to review and approve it.",
+        )
     pool = await get_pool()
     google_credentials = await load_google_credentials(pool, request.state.user_id)
-    if google_credentials is None and not get_settings().allow_dev_auth:
+    if google_credentials is None and not settings.allow_dev_auth:
         raise HTTPException(403, "Connect your Google account before chatting")
     direct_answer = capability_answer(req.message)
     prompt, assignment_id = await get_prompt(

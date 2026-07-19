@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from contextvars import ContextVar
@@ -7,6 +8,20 @@ from pydantic import ConfigDict
 from app.mlops.metrics import tool_errors, tool_latency
 
 tool_session_id: ContextVar[str | None] = ContextVar("tool_session_id", default=None)
+tool_user_id: ContextVar[str | None] = ContextVar("tool_user_id", default=None)
+tool_run_id: ContextVar[str | None] = ContextVar("tool_run_id", default=None)
+tool_step_id: ContextVar[str | None] = ContextVar("tool_step_id", default=None)
+_persistence_tasks: set[asyncio.Task] = set()
+
+
+async def _persist_safely(name, kwargs, result, pool, embedder, user_id):
+    try:
+        from app.rag.jobs import enqueue_tool_result
+        await enqueue_tool_result(name, kwargs, result, pool, user_id)
+    except Exception:
+        # Live tool success must not be converted into failure by optional indexing.
+        # The durable ingestion worker and metrics own retries/reporting.
+        return
 
 class GoogleWorkspaceBaseTool(BaseTool):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -64,10 +79,14 @@ class GoogleWorkspaceTool(GoogleWorkspaceBaseTool):
             elapsed = time.perf_counter() - started
             self._track_metric(elapsed)
             if self.db_pool and self.embedder:
-                from app.tools.persistence import persist_tool_result
-                await persist_tool_result(
-                    self.name, kwargs, result, self.db_pool, self.embedder
+                task = asyncio.create_task(
+                    _persist_safely(
+                        self.name, kwargs, result, self.db_pool, self.embedder,
+                        tool_user_id.get(),
+                    )
                 )
+                _persistence_tasks.add(task)
+                task.add_done_callback(_persistence_tasks.discard)
             await self._log_task(
                 tool_session_id.get(), self.name, kwargs, result,
                 "success", total_latency_ms=int(elapsed * 1000),
