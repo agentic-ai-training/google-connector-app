@@ -79,7 +79,7 @@ def get_toolsets() -> dict[str, list[BaseTool]]:
                      tools.create_calendar_event, tools.update_calendar_event,
                      tools.delete_calendar_event, tools.check_calendar_availability],
         "drive": [tools.search_drive, tools.get_drive_file, tools.upload_drive_file,
-                  tools.share_drive_file, tools.move_drive_file],
+                  tools.share_drive_file, tools.move_drive_file, tools.trash_drive_file],
         "docs": [tools.read_google_doc, tools.create_google_doc,
                  tools.append_to_google_doc],
         "sheets": [tools.read_google_sheet, tools.write_google_sheet,
@@ -299,6 +299,9 @@ def make_service_node(service: str, pool=None):
             # expose the full surface while preserving the supervisor classification.
             if len(chosen) > 1:
                 available = [tool for group in toolsets.values() for tool in group]
+            allowed_tools = set(state.get("allowed_tools") or [])
+            if allowed_tools:
+                available = [tool for tool in available if tool.name in allowed_tools]
             by_name = {tool.name: tool for tool in available}
             model_choice = state.get("model_to_use", "groq_fast")
             llm = get_llm(model_choice).bind_tools(available)

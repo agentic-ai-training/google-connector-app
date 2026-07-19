@@ -62,6 +62,92 @@ SERVICE_POSTCONDITIONS = {
     "contacts": ["Contact results retain stable identifiers and matched addresses"],
 }
 
+SERVICE_OPERATION_PATTERNS = {
+    "gmail": [("trash", r"\b(trash|delete)\b"), ("label", r"\blabel\b"),
+              ("reply", r"\brepl(?:y|ies)\b"), ("send", r"\bsend\b"),
+              ("search", r"\b(search|find|latest|recent|last|get|read|list)\b")],
+    "calendar": [("delete", r"\b(delete|cancel)\b"), ("update", r"\b(update|move|reschedule)\b"),
+                 ("create", r"\b(create|schedule|invite|book)\b"),
+                 ("availability", r"\b(available|availability|free|busy)\b"),
+                 ("list", r"\b(list|show|get|find)\b")],
+    "drive": [("trash", r"\b(delete|trash)\b"), ("share", r"\bshare\b"), ("move", r"\bmove\b"),
+              ("upload", r"\bupload\b"), ("search", r"\b(search|find|list)\b"),
+              ("get", r"\b(get|read|link)\b")],
+    "docs": [("append", r"\bappend\b"), ("create", r"\b(create|write|draft)\b"),
+             ("read", r"\b(read|get|summarize|find)\b")],
+    "sheets": [("append", r"\bappend\b"),
+               ("create_and_write", r"\b(create|make|build|populate)\b"),
+               ("write", r"\b(write|update|fill)\b"), ("read", r"\b(read|get|list)\b")],
+    "tasks": [("complete", r"\b(complete|finish)\b"), ("create", r"\b(create|add)\b"),
+              ("list", r"\b(list|show|get)\b")],
+    "chat": [("send", r"\b(send|message|post|chat)\b"), ("list_spaces", r"\b(list|show|space)\b")],
+    "contacts": [("search", r"\b(search|find|lookup|list)\b"), ("get", r"\bget\b")],
+    "meet": [("create", r"\b(create|start|schedule)\b"),
+             ("participants", r"\b(participant|attendee|attendance)\b"),
+             ("conferences", r"\b(list|recent|conference|record)\b"),
+             ("get", r"\b(get|find|meet)\b")],
+}
+
+OPERATION_TOOLS = {
+    ("gmail", "search"): ["search_gmail", "get_gmail_message", "list_gmail_threads"],
+    ("gmail", "send"): ["send_gmail"], ("gmail", "reply"): ["get_gmail_message", "reply_gmail"],
+    ("gmail", "label"): ["get_gmail_message", "label_gmail"],
+    ("gmail", "trash"): ["get_gmail_message", "trash_gmail"],
+    ("calendar", "create"): ["check_calendar_availability", "create_calendar_event", "get_calendar_event"],
+    ("calendar", "update"): ["get_calendar_event", "update_calendar_event"],
+    ("calendar", "delete"): ["get_calendar_event", "delete_calendar_event"],
+    ("calendar", "availability"): ["check_calendar_availability"],
+    ("calendar", "list"): ["list_calendar_events", "get_calendar_event"],
+    ("drive", "share"): ["get_drive_file", "share_drive_file"],
+    ("drive", "trash"): ["get_drive_file", "trash_drive_file"],
+    ("drive", "move"): ["get_drive_file", "move_drive_file"],
+    ("drive", "upload"): ["upload_drive_file", "get_drive_file"],
+    ("drive", "search"): ["search_drive", "get_drive_file"],
+    ("drive", "get"): ["search_drive", "get_drive_file"],
+    ("docs", "create"): ["create_google_doc", "read_google_doc"],
+    ("docs", "append"): ["read_google_doc", "append_to_google_doc"],
+    ("docs", "read"): ["read_google_doc"],
+    ("sheets", "create_and_write"): ["create_google_sheet", "write_google_sheet",
+                                        "append_to_google_sheet", "read_google_sheet"],
+    ("sheets", "write"): ["write_google_sheet", "read_google_sheet"],
+    ("sheets", "append"): ["append_to_google_sheet", "read_google_sheet"],
+    ("sheets", "read"): ["read_google_sheet"],
+    ("tasks", "create"): ["create_task", "list_tasks"],
+    ("tasks", "complete"): ["list_tasks", "complete_task"],
+    ("tasks", "list"): ["list_tasks"],
+    ("chat", "send"): ["list_chat_spaces", "send_chat_message"],
+    ("chat", "list_spaces"): ["list_chat_spaces"],
+    ("contacts", "search"): ["search_contacts", "get_contact"],
+    ("contacts", "get"): ["get_contact"],
+    ("meet", "create"): ["create_meet_space", "get_meet_space"],
+    ("meet", "participants"): ["list_meet_participants"],
+    ("meet", "conferences"): ["list_meet_conferences", "get_meet_space"],
+    ("meet", "get"): ["get_meet_space"],
+}
+READ_OPERATIONS = {"search", "get", "read", "list", "availability", "list_spaces",
+                   "participants", "conferences"}
+DEFAULT_READ_OPERATION = {
+    "gmail": "search", "calendar": "list", "drive": "search", "docs": "read",
+    "sheets": "read", "tasks": "list", "chat": "list_spaces", "contacts": "search",
+    "meet": "conferences",
+}
+
+
+def infer_operation(service: str, message: str, write: bool) -> str:
+    text = message.lower()
+    anchors = [match.start() for term in SERVICES.get(service, (service,))
+               for match in re.finditer(rf"\b{re.escape(term)}\b", text)]
+    candidates = []
+    for priority, (operation, pattern) in enumerate(
+        SERVICE_OPERATION_PATTERNS.get(service, [])
+    ):
+        for match in re.finditer(pattern, text):
+            distance = min((abs(match.start() - anchor) for anchor in anchors), default=0)
+            candidates.append((distance, priority, match.start(), operation))
+    if candidates:
+        return min(candidates)[-1]
+    return "execute_and_verify" if write else DEFAULT_READ_OPERATION.get(service, "read")
+
 
 def _matches(patterns: tuple[str, ...], text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
@@ -108,6 +194,8 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
     previous = None
     for service in ordered:
         step_id = f"execute_{service}"
+        operation = infer_operation(service, message, policy["write"])
+        read_only = operation in READ_OPERATIONS
         postconditions = SERVICE_POSTCONDITIONS.get(service, [
             "The response contains deterministic evidence for every claimed result"
         ])
@@ -115,10 +203,11 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
             id=step_id,
             title=f"Execute and verify the {service} portion",
             service=service,
-            operation="read" if not policy["write"] else "execute_and_verify",
+            operation=operation,
             dependencies=([previous] if previous and policy["write"] else []),
-            arguments={"request": message, "service": service},
-            read_only=not policy["write"],
+            arguments={"request": message, "service": service,
+                       "allowed_tools": OPERATION_TOOLS.get((service, operation), [])},
+            read_only=read_only,
             risk_level=policy["risk_level"],
             requires_approval=policy["requires_approval"],
             weight=1.0,
@@ -158,6 +247,9 @@ def validate_plan(plan: ExecutionPlan) -> list[str]:
             errors.append(f"{step.id} cannot depend on itself")
         if step.service not in SERVICE_ORDER:
             errors.append(f"{step.id} uses unknown service {step.service}")
+        allowed = OPERATION_TOOLS.get((step.service, step.operation))
+        if step.service != "general" and not allowed:
+            errors.append(f"{step.id} uses unknown operation {step.operation}")
     positions = {key: index for index, key in enumerate(keys)}
     for step in plan.steps:
         if any(positions[dependency] >= positions[step.id] for dependency in step.dependencies):

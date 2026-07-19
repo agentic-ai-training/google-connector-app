@@ -167,6 +167,11 @@ def share_drive_file(file_id:str,email:str,role:str="reader"): return g.drive_se
 def move_drive_file(file_id:str,new_folder_id:str):
     old=g.drive_service.files().get(fileId=file_id,fields="parents").execute().get("parents",[])
     return g.drive_service.files().update(fileId=file_id,addParents=new_folder_id,removeParents=",".join(old),fields="id,parents").execute()
+@tool("trash_drive_file", description="Move a Google Drive file to trash")
+def trash_drive_file(file_id:str):
+    return g.drive_service.files().update(
+        fileId=file_id, body={"trashed": True}, fields="id,name,trashed,webViewLink"
+    ).execute()
 
 def _doc_text(doc): return "".join(e.get("textRun",{}).get("content","") for s in doc.get("body",{}).get("content",[]) for e in s.get("paragraph",{}).get("elements",[]))
 @tool("read_google_doc", description="Google Workspace operation")
@@ -265,6 +270,7 @@ _TOOL_NAMES = (
     "update_calendar_event", "delete_calendar_event", "check_calendar_availability",
     "search_drive", "get_drive_file", "upload_drive_file", "share_drive_file",
     "move_drive_file", "read_google_doc", "create_google_doc",
+    "trash_drive_file",
     "append_to_google_doc", "read_google_sheet", "write_google_sheet",
     "append_to_google_sheet", "create_google_sheet", "list_tasks", "create_task",
     "complete_task", "search_contacts", "get_contact", "list_chat_spaces",

@@ -120,6 +120,10 @@ async def test_service_node_executes_tool(monkeypatch):
     def echo(value: str):
         return {"echo": value}
 
+    @tool(description="A mutation that must not be exposed to this read step")
+    def forbidden_write(value: str):
+        return {"forbidden": value}
+
     class FakeLLM:
         def __init__(self):
             self.calls = 0
@@ -139,13 +143,14 @@ async def test_service_node_executes_tool(monkeypatch):
             return AIMessage(content="verified")
 
     monkeypatch.setattr(
-        "app.agents.supervisor.get_toolsets", lambda: {"gmail": [echo]}
+        "app.agents.supervisor.get_toolsets", lambda: {"gmail": [echo, forbidden_write]}
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("gmail")({
         "message": "echo",
         "model_to_use": "groq_fast",
         "services": ["gmail"],
+        "allowed_tools": ["echo"],
         "session_id": "test",
     })
     assert result["output"] == "verified"
@@ -236,12 +241,20 @@ def test_multi_service_plan_is_dependency_ordered():
     assert plan.steps[0].dependencies == []
     assert plan.steps[1].dependencies == [plan.steps[0].id]
     assert plan.steps[-1].dependencies == [plan.steps[-2].id]
+    assert [step.operation for step in plan.steps] == [
+        "search", "create_and_write", "send", "create",
+    ]
+    assert plan.steps[0].read_only is True
+    assert plan.steps[1].read_only is False
 
 
 def test_dependency_free_reads_can_execute_in_parallel():
     plan, _ = build_plan("List recent Gmail messages and Drive files")
     assert [step.service for step in plan.steps] == ["gmail", "drive"]
     assert all(step.read_only and step.dependencies == [] for step in plan.steps)
+    assert plan.steps[0].arguments["allowed_tools"] == [
+        "search_gmail", "get_gmail_message", "list_gmail_threads",
+    ]
 
 
 def test_write_verification_requires_stable_artifact_evidence():

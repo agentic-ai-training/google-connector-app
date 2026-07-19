@@ -26,3 +26,4 @@ class AgentState(TypedDict, total=False):
     operational_context: str
     risk_level: str
     allow_small_fallback: bool
+    allowed_tools: list[str]

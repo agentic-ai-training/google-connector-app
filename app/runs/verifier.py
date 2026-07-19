@@ -9,7 +9,7 @@ from app.db import google_clients as google
 WRITE_TOOLS = {
     "send_gmail", "reply_gmail", "label_gmail", "trash_gmail",
     "create_calendar_event", "update_calendar_event", "delete_calendar_event",
-    "upload_drive_file", "share_drive_file", "move_drive_file",
+    "upload_drive_file", "share_drive_file", "move_drive_file", "trash_drive_file",
     "create_google_doc", "append_to_google_doc", "write_google_sheet",
     "append_to_google_sheet", "create_google_sheet", "create_task", "complete_task",
     "send_chat_message", "create_meet_space",
@@ -73,11 +73,13 @@ def _read_after_write(tool: str, args: dict, result: dict) -> dict[str, Any]:
                 return {"deleted": True, "id": args["event_id"]}
             raise
         raise RuntimeError("Calendar event still exists after deletion")
-    if tool in {"upload_drive_file", "share_drive_file", "move_drive_file"}:
+    if tool in {"upload_drive_file", "share_drive_file", "move_drive_file", "trash_drive_file"}:
         resource_id = _first(result, "fileId") or args.get("file_id") or result.get("id")
         value = google.drive_service.files().get(
-            fileId=resource_id, fields="id,webViewLink,parents,permissionIds"
+            fileId=resource_id, fields="id,webViewLink,parents,permissionIds,trashed"
         ).execute()
+        if tool == "trash_drive_file" and not value.get("trashed"):
+            raise RuntimeError("Drive file still exists outside trash")
         return {"id": value.get("id"), "webViewLink": value.get("webViewLink")}
     if tool in {"create_google_doc", "append_to_google_doc"}:
         resource_id = _first(result, "documentId") or args.get("document_id")

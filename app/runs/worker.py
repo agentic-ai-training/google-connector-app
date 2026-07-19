@@ -172,6 +172,7 @@ async def _execute_step(app, pool, run, step, dependencies):
         "message": scoped_message, "session_id": run["session_id"],
         "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
         "forced_service": step["service"], "messages": [],
+        "allowed_tools": (step.get("input_data") or {}).get("allowed_tools", []),
         "risk_level": run["risk_level"],
         "allow_small_fallback": (
             run["risk_level"] == "low" and len((run["plan"] or {}).get("services", [])) <= 1

@@ -8,6 +8,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Label deployments with the immutable commit
+        run: |
+          printf '%s' "$GITHUB_SHA" | npx -y @railway/cli@latest variable set DEPLOYMENT_VERSION --stdin --service google-connector-app --skip-deploys >/dev/null
+          printf '%s' "$GITHUB_SHA" | npx -y @railway/cli@latest variable set DEPLOYMENT_VERSION --stdin --service google-connector-worker --skip-deploys >/dev/null
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       - name: Deploy backend with Railway CLI
         run: npx -y @railway/cli@latest up --service google-connector-app --detach
         env:
