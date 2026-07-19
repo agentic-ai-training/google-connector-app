@@ -34,6 +34,8 @@ jobs:
       - run: pip install flake8 && flake8 app/ --max-line-length=100
       - name: Run deterministic planner regression set
         run: python scripts/run_golden_evals.py
+      - name: Replay Google mutations against the no-network simulator
+        run: python scripts/run_workflow_replays.py
       - name: Verify migration downgrade and forward repair
         run: |
           alembic downgrade 002

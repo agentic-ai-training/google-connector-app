@@ -25,6 +25,7 @@ from app.rag.chunking import chunk_gmail, chunk_meet_transcript, chunk_pdf, chun
 from app.runs.worker import verify_step
 from app.tools.base import tool_run_id
 from app.tools.registry import _request_id
+from app.evaluation.replay import replay_case
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -62,6 +63,39 @@ def test_retrieval_metrics_are_rank_sensitive():
     assert metrics["precision@3"] == pytest.approx(2 / 3)
     assert metrics["mrr"] == 0.5
     assert 0 < metrics["ndcg@3"] < 1
+
+
+def test_mutation_replay_is_idempotent_without_network_access():
+    result = replay_case({
+        "id": "idempotency-test",
+        "steps": [
+            {"id": "first", "service": "gmail", "operation": "send",
+             "idempotency_key": "same", "arguments": {"recipient": "a@example.com"}},
+            {"id": "second", "service": "gmail", "operation": "send",
+             "idempotency_key": "same", "dependencies": ["first"],
+             "arguments": {"recipient": "a@example.com"}},
+        ],
+    })
+    assert result.status == "completed"
+    assert result.steps[0].output["message_id"] == result.steps[1].output["message_id"]
+    assert len(result.artifacts) == 1
+
+
+def test_mutation_replay_records_breaking_point_and_compensation():
+    result = replay_case({
+        "id": "compensation-test", "expected_status": "failed",
+        "fail_once": ["chat.send"], "compensate_on_failure": True,
+        "steps": [
+            {"id": "sheet", "service": "sheets", "operation": "create_and_write",
+             "arguments": {"rows": [["Name"], ["Ada"]]}},
+            {"id": "chat", "service": "chat", "operation": "send",
+             "dependencies": ["sheet"],
+             "arguments": {"space": "fixture", "text": "${sheet.spreadsheetUrl}"}},
+        ],
+    })
+    assert result.first_breaking_point == "chat"
+    assert result.steps[0].compensated is True
+    assert result.functional_completion == 100
 
 
 @pytest.mark.parametrize(

@@ -296,7 +296,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 ## Sprint 16 — Evaluation and replay
 
-- [ ] Build mock Google adapters and safe replay for mutations.
+- [x] Build mock Google adapters and safe replay for mutations.
 - [ ] Compare old/new planner, prompt, OKF, routing, chunking, model, and recovery policies on identical tasks.
 - [ ] Measure task/plan/tool/artifact correctness, latency, tokens, recovery, side effects, satisfaction, and retrieval.
 - [ ] Block promotion on golden-task, token, cancellation, isolation, verification, safety, or RAG regression.
@@ -403,3 +403,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-19: Audited the production RAG migration and found 1,152 Gmail plus 13,367 Drive legacy vectors but zero tenant-safe chunks. Added a dry-run/apply/rollback importer that assigns legacy vectors only to an explicit original owner with ACL and lineage; it never makes old single-user data globally searchable.
 - 2026-07-19: Applied the reversible legacy import for the documented original owner: 14,521 tenant-scoped chunks (1,152 Gmail, 13,367 Drive, 2 Calendar). A live hybrid query returned owner results while the same query for an unrelated user returned zero, proving cross-user isolation.
 - 2026-07-19: Replaced generic service execution steps with explicit validated operations and per-step tool allowlists, while preserving mixed-workflow dependencies and read retry semantics. Added verified Drive trash support. Deploy workflow now labels API and worker with the exact Git commit automatically.
+- 2026-07-19: Added a deterministic no-network Google Workspace mutation simulator and versioned replay suite covering idempotency, dependency propagation, retry, partial completion, breaking-point detection, and compensation; wired it into backend CI.

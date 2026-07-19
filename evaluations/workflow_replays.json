@@ -1,0 +1,39 @@
+[
+  {
+    "id": "gmail-send-idempotent",
+    "expect": {"artifact_count": 1, "same_external_id": [["send", "duplicate"]]},
+    "steps": [
+      {"id": "send", "service": "gmail", "operation": "send", "arguments": {"recipient": "fixture@example.com", "subject": "Replay", "body": "Safe fixture"}},
+      {"id": "duplicate", "service": "gmail", "operation": "send", "idempotency_key": "gmail-send-idempotent:send", "dependencies": ["send"], "arguments": {"recipient": "fixture@example.com", "subject": "Replay", "body": "Safe fixture"}}
+    ]
+  },
+  {
+    "id": "multi-service-sheet-chat-meet",
+    "expect": {"artifact_count": 3},
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"title": "Fixture", "rows": [["Name"], ["Ada"], ["Grace"]]}},
+      {"id": "chat", "service": "chat", "operation": "send", "dependencies": ["sheet"], "arguments": {"space": "fixture-space", "text": "${sheet.spreadsheetUrl}"}},
+      {"id": "calendar", "service": "calendar", "operation": "create", "dependencies": ["sheet"], "arguments": {"attendee": "fixture@example.com", "timezone": "Asia/Kolkata", "attachment": "${sheet.spreadsheetUrl}"}}
+    ]
+  },
+  {
+    "id": "transient-calendar-retry",
+    "expect": {"artifact_count": 1},
+    "fail_once": ["calendar.create"],
+    "steps": [
+      {"id": "calendar", "service": "calendar", "operation": "create", "retries": 1, "arguments": {"attendee": "fixture@example.com", "timezone": "UTC"}}
+    ]
+  },
+  {
+    "id": "partial-failure-compensates-sheet",
+    "expected_status": "failed",
+    "expect": {"artifact_count": 1, "first_breaking_point": "chat", "compensated_steps": ["sheet"]},
+    "fail_once": ["chat.send"],
+    "compensate_on_failure": true,
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Linus"]]}},
+      {"id": "chat", "service": "chat", "operation": "send", "dependencies": ["sheet"], "arguments": {"space": "fixture-space", "text": "${sheet.spreadsheetUrl}"}},
+      {"id": "calendar", "service": "calendar", "operation": "create", "dependencies": ["sheet"], "arguments": {"timezone": "UTC"}}
+    ]
+  }
+]
