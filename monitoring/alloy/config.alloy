@@ -1,0 +1,59 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.scrape "google_connector_api" {
+  targets = [{
+    "__address__" = sys.env("API_METRICS_TARGET"),
+    "job"         = "google-connector-api",
+    "environment" = sys.env("DEPLOYMENT_ENVIRONMENT"),
+  }]
+  metrics_path = "/monitoring/metrics"
+  scrape_interval = "15s"
+  forward_to = [prometheus.relabel.google_connector.receiver]
+}
+
+prometheus.scrape "google_connector_worker" {
+  targets = [{
+    "__address__" = sys.env("WORKER_METRICS_TARGET"),
+    "job"         = "google-connector-worker",
+    "environment" = sys.env("DEPLOYMENT_ENVIRONMENT"),
+  }]
+  metrics_path = "/metrics"
+  scrape_interval = "15s"
+  forward_to = [prometheus.relabel.google_connector.receiver]
+}
+
+prometheus.relabel "google_connector" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "agent_.*|process_.*|python_.*"
+    action        = "keep"
+  }
+
+  rule {
+    regex  = "user_id|session_id|run_id|email|file_id|message_id"
+    action = "labeldrop"
+  }
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+    queue_config {
+      retry_on_http_429 = true
+      max_shards        = 4
+      capacity          = 2500
+    }
+  }
+  external_labels = {
+    application = "google-connector-app",
+  }
+}

@@ -25,12 +25,28 @@ class Settings(BaseSettings):
     allow_dev_auth: bool = False
     jwt_secret_key: str = "change-this-in-production-use-256-bit-random-string"
     jwt_algorithm: str = "HS256"
+    oauth_encryption_keys: str = ""
     admin_emails: str = "achintyat256@gmail.com"
     railway_url: str = ""
     railway_public_domain: str = ""
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     neon_database_url: str = ""
     ollama_host: str = "http://localhost:11434"
+    durable_runs_enabled: bool = True
+    embedded_worker_enabled: bool = True
+    legacy_chat_enabled: bool = True
+    okf_enabled: bool = True
+    governed_improvements_enabled: bool = True
+    worker_poll_seconds: float = 1.0
+    worker_lease_seconds: int = 120
+    raw_telemetry_retention_days: int = 14
+    workflow_retention_days: int = 90
+    aggregate_retention_days: int = 365
+    admin_notification_email: str = ""
+    grafana_cloud_prometheus_url: str = ""
+    grafana_cloud_prometheus_username: str = ""
+    grafana_cloud_api_key: str = ""
+    deployment_version: str = "local"
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"), extra="ignore"
     )

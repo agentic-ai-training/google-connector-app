@@ -25,3 +25,14 @@ def get_llm(model_choice, *, fallback=False):
         max_retries=1,
         max_tokens=settings.groq_max_tokens,
     )
+
+
+def get_model_name(model_choice, *, fallback=False):
+    settings = get_settings()
+    if fallback:
+        return settings.groq_fallback_model
+    return (
+        settings.groq_reasoning_model
+        if model_choice == "groq_reasoning"
+        else settings.groq_fast_model
+    )

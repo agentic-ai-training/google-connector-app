@@ -1,0 +1,50 @@
+{
+  "annotations":{"list":[]},
+  "editable":true,
+  "panels":[
+    {
+      "type":"stat","title":"Runs","gridPos":{"h":5,"w":4,"x":0,"y":0},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT count(*) AS value FROM reporting.session_summary WHERE queued_at BETWEEN $__timeFrom() AND $__timeTo()","refId":"A"}]
+    },
+    {
+      "type":"stat","title":"Average functional completion","gridPos":{"h":5,"w":5,"x":4,"y":0},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT coalesce(avg(functional_completion),0) AS value FROM reporting.session_summary WHERE queued_at BETWEEN $__timeFrom() AND $__timeTo()","refId":"A"}]
+    },
+    {
+      "type":"stat","title":"Failed runs","gridPos":{"h":5,"w":4,"x":9,"y":0},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT count(*) AS value FROM reporting.session_summary WHERE status='failed' AND queued_at BETWEEN $__timeFrom() AND $__timeTo()","refId":"A"}]
+    },
+    {
+      "type":"stat","title":"Awaiting approval","gridPos":{"h":5,"w":5,"x":13,"y":0},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT count(*) AS value FROM reporting.session_summary WHERE status='awaiting_approval'","refId":"A"}]
+    },
+    {
+      "type":"stat","title":"Stale heartbeat","gridPos":{"h":5,"w":6,"x":18,"y":0},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT count(*) AS value FROM reporting.session_summary WHERE status='running' AND heartbeat_at < now()-interval '2 minutes'","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Current and recent runs","gridPos":{"h":12,"w":24,"x":0,"y":5},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT run_id,session_id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,left(request,160) AS task,status,current_phase,functional_completion,duration_ms,total_tokens,error_category,incident_summary->>'breaking_point' AS breaking_point,queued_at FROM reporting.session_summary WHERE queued_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY queued_at DESC LIMIT 250","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Step timeline","gridPos":{"h":11,"w":24,"x":0,"y":17},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT run_id,sequence_no,title,service,tool_name,status,risk_level,requires_approval,duration_ms,error_category,error_message,started_at,completed_at FROM reporting.step_timeline ORDER BY coalesce(started_at,completed_at) DESC NULLS LAST LIMIT 500","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Improvement queue","gridPos":{"h":9,"w":24,"x":0,"y":28},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT * FROM reporting.improvement_queue ORDER BY created_at DESC LIMIT 100","refId":"A"}]
+    }
+  ],
+  "refresh":"30s","schemaVersion":41,
+  "tags":["google-connector","sessions","workflows"],
+  "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
+  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":1
+}

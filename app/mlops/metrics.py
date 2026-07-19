@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 tool_errors = Counter("agent_tool_errors_total", "Tool errors", ["tool_name"])
 tool_latency = Histogram("agent_tool_latency_seconds", "Tool latency", ["tool_name"])
 llm_latency = Histogram("agent_llm_latency_seconds", "LLM latency", ["model"])
@@ -8,4 +8,29 @@ request_latency = Histogram(
     "agent_request_latency_seconds",
     "Time until an HTTP response starts",
     ["endpoint", "method", "status"],
+)
+run_transitions = Counter(
+    "agent_run_transitions_total", "Durable run state transitions", ["status"]
+)
+run_failures = Counter(
+    "agent_run_failures_total", "Durable run failures", ["category"]
+)
+run_duration = Histogram(
+    "agent_run_duration_seconds", "End-to-end durable run duration", ["status"]
+)
+run_queue_depth = Gauge(
+    "agent_run_queue_depth", "Runs currently queued or leased", ["status"]
+)
+approval_requests = Counter(
+    "agent_approval_requests_total", "High-risk approvals requested", ["risk"]
+)
+rag_decisions = Counter(
+    "agent_rag_decisions_total", "RAG gate decisions", ["mode", "reason"]
+)
+stale_runs = Gauge("agent_stale_runs", "Running jobs with an expired worker lease")
+embedding_queue = Gauge(
+    "agent_embedding_jobs", "Embedding jobs by durable state", ["status"]
+)
+improvement_queue = Gauge(
+    "agent_improvement_proposals", "Governed proposals by lifecycle state", ["status"]
 )

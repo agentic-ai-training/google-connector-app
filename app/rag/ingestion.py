@@ -1,0 +1,86 @@
+import json
+import uuid
+
+from app.rag.chunking import chunks_for_source
+
+TOOL_SOURCES = {
+    "search_gmail": "gmail", "get_gmail_message": "gmail",
+    "search_drive": "drive", "get_drive_file": "drive",
+    "read_google_doc": "docs", "read_google_sheet": "sheets",
+    "list_calendar_events": "calendar", "get_calendar_event": "calendar",
+    "list_chat_spaces": "chat", "search_contacts": "contacts",
+    "get_contact": "contacts", "list_tasks": "tasks",
+    "list_meet_conferences": "meet", "list_meet_participants": "meet",
+}
+
+
+def _items(result):
+    if isinstance(result, list):
+        return [item if isinstance(item, dict) else {"content": str(item)} for item in result]
+    if isinstance(result, dict):
+        for key in ("messages", "files", "items", "results", "values"):
+            value = result.get(key)
+            if isinstance(value, list):
+                if key == "values":
+                    return [{"values": value}]
+                return [item if isinstance(item, dict) else {"content": str(item)} for item in value]
+        return [result]
+    return [{"content": str(result)}]
+
+
+async def index_tool_result(name, args, result, pool, embedder, user_id):
+    source_type = TOOL_SOURCES.get(name)
+    if not source_type or not user_id:
+        return 0
+    candidates = []
+    for item_index, item in enumerate(_items(result)):
+        source_id = str(
+            item.get("id") or item.get("spreadsheetId") or item.get("documentId")
+            or args.get("message_id") or args.get("file_id") or args.get("document_id")
+            or args.get("spreadsheet_id") or uuid.uuid5(
+                uuid.NAMESPACE_URL, f"{name}:{json.dumps(args, sort_keys=True, default=str)}:{item_index}"
+            )
+        )
+        for chunk in chunks_for_source(source_type, item):
+            candidates.append((source_id, chunk))
+    if not candidates:
+        return 0
+    chunker_version = f"{source_type}-v1"
+    async with pool.acquire() as conn:
+        existing = await conn.fetch(
+            """SELECT source_id,chunk_index,content_hash FROM rag_chunks
+               WHERE user_id=$1 AND source_type=$2 AND chunker_version=$3
+                 AND source_id=ANY($4::text[])""",
+            user_id, source_type, chunker_version,
+            list(dict.fromkeys(item[0] for item in candidates)),
+        )
+    hashes = {(row["source_id"], row["chunk_index"]): row["content_hash"] for row in existing}
+    changed = [
+        (source_id, chunk) for source_id, chunk in candidates
+        if hashes.get((source_id, chunk.index)) != chunk.content_hash
+    ]
+    if not changed:
+        return 0
+    vectors = await embedder.aembed_documents([chunk.content for _, chunk in changed])
+    rows = []
+    for (source_id, chunk), vector in zip(changed, vectors, strict=True):
+        rows.append((
+            user_id, source_type, source_id, chunk.parent_id, chunk.index, chunk.heading,
+            chunk.content, chunk.content_hash, json.dumps(chunk.metadata, default=str),
+            json.dumps({"owner": user_id}), vector, "nomic-embed-text", chunker_version,
+        ))
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.executemany(
+            """INSERT INTO rag_chunks
+               (user_id,source_type,source_id,parent_id,chunk_index,heading,content,
+                content_hash,metadata,acl,embedding,embedding_version,chunker_version,
+                source_modified_at)
+               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,now())
+               ON CONFLICT(user_id,source_type,source_id,chunker_version,chunk_index)
+               DO UPDATE SET parent_id=excluded.parent_id,heading=excluded.heading,
+                 content=excluded.content,content_hash=excluded.content_hash,
+                 metadata=excluded.metadata,acl=excluded.acl,embedding=excluded.embedding,
+                 embedding_version=excluded.embedding_version,indexed_at=now(),deleted_at=NULL""",
+            rows,
+        )
+    return len(rows)

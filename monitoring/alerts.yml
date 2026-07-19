@@ -1,0 +1,28 @@
+groups:
+  - name: google-connector-reliability
+    rules:
+      - alert: DurableRunLeaseExpired
+        expr: agent_stale_runs > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "A durable run lost its worker heartbeat"}
+      - alert: DurableRunBacklog
+        expr: agent_run_queue_depth{status="queued"} > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Durable run queue is growing"}
+      - alert: EmbeddingDeadLetters
+        expr: agent_embedding_jobs{status="dead_letter"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Embedding jobs require operator review"}
+      - alert: HighRunFailureRate
+        expr: sum(rate(agent_run_failures_total[15m])) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Durable workflow failures increased"}
+      - alert: GoogleToolErrors
+        expr: sum(rate(agent_tool_errors_total[15m])) > 0.2
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Google tool errors increased"}

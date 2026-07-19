@@ -18,3 +18,10 @@ class AgentState(TypedDict, total=False):
     system_prompt: str
     prompt_id: str | None
     assignment_id: str | None
+    rag_decision: dict
+    run_id: str
+    step_id: str
+    forced_service: str
+    operational_context: str
+    risk_level: str
+    allow_small_fallback: bool
