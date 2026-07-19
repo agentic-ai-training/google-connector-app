@@ -313,6 +313,7 @@ def make_service_node(service: str, pool=None):
                 HumanMessage(content=state.get("message", "")),
             ]
             results = []
+            executions = []
             for _ in range(8):
                 used_model = get_model_name(model_choice)
                 fallback_from = None
@@ -357,6 +358,7 @@ def make_service_node(service: str, pool=None):
                         "messages": messages[1:],
                         "output": str(response.content),
                         "tool_results": results,
+                        "tool_executions": executions,
                         "task_complete": True,
                     }
                 for call in calls:
@@ -373,6 +375,11 @@ def make_service_node(service: str, pool=None):
                         message, result = await _execute_tool(tool, call, state, pool)
                     messages.append(message)
                     results.append(result)
+                    executions.append({
+                        "tool": call["name"],
+                        "arguments": call.get("args", {}),
+                        "result": result,
+                    })
             raise RuntimeError("Tool-call limit reached before the task completed")
         except Exception as exc:
             return {

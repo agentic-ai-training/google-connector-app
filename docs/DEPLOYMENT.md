@@ -23,3 +23,18 @@ Use internal users first, then 5–10, 20–30, 40–50, and 80–90 users. At e
 review task correctness, external side effects, OAuth health, latency, quota, failure
 categories, orphaned artifacts, and privacy. Automatic rollback may disable a candidate;
 production promotion always needs the second human approval.
+
+## Railway service layout
+
+- `google-connector-app`: API, `Dockerfile`, public port 8080, and
+  `EMBEDDED_WORKER_ENABLED=false`.
+- `google-connector-worker`: durable worker, `Dockerfile.worker`, private metrics
+  port 8001, and the same application/database/OAuth variables as the API.
+- `google-connector-alloy`: `Dockerfile.alloy`; keep it undeployed until all three
+  Grafana Cloud remote-write variables are configured.
+
+The GitHub deploy workflow updates both the API and worker from the reviewed `main`
+commit. Alloy requires `GRAFANA_CLOUD_PROMETHEUS_URL`,
+`GRAFANA_CLOUD_PROMETHEUS_USERNAME`, and `GRAFANA_CLOUD_API_KEY`, plus private targets
+`google-connector-app.railway.internal:8080` and
+`google-connector-worker.railway.internal:8001`.

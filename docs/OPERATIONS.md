@@ -25,6 +25,17 @@ the worker starts only after the API health check passes.
   to `dead_letter` after exhaustion.
 - The incident summary records last success, breaking point, pending steps, cause,
   evidence IDs, and four distinct completion measures.
+- Supported writes are read back from Google before completion is claimed. A run with
+  verified earlier artifacts and a later failure is recorded as `partial`, not failed.
+
+## Governed improvement decisions
+
+Administrators see an in-app badge (refreshed every 30 seconds) when a proposal needs
+canary review, activation, or final promotion. Open `/admin/improvements` to inspect
+the sanitized evidence, exact candidate diff, privacy/security reports, rollback plan,
+and content hash. Material changes invalidate the reviewed hash. A measured passing
+canary is mandatory before the second human publication decision. No email or Chat
+notification is sent automatically because those are external writes.
 
 ## Rollback
 

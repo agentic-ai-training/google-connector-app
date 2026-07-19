@@ -52,6 +52,21 @@ async def improvements(status: str | None = None):
     return {"proposals": [dict(row) for row in rows]}
 
 
+@router.get("/improvements-pending/count")
+async def pending_improvement_count():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        counts = await conn.fetchrow(
+            """SELECT
+                 count(*) FILTER(WHERE status='awaiting_review') AS review,
+                 count(*) FILTER(WHERE status='approved_for_canary') AS activation,
+                 count(*) FILTER(WHERE status='awaiting_promotion') AS promotion
+               FROM improvement_proposals"""
+        )
+    values = dict(counts)
+    return {**values, "total": sum(values.values())}
+
+
 @router.get("/improvements/{proposal_key}")
 async def improvement(proposal_key: str):
     pool = await get_pool()
