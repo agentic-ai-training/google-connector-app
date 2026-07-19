@@ -11,6 +11,7 @@ from app.runs.incident import build_incident, completion_from_steps
 from app.runs.repository import append_event
 from app.runs.verifier import verify_executions
 from app.mlops.metrics import run_duration, run_failures, run_transitions
+from app.evaluation.collector import record_run_evaluation
 
 
 def classify_error(exc: Exception) -> str:
@@ -146,13 +147,17 @@ async def _store_artifacts(conn, run, step, artifacts):
         await conn.execute(
             """INSERT INTO agent_artifacts
                (run_id,step_id,user_id,artifact_type,external_id,url,metadata,
-                verification_status,verified_at)
-               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'verified',now())
+                verification_status,verified_at,safe_to_delete)
+               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'verified',now(),$8)
                ON CONFLICT(run_id,artifact_type,external_id) DO UPDATE SET
                  url=COALESCE(EXCLUDED.url,agent_artifacts.url),
+                 metadata=agent_artifacts.metadata||EXCLUDED.metadata,
+                 safe_to_delete=agent_artifacts.safe_to_delete OR EXCLUDED.safe_to_delete,
                  verification_status='verified',verified_at=now()""",
             run["id"], step["id"], run["user_id"], step["service"] or "google_resource",
-            external_id, artifact.get("url"), json.dumps({"source": "tool_result"}),
+            external_id, artifact.get("url"),
+            json.dumps({"source": "tool_result", **artifact.get("metadata", {})}),
+            bool(artifact.get("safe_to_delete")),
         )
 
 
@@ -297,6 +302,7 @@ async def execute_run(app, pool, run):
             )
         await append_event(pool, run_id, user_id, "run_completed", phase="completed",
                            message=final_output, payload={"task_complete": True})
+        await record_run_evaluation(pool, run_id)
         run_transitions.labels("completed").inc()
         run_duration.labels("completed").observe(time.perf_counter() - started)
     except Exception as exc:
@@ -370,6 +376,7 @@ async def execute_run(app, pool, run):
             pool, run_id, user_id, f"run_{terminal_status}", phase=terminal_status,
             message=str(exc), payload={"category": category},
         )
+        await record_run_evaluation(pool, run_id)
         run_transitions.labels(terminal_status).inc()
         run_failures.labels(category).inc()
         run_duration.labels(terminal_status).observe(time.perf_counter() - started)

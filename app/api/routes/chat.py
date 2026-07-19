@@ -68,7 +68,8 @@ async def chat(req: ChatRequest, request: Request):
         raise HTTPException(403, "Connect your Google account before chatting")
     direct_answer = capability_answer(req.message)
     prompt, assignment_id = await get_prompt(
-        "supervisor_system", req.session_id, pool=pool
+        "supervisor_system", req.session_id, pool=pool,
+        risk_level=policy["risk_level"],
     )
     prompt_id = prompt.get("id") if prompt else None
     system_prompt = prompt.get("content") if prompt else ""

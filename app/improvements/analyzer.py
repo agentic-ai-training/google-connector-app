@@ -106,11 +106,30 @@ async def analyze_recent_failures(pool) -> int:
             )
             if not proposal_id:
                 continue
+            notification_payload = json.dumps({
+                "proposal_key": proposal_key, "title": f"Reduce recurring {category} failures",
+                "severity": "high" if group["failures"] >= 10 else "medium",
+                "contains_private_evidence": False,
+            })
+            await conn.execute(
+                """INSERT INTO improvement_notifications
+                   (proposal_id,channel,event_type,status,sanitized_payload,error_message)
+                   SELECT $1,channel,'review_required',
+                          CASE WHEN channel IN ('admin','grafana') THEN 'sent' ELSE 'skipped' END,
+                          $2::jsonb,
+                          CASE WHEN channel IN ('email','github')
+                               THEN 'requires separately configured credentials and an approved external write'
+                          END
+                   FROM unnest(ARRAY['admin','grafana','email','github']) channel
+                   ON CONFLICT(proposal_id,channel,event_type) DO NOTHING""",
+                proposal_id, notification_payload,
+            )
             for run_id in group["run_ids"]:
                 await conn.execute(
                     """INSERT INTO improvement_evidence
                        (proposal_id,run_id,evidence_type,sanitized_payload)
-                       VALUES($1,$2,'failure_category',$3::jsonb)""",
+                       SELECT $1,id,'failure_category',$3::jsonb
+                       FROM agent_runs WHERE id=$2""",
                     proposal_id, run_id,
                     json.dumps({"category": category, "contains_user_content": False}),
                 )
@@ -203,6 +222,25 @@ async def evaluate_active_canaries(pool) -> int:
             await conn.execute(
                 "UPDATE improvement_proposals SET status=$1,updated_at=now() WHERE id=$2",
                 proposal_status, canary["proposal_id"],
+            )
+            notification_payload = json.dumps({
+                "proposal_id": str(canary["proposal_id"]),
+                "canary_status": canary_status,
+                "regressions": assessment["regressions"],
+                "contains_private_evidence": False,
+            })
+            await conn.execute(
+                """INSERT INTO improvement_notifications
+                   (proposal_id,channel,event_type,status,sanitized_payload,error_message)
+                   SELECT $1,channel,$2,
+                          CASE WHEN channel IN ('admin','grafana') THEN 'sent' ELSE 'skipped' END,
+                          $3::jsonb,
+                          CASE WHEN channel IN ('email','github')
+                               THEN 'requires separately configured credentials and an approved external write'
+                          END
+                   FROM unnest(ARRAY['admin','grafana','email','github']) channel
+                   ON CONFLICT(proposal_id,channel,event_type) DO NOTHING""",
+                canary["proposal_id"], f"canary_{canary_status}", notification_payload,
             )
             changed += 1
     return changed

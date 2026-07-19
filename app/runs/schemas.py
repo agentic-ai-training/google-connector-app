@@ -49,6 +49,18 @@ class RunClarification(BaseModel):
     answers: dict[str, str]
 
 
+class ArtifactCleanupRequest(BaseModel):
+    action: Literal[
+        "preserve", "delete", "cancel_event", "retry_population",
+        "rollback_sharing",
+    ]
+
+
+class ArtifactCleanupDecision(BaseModel):
+    approved: bool
+    action_hash: str
+
+
 class ImprovementDecision(BaseModel):
     decision: Literal["approved", "rejected", "changes_requested"]
     proposal_hash: str

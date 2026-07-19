@@ -41,10 +41,23 @@ def extract_artifacts(executions: list[dict]) -> list[dict]:
             "meetLink", "meetingUri", "url", "link",
         )
         if external_id or url:
+            identifiers = {
+                key: value for key, value in args.items()
+                if key in {"file_id", "document_id", "spreadsheet_id", "event_id",
+                           "calendar_id", "message_id", "task_id", "tasklist_id",
+                           "space_name"}
+            }
+            metadata = {"tool": tool, "identifiers": identifiers}
+            if tool == "share_drive_file" and result.get("id"):
+                metadata["permission_id"] = str(result["id"])
             artifacts.append({
                 "external_id": str(external_id) if external_id else None,
                 "url": str(url) if url else None,
                 "tool": tool,
+                "metadata": metadata,
+                "safe_to_delete": tool in {
+                    "upload_drive_file", "create_google_doc", "create_google_sheet"
+                },
             })
     return artifacts
 

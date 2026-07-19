@@ -5,14 +5,18 @@ import {useEffect,useRef,useState} from "react";
 export type Message={role:"user"|"assistant";content:string};
 export type CurrentUser={email:string;admin?:boolean;google_connected:boolean;missing_scopes?:string[]};
 export type RunStep={id:string;title:string;status:string;risk_level:string;requires_approval:boolean};
+export type RunEvent={id:number;event_type:string;phase?:string;message?:string;created_at:string};
 export type RunApproval={action_hash:string;action_summary:Record<string,unknown>;expires_at:string;status:string};
-export type RunArtifact={id:string;artifact_type:string;external_id:string;url?:string;verification_status:string;cleanup_state:string};
+export type RunArtifact={id:string;artifact_type:string;external_id:string;url?:string;verification_status:string;cleanup_state:string;safe_to_delete:boolean};
 export type AgentRun={
   id:string;status:string;current_phase:string;technical_completion:number;
   functional_completion:number;user_visible_completion:number;side_effect_integrity:number;
+  plan?:{objective?:string;rag_mode?:string;services?:string[];estimated_max_tokens?:number};
+  heartbeat_at?:string;models_used?:string[];input_tokens:number;output_tokens:number;
+  error_category?:string;deployment_version?:string;
   result?:{output?:string};incident_summary?:{breaking_point?:string;primary_cause?:string;error?:string};
   clarification_questions?:string[];
-  steps:RunStep[];artifacts:RunArtifact[];approval?:RunApproval|null;
+  steps:RunStep[];artifacts:RunArtifact[];recent_events?:RunEvent[];approval?:RunApproval|null;
 };
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
 
@@ -180,7 +184,11 @@ export function useChat(sessionId:string){
     if(!response.ok){const data=await response.json();throw new Error(data.detail??"Resume failed");}
     setStreaming(true);await monitor(currentRun.id);
   };
-  return{messages,sendMessage,streaming,error,currentRun,decide,clarify,cancel,resume};
+  const refreshRun=async()=>{
+    if(!currentRun)return;
+    setCurrentRun(await loadRun(currentRun.id));
+  };
+  return{messages,sendMessage,streaming,error,currentRun,decide,clarify,cancel,resume,refreshRun};
 }
 
 export async function sendFeedback(sessionId:string,rating:number){

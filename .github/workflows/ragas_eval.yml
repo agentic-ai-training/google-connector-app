@@ -6,27 +6,13 @@ on:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    services:
-      ollama:
-        image: ollama/ollama:latest
-        ports: ['11434:11434']
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt
-      - name: Pull embedding model
-        run: |
-          for _ in {1..30}; do
-            curl -fsS http://localhost:11434/api/tags && break
-            sleep 2
-          done
-          curl -fsS http://localhost:11434/api/pull \
-            -H 'Content-Type: application/json' \
-            -d '{"name":"nomic-embed-text","stream":false}'
       - run: python scripts/run_ragas_eval.py
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ASYNC_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OLLAMA_HOST: http://localhost:11434

@@ -5,6 +5,9 @@ from langchain_core.tools import tool
 
 from app.rag.context_packer import pack_context, sanitize_untrusted_content
 from app.rag.evaluation import retrieval_metrics
+from app.mlops.ragas_eval import _context_text
+from scripts.run_ragas_eval import _score_payload
+from app.evaluation.metrics import compare_policy_metrics, evaluate_plan
 from app.agents.router import route_model_node
 from app.agents.supervisor import (
     make_service_node,
@@ -16,7 +19,7 @@ from app.api.routes.chat import capability_answer, classify_graph_results
 from app.api.routes.feedback import _dataset_split, _sanitize_value
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
-from jose import jwt
+import jwt
 from app.config.settings import get_settings
 from app.config.feature_flags import cohort_selected
 from app.runs.planner import build_plan, classify_request
@@ -30,6 +33,7 @@ from app.tools.registry import _request_id
 from app.tools.registry import registered_tool_names
 from app.evaluation.replay import replay_case
 from app.improvements.analyzer import assess_canary
+from app.improvements.publisher import proposal_markdown
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -37,6 +41,51 @@ def test_context_packer_orders_by_score():
         {"source": "high", "content": "first", "score": 0.9},
     ])
     assert text.index("first") < text.index("second")
+
+
+def test_ragas_context_uses_retrieved_content_not_metadata_repr():
+    assert _context_text({"content": "usable evidence", "secret": "ignored"}) == "usable evidence"
+    assert _context_text({"text": "fallback evidence"}) == "fallback evidence"
+
+
+def test_offline_evaluation_scores_are_json_and_bounded():
+    assert _score_payload(
+        '{"faithfulness": 1.2, "answer_relevancy": 0.5, "context_recall": -1}'
+    ) == {"faithfulness": 1.0, "answer_relevancy": 0.5, "context_recall": 0.0}
+
+
+def test_plan_quality_and_offline_policy_guardrails():
+    plan, _ = build_plan("Find Gmail senders, create a Sheet, and send its link in Chat")
+    scores = evaluate_plan(plan, {
+        "services": ["gmail", "sheets", "chat"],
+        "operations": ["search", "create_and_write", "send"],
+    })
+    assert scores["plan_correctness"] == 1
+    report = compare_policy_metrics(
+        {"task_success": 0.9, "latency_ms": 100},
+        {"task_success": 0.95, "latency_ms": 90},
+        sample_size=10,
+    )
+    assert report["eligible"] is False
+    assert report["blocked_reasons"]
+
+
+def test_public_proposal_excludes_private_evidence_and_rejects_pii():
+    proposal = {
+        "title": "Safer retry policy", "proposal_key": "retry-v2",
+        "content_hash": "a" * 64, "sanitized_summary": "Bound retry attempts.",
+        "exact_diff": "+ retries: 2", "expected_impact": {"errors": "lower"},
+        "privacy_report": {"raw_content": False},
+        "security_report": {"reviewed": True},
+        "rollback_plan": {"action": "restore"},
+        "private_evidence": "must never be included",
+    }
+    rendered = proposal_markdown(proposal)
+    assert "private_evidence" not in rendered
+    assert "must never be included" not in rendered
+    proposal["sanitized_summary"] = "Contact private.person@example.com"
+    with pytest.raises(ValueError, match="email address"):
+        proposal_markdown(proposal)
 
 
 def test_learning_payload_is_recursively_sanitized_and_split_by_user():
@@ -381,6 +430,21 @@ def test_admin_claim_is_derived_from_email():
     )
     assert admin["admin"] is True
     assert user["admin"] is False
+
+
+def test_production_rejects_an_insecure_jwt_secret():
+    from app.config.settings import Settings, validate_runtime_security
+
+    with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"):
+        validate_runtime_security(
+            Settings(allow_dev_auth=False, jwt_secret_key="")
+        )
+    validate_runtime_security(
+        Settings(
+            allow_dev_auth=False,
+            jwt_secret_key="production-strength-test-secret-at-least-32-bytes",
+        )
+    )
 
 
 def test_capability_questions_are_answered_without_an_llm_call():

@@ -1,19 +1,52 @@
 import json
+import asyncio
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from app.db.connection import get_pool
-from app.db.prompt_service import create_experiment, conclude_experiment
+from app.db.prompt_service import (
+    activate_experiment, create_experiment, conclude_experiment,
+)
 from app.runs.schemas import ImprovementDecision
+from app.runs.repository import search_runs
+from app.config.settings import get_settings
+from app.db.google_clients import request_google_credentials
+from app.db.oauth_credentials import load_google_credentials
+from app.improvements.publisher import publish_github_draft, send_proposal_email
 router=APIRouter(prefix="/admin")
 class ExperimentIn(BaseModel):
-    name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5; notes:str|None=None
+    name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
+    notes:str|None=None; selection_policy:str="ab"
 class ConcludeIn(BaseModel): winner:str
+class ActivateExperimentIn(BaseModel):
+    confirmation: str
+    evidence: dict
+class ExternalPublicationDecision(BaseModel):
+    proposal_hash: str
+    confirmation: str
 class PromptIn(BaseModel):
     name:str; content:str; model_target:str="groq/llama-3.3-70b"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
 class FeatureFlagIn(BaseModel):
     enabled: bool
     config: dict = Field(default_factory=dict)
+
+
+@router.get("/runs")
+async def admin_run_history(
+    user_id: str | None = None, session_id: str | None = None,
+    status: str | None = None, service: str | None = None,
+    model: str | None = None, failure: str | None = None,
+    deployment_version: str | None = None, started_after: datetime | None = None,
+    started_before: datetime | None = None, limit: int = 100, offset: int = 0,
+):
+    rows = await search_runs(
+        await get_pool(), user_id=user_id, session_id=session_id, status=status,
+        service=service, model=model, failure=failure,
+        deployment_version=deployment_version, started_after=started_after,
+        started_before=started_before, limit=limit, offset=offset,
+    )
+    return {"runs": rows}
 @router.get("/experiments/{name}/summary")
 async def summary(name:str):
     pool=await get_pool()
@@ -21,6 +54,14 @@ async def summary(name:str):
     return {"summary":[dict(r) for r in rows]}
 @router.post("/experiments")
 async def create(body:ExperimentIn): return await create_experiment(**body.model_dump())
+@router.post("/experiments/{name}/activate")
+async def activate(name: str, body: ActivateExperimentIn, request: Request):
+    if body.confirmation != "ACTIVATE LOW RISK EXPERIMENT":
+        raise HTTPException(409, "Exact low-risk experiment confirmation is required")
+    try:
+        return await activate_experiment(name, request.state.user_id, body.evidence)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 @router.post("/experiments/{name}/conclude")
 async def conclude(name:str,body:ConcludeIn): return await conclude_experiment(name,body.winner)
 @router.get("/prompts")
@@ -93,6 +134,129 @@ async def pending_improvement_count():
         )
     values = dict(counts)
     return {**values, "total": sum(values.values())}
+
+
+@router.get("/improvement-notifications")
+async def improvement_notifications(limit: int = 100):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT n.*,p.proposal_key,p.title FROM improvement_notifications n
+               JOIN improvement_proposals p ON p.id=n.proposal_id
+               ORDER BY n.created_at DESC LIMIT $1""",
+            max(1, min(limit, 200)),
+        )
+    return {"notifications": [dict(row) for row in rows]}
+
+
+async def _reserve_external_notification(
+    proposal_key: str, proposal_hash: str, channel: str, event_type: str,
+    required_status: str,
+):
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        proposal = await conn.fetchrow(
+            "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
+            proposal_key,
+        )
+        if not proposal or proposal["status"] != required_status:
+            raise HTTPException(409, f"Proposal must be {required_status}")
+        if proposal["content_hash"] != proposal_hash:
+            raise HTTPException(409, "Proposal changed; review the new frozen hash")
+        notification_id = await conn.fetchval(
+            """INSERT INTO improvement_notifications
+               (proposal_id,channel,event_type,status,sanitized_payload)
+               VALUES($1,$2,$3,'queued',$4::jsonb)
+               ON CONFLICT(proposal_id,channel,event_type) DO NOTHING RETURNING id""",
+            proposal["id"], channel, event_type,
+            json.dumps({"proposal_key": proposal_key, "content_hash": proposal_hash,
+                        "contains_private_evidence": False}),
+        )
+        if not notification_id:
+            existing = await conn.fetchrow(
+                """SELECT * FROM improvement_notifications
+                   WHERE proposal_id=$1 AND channel=$2 AND event_type=$3""",
+                proposal["id"], channel, event_type,
+            )
+            if existing["status"] == "sent":
+                return pool, dict(proposal), dict(existing)
+            if existing["status"] == "failed":
+                await conn.execute(
+                    """UPDATE improvement_notifications SET status='queued',
+                       error_message=NULL,created_at=now() WHERE id=$1""",
+                    existing["id"],
+                )
+                return pool, dict(proposal), {
+                    "id": existing["id"], "status": "queued"
+                }
+            raise HTTPException(409, "Publication is already queued or previously failed")
+    return pool, dict(proposal), {"id": notification_id, "status": "queued"}
+
+
+async def _finish_notification(pool, notification_id, *, reference=None, error=None):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE improvement_notifications SET status=$1,external_reference=$2,
+                 error_message=$3,sent_at=CASE WHEN $1='sent' THEN now() END
+               WHERE id=$4""",
+            "failed" if error else "sent", reference, error, notification_id,
+        )
+
+
+@router.post("/improvements/{proposal_key}/publish-draft-pr")
+async def publish_proposal_draft(
+    proposal_key: str, body: ExternalPublicationDecision,
+):
+    if body.confirmation != "PUBLISH SANITIZED DRAFT PR":
+        raise HTTPException(409, "Exact draft-PR confirmation is required")
+    pool, proposal, notification = await _reserve_external_notification(
+        proposal_key, body.proposal_hash, "github", "draft_pr_created",
+        "approved_for_publication",
+    )
+    if notification["status"] == "sent":
+        return {"status": "sent", "url": notification["external_reference"]}
+    try:
+        result = await publish_github_draft(proposal)
+        await _finish_notification(pool, notification["id"], reference=result["url"])
+        return {"status": "sent", **result}
+    except Exception as exc:
+        await _finish_notification(pool, notification["id"], error=str(exc))
+        raise HTTPException(502, f"Draft PR publication failed: {exc}") from exc
+
+
+@router.post("/improvements/{proposal_key}/notify-email")
+async def email_proposal_review(
+    proposal_key: str, body: ExternalPublicationDecision, request: Request,
+):
+    if body.confirmation != "SEND SANITIZED REVIEW EMAIL":
+        raise HTTPException(409, "Exact review-email confirmation is required")
+    recipient = get_settings().admin_notification_email
+    if not recipient:
+        raise HTTPException(409, "ADMIN_NOTIFICATION_EMAIL is not configured")
+    pool, proposal, notification = await _reserve_external_notification(
+        proposal_key, body.proposal_hash, "email", "review_email_sent",
+        "awaiting_review",
+    )
+    if notification["status"] == "sent":
+        return {"status": "sent", "message_id": notification["external_reference"]}
+    credentials = await load_google_credentials(pool, request.state.user_id)
+    if credentials is None:
+        await _finish_notification(
+            pool, notification["id"], error="Administrator Google authorization is unavailable"
+        )
+        raise HTTPException(409, "Connect the administrator Google account first")
+    token = request_google_credentials.set(credentials)
+    try:
+        result = await asyncio.to_thread(send_proposal_email, proposal, recipient)
+        await _finish_notification(
+            pool, notification["id"], reference=result.get("message_id")
+        )
+        return {"status": "sent", **result}
+    except Exception as exc:
+        await _finish_notification(pool, notification["id"], error=str(exc))
+        raise HTTPException(502, f"Review email failed: {exc}") from exc
+    finally:
+        request_google_credentials.reset(token)
 
 
 @router.get("/improvements/{proposal_key}")

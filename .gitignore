@@ -1,6 +1,7 @@
 credentials.json
 google-oauth-web.json
 token.pkl
+token.json
 .venv/
 __pycache__/
 .env

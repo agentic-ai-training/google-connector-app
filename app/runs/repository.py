@@ -238,6 +238,11 @@ async def get_run(pool, run_id, user_id):
         result["artifacts"] = [dict(item) for item in await conn.fetch(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 ORDER BY created_at", run_id
         )]
+        result["recent_events"] = [dict(item) for item in await conn.fetch(
+            """SELECT id,event_type,phase,message,payload,created_at
+               FROM agent_run_events WHERE run_id=$1 ORDER BY id DESC LIMIT 25""",
+            run_id,
+        )][::-1]
         approval = await conn.fetchrow(
             """SELECT action_hash,action_summary,expires_at,status
                FROM run_approvals WHERE run_id=$1 ORDER BY created_at DESC LIMIT 1""",
@@ -259,6 +264,43 @@ async def list_events(pool, run_id, user_id, after_id=0):
                WHERE run_id=$1 AND id>$2 ORDER BY id LIMIT 1000""",
             run_id, after_id,
         )]
+
+
+async def search_runs(
+    pool, *, user_id=None, session_id=None, status=None, service=None, model=None,
+    failure=None, deployment_version=None, started_after=None, started_before=None,
+    limit=100, offset=0,
+):
+    """Search high-cardinality run facts without placing them in metric labels."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT r.id,r.session_id,r.user_id,r.request,r.status,r.current_phase,
+                      r.technical_completion,r.functional_completion,
+                      r.user_visible_completion,r.side_effect_integrity,r.risk_level,
+                      r.error_category,r.error_message,r.models_used,r.input_tokens,
+                      r.output_tokens,r.deployment_version,r.queued_at,r.started_at,
+                      r.completed_at,r.heartbeat_at,
+                      coalesce((SELECT array_agg(DISTINCT s.service)
+                                FROM agent_run_steps s WHERE s.run_id=r.id
+                                  AND s.service IS NOT NULL),'{}') AS services
+               FROM agent_runs r
+               WHERE r.deleted_at IS NULL
+                 AND ($1::text IS NULL OR r.user_id=$1)
+                 AND ($2::text IS NULL OR r.session_id=$2)
+                 AND ($3::text IS NULL OR r.status=$3)
+                 AND ($4::text IS NULL OR EXISTS(
+                   SELECT 1 FROM agent_run_steps s WHERE s.run_id=r.id AND s.service=$4))
+                 AND ($5::text IS NULL OR $5=ANY(r.models_used))
+                 AND ($6::text IS NULL OR r.error_category=$6)
+                 AND ($7::text IS NULL OR r.deployment_version=$7)
+                 AND ($8::timestamptz IS NULL OR r.queued_at >= $8)
+                 AND ($9::timestamptz IS NULL OR r.queued_at <= $9)
+               ORDER BY r.queued_at DESC LIMIT $10 OFFSET $11""",
+            user_id, session_id, status, service, model, failure,
+            deployment_version, started_after, started_before,
+            max(1, min(int(limit), 200)), max(0, int(offset)),
+        )
+    return [dict(row) for row in rows]
 
 
 async def decide_run(pool, run_id, user_id, approved, digest, note=None):

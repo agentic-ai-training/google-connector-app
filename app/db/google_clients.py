@@ -1,5 +1,3 @@
-import os
-import pickle
 import json
 from contextvars import ContextVar
 from google.auth.transport.requests import Request
@@ -29,9 +27,6 @@ def _load_creds():
         creds = Credentials.from_authorized_user_info(
             json.loads(settings.google_token_json)
         )
-    elif os.path.exists(settings.google_token_path):
-        with open(settings.google_token_path, "rb") as fh:
-            creds = pickle.load(fh)
     else:
         return None
     if creds.expired and creds.refresh_token:
@@ -41,9 +36,6 @@ def _load_creds():
             # A stale optional fallback must not prevent the API from starting.
             # The request-scoped OAuth flow will ask the user to reconnect.
             return None
-        if not settings.google_token_json:
-            with open(settings.google_token_path, "wb") as fh:
-                pickle.dump(creds, fh)
     return creds
 
 _creds = _load_creds()

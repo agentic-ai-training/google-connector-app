@@ -59,6 +59,44 @@ def test_health_auth_and_route_protection():
         assert locked.status_code == 409
 
 
+def test_prompt_bandit_requires_human_activation_and_evidence():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    name = f"bandit-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        admin = client.post(
+            "/auth/token", json={"email": "achintyat256@gmail.com"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {admin}"}
+        prompts = client.get("/admin/prompts", headers=headers).json()["prompts"]
+        candidates = [item for item in prompts if item["name"] == "supervisor_system"]
+        created = client.post("/admin/experiments", headers=headers, json={
+            "name": name, "prompt_name": "supervisor_system",
+            "control_id": candidates[0]["id"], "variant_id": candidates[1]["id"],
+            "selection_policy": "thompson",
+        })
+        assert created.status_code == 200
+        assert created.json()["status"] == "draft"
+        refused = client.post(f"/admin/experiments/{name}/activate", headers=headers,
+                              json={"confirmation": "yes", "evidence": {}})
+        assert refused.status_code == 409
+        activated = client.post(f"/admin/experiments/{name}/activate", headers=headers,
+                                json={
+                                    "confirmation": "ACTIVATE LOW RISK EXPERIMENT",
+                                    "evidence": {"suite_version": "test-offline-v1"},
+                                })
+        assert activated.status_code == 200
+        assert activated.json()["validated"] is True
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM prompt_experiments WHERE name=$1", name)
+
+        client.portal.call(cleanup)
+
+
 def test_feedback_preserves_retrieved_context():
     from app.api.main import app
     from app.db.connection import get_pool
@@ -223,6 +261,96 @@ def test_run_idempotency_and_cross_user_isolation():
         assert client.get(
             f"/sessions/{body['session_id']}/runs", headers=second
         ).json() == {"runs": []}
+
+
+def test_filterable_run_history_remains_tenant_scoped():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    first_email = f"history-first-{uuid.uuid4()}@example.com"
+    second_email = f"history-second-{uuid.uuid4()}@example.com"
+    marker = f"history-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        first_token = client.post("/auth/token", json={"email": first_email}).json()[
+            "access_token"
+        ]
+
+        async def seed_and_cleanup(cleanup=False):
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                if cleanup:
+                    await conn.execute("DELETE FROM agent_runs WHERE session_id=$1", marker)
+                    return
+                for user, status in ((first_email, "completed"), (second_email, "failed")):
+                    run_id = await conn.fetchval(
+                        """INSERT INTO agent_runs
+                           (session_id,user_id,request,status,current_phase,idempotency_key,
+                            deployment_version,completed_at)
+                           VALUES($1,$2,'History fixture',$3,$3,$4,'history-v1',now())
+                           RETURNING id""",
+                        marker, user, status, f"{marker}-{user}",
+                    )
+                    await conn.execute(
+                        """INSERT INTO agent_run_steps
+                           (run_id,step_key,sequence_no,title,service,operation,status)
+                           VALUES($1,'drive',1,'Drive fixture','drive','search',$2)""",
+                        run_id, status,
+                    )
+
+        client.portal.call(seed_and_cleanup)
+        response = client.get(
+            f"/runs?session_id={marker}&service=drive&deployment_version=history-v1",
+            headers={"Authorization": f"Bearer {first_token}"},
+        )
+        client.portal.call(seed_and_cleanup, True)
+        assert response.status_code == 200
+        rows = response.json()["runs"]
+        assert len(rows) == 1
+        assert rows[0]["user_id"] == first_email
+        assert rows[0]["services"] == ["drive"]
+
+
+def test_preserve_compensation_never_calls_an_external_api():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    email = f"cleanup-{uuid.uuid4()}@example.com"
+    marker = f"cleanup-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": email}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async def seed_and_cleanup(cleanup=False):
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                if cleanup:
+                    await conn.execute("DELETE FROM agent_runs WHERE session_id=$1", marker)
+                    return None
+                run_id = await conn.fetchval(
+                    """INSERT INTO agent_runs
+                       (session_id,user_id,request,status,current_phase,idempotency_key,completed_at)
+                       VALUES($1,$2,'Cleanup fixture','partial','partial',$1,now()) RETURNING id""",
+                    marker, email,
+                )
+                artifact_id = await conn.fetchval(
+                    """INSERT INTO agent_artifacts
+                       (run_id,user_id,artifact_type,external_id,verification_status,
+                        cleanup_state,safe_to_delete)
+                       VALUES($1,$2,'sheets','sheet-fixture','verified','retained',TRUE)
+                       RETURNING id""",
+                    run_id, email,
+                )
+                return str(run_id), str(artifact_id)
+
+        run_id, artifact_id = client.portal.call(seed_and_cleanup)
+        response = client.post(
+            f"/runs/{run_id}/artifacts/{artifact_id}/cleanup-request",
+            headers=headers, json={"action": "preserve"},
+        )
+        client.portal.call(seed_and_cleanup, True)
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        assert response.json()["action_hash"] is None
 
 
 def test_account_export_is_tenant_scoped_and_excludes_oauth_secrets():

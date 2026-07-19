@@ -31,24 +31,32 @@ jobs:
         env:
           RUN_INTEGRATION_TESTS: '1'
           ALLOW_DEV_AUTH: 'true'
-      - run: pip install flake8 && flake8 app/ --max-line-length=100
+          JWT_SECRET_KEY: automated-test-only-secret-at-least-32-bytes
+      - name: Lint and security-audit Python
+        run: |
+          pip install flake8 pip-audit bandit
+          flake8 app/ --max-line-length=100
+          pip-audit -r requirements.txt
+          bandit -q -r app -x app/__pycache__ -ll
       - name: Run deterministic planner regression set
         run: python scripts/run_golden_evals.py
       - name: Replay Google mutations against the no-network simulator
         run: python scripts/run_workflow_replays.py
+      - name: Compare candidate policy offline without live exploration
+        run: python scripts/run_policy_evals.py
       - name: Verify migration downgrade and forward repair
         run: |
           alembic downgrade 002
           alembic upgrade head
-          test "$(alembic current | tail -1)" = "006 (head)"
+          test "$(alembic current | tail -1)" = "007 (head)"
       - name: Validate Docker Compose model
         run: |
           cp .env.example .env
           docker compose config --quiet
       - name: Verify sensitive local files are not tracked or present in history
         run: |
-          ! git ls-files | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.pkl)$'
-          ! git log --all --name-only --pretty=format: | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.pkl)$'
+          ! git ls-files | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'
+          ! git log --all --name-only --pretty=format: | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'
 
   web:
     runs-on: ubuntu-latest

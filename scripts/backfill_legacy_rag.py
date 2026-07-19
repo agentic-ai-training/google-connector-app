@@ -64,14 +64,15 @@ async def run(user_id: str, apply: bool, rollback: bool) -> int:
             return 0
         total = 0
         for source_type, source_sql in SOURCES.items():
+            # source_sql is selected only from the immutable module-level allowlist.
             available = await conn.fetchval(
-                f"SELECT count(*) FROM ({source_sql}) source WHERE btrim(content)<>''"
+                f"SELECT count(*) FROM ({source_sql}) source WHERE btrim(content)<>''"  # nosec B608
             )
             print(f"source={source_type} available={available}")
             if not apply:
                 continue
             result = await conn.execute(
-                f"""WITH source AS ({source_sql})
+                f"""WITH source AS ({source_sql})  -- allowlisted source query
                     INSERT INTO rag_chunks
                       (user_id,source_type,source_id,parent_id,chunk_index,heading,content,
                        content_hash,metadata,acl,embedding,embedding_version,chunker_version,
@@ -82,7 +83,7 @@ async def run(user_id: str, apply: bool, rollback: bool) -> int:
                            'legacy-import-'||$2::text||'-v1',modified_at
                     FROM source WHERE btrim(content)<>''
                     ON CONFLICT(user_id,source_type,source_id,chunker_version,chunk_index)
-                    DO NOTHING""",
+                    DO NOTHING""",  # nosec B608
                 user_id, source_type,
             )
             inserted = int(result.rsplit(" ", 1)[-1])

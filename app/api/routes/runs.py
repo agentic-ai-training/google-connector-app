@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -7,16 +9,28 @@ from fastapi.responses import StreamingResponse
 from app.config.settings import get_settings
 from app.config.feature_flags import feature_enabled, get_feature_flag
 from app.db.connection import get_pool
+from app.db.google_clients import request_google_credentials
+from app.db import google_clients as google
+from app.db.oauth_credentials import load_google_credentials
 from app.runs.repository import (
     RunLimitExceeded,
+    append_event,
     cancel_run,
     clarify_run,
     create_run,
     decide_run,
     get_run,
     list_events,
+    search_runs,
 )
-from app.runs.schemas import RunClarification, RunCreate, RunDecision, RunResume
+from app.runs.schemas import (
+    ArtifactCleanupDecision,
+    ArtifactCleanupRequest,
+    RunClarification,
+    RunCreate,
+    RunDecision,
+    RunResume,
+)
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 sessions_router = APIRouter(prefix="/sessions", tags=["runs"])
@@ -24,6 +38,40 @@ sessions_router = APIRouter(prefix="/sessions", tags=["runs"])
 
 def _serializable(value):
     return json.loads(json.dumps(value, default=str))
+
+
+def _cleanup_hash(user_id: str, artifact_id: str, external_id: str, action: str) -> str:
+    value = f"{user_id}\0{artifact_id}\0{external_id}\0{action}"
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _google_cleanup(artifact: dict, action: str) -> dict:
+    external_id = artifact["external_id"]
+    metadata = artifact.get("metadata") or {}
+    identifiers = metadata.get("identifiers") or {}
+    if action == "delete":
+        result = google.drive_service.files().update(
+            fileId=external_id, body={"trashed": True}, fields="id,trashed"
+        ).execute()
+        if not result.get("trashed"):
+            raise RuntimeError("Drive resource was not moved to trash")
+        return {"external_id": external_id, "trashed": True}
+    if action == "cancel_event":
+        calendar_id = identifiers.get("calendar_id", "primary")
+        google.calendar_service.events().delete(
+            calendarId=calendar_id, eventId=external_id, sendUpdates="all"
+        ).execute()
+        return {"external_id": external_id, "cancelled": True}
+    if action == "rollback_sharing":
+        permission_id = metadata.get("permission_id")
+        if not permission_id:
+            raise RuntimeError("The verified permission ID is unavailable; manual cleanup is required")
+        google.drive_service.permissions().delete(
+            fileId=external_id, permissionId=permission_id
+        ).execute()
+        return {"external_id": external_id, "permission_id": permission_id,
+                "sharing_rolled_back": True}
+    raise RuntimeError(f"Unsupported Google cleanup action: {action}")
 
 
 @router.post("", status_code=202)
@@ -49,6 +97,23 @@ async def start_run(body: RunCreate, request: Request):
         "run_id": str(run["id"]), "status": run["status"],
         "created": created, "requires_approval": run["requires_approval"],
     }
+
+
+@router.get("")
+async def run_history(
+    request: Request, session_id: str | None = None, status: str | None = None,
+    service: str | None = None, model: str | None = None,
+    failure: str | None = None, deployment_version: str | None = None,
+    started_after: datetime | None = None, started_before: datetime | None = None,
+    limit: int = 100, offset: int = 0,
+):
+    rows = await search_runs(
+        await get_pool(), user_id=request.state.user_id, session_id=session_id,
+        status=status, service=service, model=model, failure=failure,
+        deployment_version=deployment_version, started_after=started_after,
+        started_before=started_before, limit=limit, offset=offset,
+    )
+    return {"runs": _serializable(rows)}
 
 
 @router.get("/{run_id}")
@@ -142,6 +207,163 @@ async def resume_run(run_id: str, body: RunResume, request: Request):
                 run_id,
             )
     return {"run_id": run_id, "status": "queued"}
+
+
+@router.post("/{run_id}/artifacts/{artifact_id}/cleanup-request")
+async def request_artifact_cleanup(
+    run_id: str, artifact_id: str, body: ArtifactCleanupRequest, request: Request
+):
+    """Prepare an exact compensation action; no external write happens here."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        artifact = await conn.fetchrow(
+            """SELECT a.* FROM agent_artifacts a JOIN agent_runs r ON r.id=a.run_id
+               WHERE a.id=$1 AND a.run_id=$2 AND a.user_id=$3 AND r.user_id=$3
+               FOR UPDATE""",
+            artifact_id, run_id, request.state.user_id,
+        )
+        if not artifact:
+            raise HTTPException(404, "Artifact not found")
+        if body.action == "delete" and (
+            artifact["artifact_type"] not in {"drive", "docs", "sheets"}
+            or not artifact["safe_to_delete"]
+        ):
+            raise HTTPException(
+                409, "Only resources created by this run and marked safe may be deleted"
+            )
+        if body.action == "cancel_event" and artifact["artifact_type"] != "calendar":
+            raise HTTPException(409, "Only a Calendar artifact can be cancelled")
+        if body.action == "rollback_sharing" and artifact["artifact_type"] != "drive":
+            raise HTTPException(409, "Only a Drive sharing artifact can be rolled back")
+        digest = _cleanup_hash(
+            request.state.user_id, artifact_id, artifact["external_id"] or "", body.action
+        )
+        if body.action == "preserve":
+            status = "completed"
+            cleanup_id = await conn.fetchval(
+                """INSERT INTO artifact_cleanup_requests
+                   (artifact_id,run_id,user_id,action,status,action_hash,completed_at)
+                   VALUES($1,$2,$3,$4,$5,$6,now()) RETURNING id""",
+                artifact_id, run_id, request.state.user_id, body.action, status, digest,
+            )
+        else:
+            status = "awaiting_confirmation"
+            cleanup_id = await conn.fetchval(
+                """INSERT INTO artifact_cleanup_requests
+                   (artifact_id,run_id,user_id,action,status,action_hash)
+                   VALUES($1,$2,$3,$4,$5,$6) RETURNING id""",
+                artifact_id, run_id, request.state.user_id, body.action, status, digest,
+            )
+        if body.action == "preserve":
+            await conn.execute(
+                "UPDATE agent_artifacts SET cleanup_state='retained' WHERE id=$1",
+                artifact_id,
+            )
+    await append_event(
+        pool, run_id, request.state.user_id, "compensation_requested",
+        phase="compensation", message=f"Artifact action requested: {body.action}",
+        payload={"cleanup_id": str(cleanup_id), "action": body.action,
+                 "requires_confirmation": body.action != "preserve"},
+    )
+    return {
+        "cleanup_id": str(cleanup_id), "status": status, "action": body.action,
+        "action_hash": digest if body.action != "preserve" else None,
+    }
+
+
+@router.post("/{run_id}/artifacts/{artifact_id}/cleanup-decision")
+async def decide_artifact_cleanup(
+    run_id: str, artifact_id: str, body: ArtifactCleanupDecision, request: Request
+):
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        cleanup = await conn.fetchrow(
+            """SELECT c.*,a.artifact_type,a.external_id,a.metadata,a.safe_to_delete
+               FROM artifact_cleanup_requests c
+               JOIN agent_artifacts a ON a.id=c.artifact_id
+               WHERE c.artifact_id=$1 AND c.run_id=$2 AND c.user_id=$3
+                 AND c.status='awaiting_confirmation'
+               ORDER BY c.requested_at DESC LIMIT 1 FOR UPDATE OF c""",
+            artifact_id, run_id, request.state.user_id,
+        )
+        if not cleanup or cleanup["action_hash"] != body.action_hash:
+            raise HTTPException(409, "Cleanup request is missing, stale, or changed")
+        if cleanup["expires_at"] <= datetime.now(timezone.utc):
+            await conn.execute(
+                "UPDATE artifact_cleanup_requests SET status='rejected',error_message='expired' WHERE id=$1",
+                cleanup["id"],
+            )
+            raise HTTPException(409, "Cleanup confirmation expired")
+        if not body.approved:
+            await conn.execute(
+                """UPDATE artifact_cleanup_requests SET status='rejected',decided_at=now()
+                   WHERE id=$1""",
+                cleanup["id"],
+            )
+            return {"cleanup_id": str(cleanup["id"]), "status": "rejected"}
+        await conn.execute(
+            """UPDATE artifact_cleanup_requests SET status='executing',decided_at=now()
+               WHERE id=$1""",
+            cleanup["id"],
+        )
+
+    action = cleanup["action"]
+    try:
+        if action == "retry_population":
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute(
+                    """UPDATE agent_run_steps SET status='pending',error_category=NULL,
+                       error_message=NULL WHERE run_id=$1 AND status='failed'""",
+                    run_id,
+                )
+                await conn.execute(
+                    """UPDATE agent_runs SET status='queued',current_phase='queued',
+                       completed_at=NULL,error_category=NULL,error_message=NULL,
+                       lease_owner=NULL,lease_expires_at=NULL WHERE id=$1 AND user_id=$2""",
+                    run_id, request.state.user_id,
+                )
+            result = {"run_id": run_id, "queued": True}
+            cleanup_state = "population_retried"
+        else:
+            credentials = await load_google_credentials(pool, request.state.user_id)
+            if credentials is None:
+                raise RuntimeError("Google authorization is missing or lacks required scopes")
+            token = request_google_credentials.set(credentials)
+            try:
+                result = await asyncio.to_thread(_google_cleanup, dict(cleanup), action)
+            finally:
+                request_google_credentials.reset(token)
+            cleanup_state = {
+                "delete": "deleted", "cancel_event": "cancelled",
+                "rollback_sharing": "sharing_rolled_back",
+            }[action]
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """UPDATE artifact_cleanup_requests SET status='completed',completed_at=now(),
+                   result=$1::jsonb WHERE id=$2""",
+                json.dumps(result), cleanup["id"],
+            )
+            await conn.execute(
+                "UPDATE agent_artifacts SET cleanup_state=$1 WHERE id=$2",
+                cleanup_state, artifact_id,
+            )
+        status = "completed"
+    except Exception as exc:
+        manual = action == "rollback_sharing" and "permission ID" in str(exc)
+        status = "manual_required" if manual else "failed"
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE artifact_cleanup_requests SET status=$1,error_message=$2,
+                   completed_at=now() WHERE id=$3""",
+                status, str(exc), cleanup["id"],
+            )
+        result = {"error": str(exc)}
+    await append_event(
+        pool, run_id, request.state.user_id, "compensation_completed",
+        phase="compensation", message=f"Artifact action {action}: {status}",
+        payload={"cleanup_id": str(cleanup["id"]), "action": action, "status": status},
+    )
+    return {"cleanup_id": str(cleanup["id"]), "status": status, "result": result}
 
 
 @sessions_router.get("/{session_id}/runs")

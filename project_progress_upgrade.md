@@ -122,19 +122,19 @@ Legend: `[ ]` pending, `[~]` active, `[x]` complete, `[!]` externally blocked.
 
 - [x] Export current Neon schema and create a backup/restore procedure.
 - [x] Record Railway/Vercel deployment identifiers and current public health URLs without writing secrets.
-- [ ] Capture current latency, failure, RAGAS, token, quota, and Google artifact baselines.
+- [x] Capture current latency, failure, RAGAS, token, quota, and Google artifact baselines.
 - [x] Inventory current code paths, services, database objects, dashboards, and external artifacts.
 - [x] Verify secrets/credentials are ignored and absent from Git history.
 - [x] Add feature flags for legacy chat, durable runs, OKF, new RAG, governed improvements, and canary cohorts.
 - [x] Preserve legacy `/chat` as a rollback path until the new executor is proven.
 - [x] Define migration, deploy, worker, index, prompt, OKF, and dashboard rollback procedures.
-- [ ] Define zero-duplicate-action/idempotency invariants.
+- [x] Define zero-duplicate-action/idempotency invariants.
 
 ### Epic 0.2 — Golden evaluation set
 
 - [~] Cover Gmail reads/writes, Drive, Sheets, Docs, Calendar/Meet, Chat, Tasks, Contacts, multi-service workflows, ambiguity, misspellings, missing destinations/timezones, quota exhaustion, cold starts, Google 4xx/5xx, cancellation, browser disconnect, Vercel timeout, worker restart, duplicate submission, partial side effects, prompt injection, and cross-user isolation.
-- [ ] Define expected plans, tools, arguments, artifacts, approvals, postconditions, and summaries.
-- [ ] Replace unsafe mutations with deterministic Google adapter fakes in tests.
+- [x] Define expected plans, tools, arguments, artifacts, approvals, postconditions, and summaries.
+- [x] Replace unsafe mutations with deterministic Google adapter fakes in tests.
 
 Guardrail: capture a reproducible baseline before changing production behavior.
 
@@ -172,7 +172,7 @@ Guardrail: upgrade/downgrade on clean local DB; migration tests and authorizatio
 
 ### Epic 2.2 — PostgreSQL-backed worker
 
-- [~] Claim work with `FOR UPDATE SKIP LOCKED`, heartbeat/lease, stale-job recovery, bounded retries, and a separate Railway worker using the application image; do not introduce Redis initially.
+- [x] Claim work with `FOR UPDATE SKIP LOCKED`, heartbeat/lease, stale-job recovery, bounded retries, and a separate Railway worker using the application image; do not introduce Redis initially.
 
 ### Epic 2.3 — Replayable progress
 
@@ -180,55 +180,55 @@ Guardrail: upgrade/downgrade on clean local DB; migration tests and authorizatio
 
 ### Epic 2.4 — Idempotency
 
-- [~] Prevent duplicates from double-clicks, client/proxy retries, reconnects, worker restarts, and lost responses after Google succeeds.
+- [x] Prevent duplicates from double-clicks, client/proxy retries, reconnects, worker restarts, and lost responses after Google succeeds.
 
 Guardrail: disconnect/restart tests prove the worker continues and writes are not repeated.
 
 ## Sprint 3 — Structured planner and plan validation
 
 - [x] Define typed `ExecutionPlan`, `PlanStep`, success criteria, assumptions, clarifications, dependencies, risk, approval, weights, preconditions, postconditions, and estimated budgets.
-- [~] Ask only for materially missing information such as ambiguous person/space, timezone/duration, uniqueness, sharing, or destructive cleanup.
-- [~] Reject unknown tools, placeholders, missing dependencies/recipients/timezones, impossible arguments, unsupported operations, unsafe parallel writes, and writes before required reads.
-- [ ] Measure plan tool/order/coverage/necessity/cost/execution quality.
+- [x] Ask only for materially missing information such as ambiguous person/space, timezone/duration, uniqueness, sharing, or destructive cleanup.
+- [x] Reject unknown tools, placeholders, missing dependencies/recipients/timezones, impossible arguments, unsupported operations, unsafe parallel writes, and writes before required reads.
+- [x] Measure plan tool/order/coverage/necessity/cost/execution quality.
 
 ## Sprint 4 — Intent, service, model, and execution policy routing
 
-- [ ] Classify read/write, live lookup/semantic recall, single/multi-service, simple/complex, reversible/irreversible, clarification, risk, and parallelism.
-- [ ] Improve synonyms, misspellings, service detection, entity/date/timezone/recipient/Chat-space extraction; remove unsafe Gmail defaulting.
-- [ ] Route by complexity, risk, quota, context, tool count, and reliability. Do not silently downgrade a complex mutation from 70B to an unreliable small model.
-- [ ] Estimate and enforce token/time/tool budgets before execution.
-- [ ] Implement deterministic high-risk confirmation with explicit opt-out and action-bound approvals.
+- [x] Classify read/write, live lookup/semantic recall, single/multi-service, simple/complex, reversible/irreversible, clarification, risk, and parallelism.
+- [x] Improve synonyms, misspellings, service detection, entity/date/timezone/recipient/Chat-space extraction; remove unsafe Gmail defaulting.
+- [x] Route by complexity, risk, quota, context, tool count, and reliability. Do not silently downgrade a complex mutation from 70B to an unreliable small model.
+- [x] Estimate and enforce token/time/tool budgets before execution.
+- [x] Implement deterministic high-risk confirmation with explicit opt-out and action-bound approvals.
 
 ## Sprint 5 — RAG necessity gate
 
 - [x] Skip RAG for live/latest mutations/lookups; use it for semantic history, conceptual matching, prior context, and cross-document synthesis.
-- [ ] Begin with deterministic audited rules; later evaluate a small classifier for none/metadata/keyword/vector/hybrid.
-- [ ] Record whether/why RAG ran, latency, returned/used evidence, and outcome impact.
+- [x] Begin with deterministic audited rules; later evaluate a small classifier for none/metadata/keyword/vector/hybrid.
+- [x] Record whether/why RAG ran, latency, returned/used evidence, and outcome impact.
 
 ## Sprint 6 — Source-aware RAG ingestion and chunking
 
 ### Epic 6.1 — Source strategies
 
-- [ ] Gmail: metadata on every child, clean body, quoted-history/signature detection, thread parent-child, attachment metadata, deduplication.
-- [ ] Docs/Drive text: title/heading/paragraph/list/table hierarchy; small retrieval children and larger generation parents.
-- [ ] PDFs: layout/headings, page/bounding provenance, OCR marker, independent table handling, no column corruption.
-- [ ] Sheets: typed header-aware row groups/ranges/tab/row IDs; structured filtering before vectors.
-- [ ] Calendar/Meet: structured event/participant/recording metadata; speaker/topic chunks for transcripts; Drive hierarchy for transcript documents.
-- [ ] Chat: space/thread/sender/time windows/topic boundaries/reply relationships.
-- [ ] Contacts/Tasks: structured lookup first; generally no chunking for atomic records.
-- [ ] OKF: Markdown/YAML concept and heading-aware chunks; keep tool schemas, prerequisites, warnings, and parents intact.
+- [x] Gmail: metadata on every child, clean body, quoted-history/signature detection, thread parent-child, attachment metadata, deduplication.
+- [x] Docs/Drive text: title/heading/paragraph/list/table hierarchy; small retrieval children and larger generation parents.
+- [x] PDFs: layout/headings, page/bounding provenance, OCR marker, independent table handling, no column corruption.
+- [x] Sheets: typed header-aware row groups/ranges/tab/row IDs; structured filtering before vectors.
+- [x] Calendar/Meet: structured event/participant/recording metadata; speaker/topic chunks for transcripts; Drive hierarchy for transcript documents.
+- [x] Chat: space/thread/sender/time windows/topic boundaries/reply relationships.
+- [x] Contacts/Tasks: structured lookup first; generally no chunking for atomic records.
+- [x] OKF: Markdown/YAML concept and heading-aware chunks; keep tool schemas, prerequisites, warnings, and parents intact.
 
 ### Epic 6.2 — Versioned experiments and lineage
 
-- [ ] Evaluate 256/512/768/1024-token and source-dependent policies, overlap, parent sizes, and no-chunk cases.
-- [ ] Store source/parent/chunk position/hash, ACL/tenant, embedding/chunker/sync versions, timestamps, tombstones, provenance, and reindex time.
-- [ ] Incrementally re-embed only changed content/version/metadata.
+- [~] Evaluate 256/512/768/1024-token and source-dependent policies, overlap, parent sizes, and no-chunk cases.
+- [x] Store source/parent/chunk position/hash, ACL/tenant, embedding/chunker/sync versions, timestamps, tombstones, provenance, and reindex time.
+- [x] Incrementally re-embed only changed content/version/metadata.
 
 ### Epic 6.3 — Retrieval pipeline
 
-- [ ] Query classification -> structured filters -> dense vector + PostgreSQL text search -> rank fusion -> recency/metadata -> dedupe/diversity -> rerank -> threshold/budget -> context/citations.
-- [ ] Evaluate query normalization/entity/date/acronym/multi-query/HyDE only where measured; never expand precise identifiers/latest lookups unnecessarily.
-- [ ] Evaluate recall@k, precision@k, MRR, nDCG, context precision/recall, faithfulness, relevance, citation correctness, latency, tokens, duplication, cost, and permission leaks per source.
+- [x] Query classification -> structured filters -> dense vector + PostgreSQL text search -> rank fusion -> recency/metadata -> dedupe/diversity -> rerank -> threshold/budget -> context/citations.
+- [~] Evaluate query normalization/entity/date/acronym/multi-query/HyDE only where measured; never expand precise identifiers/latest lookups unnecessarily.
+- [~] Evaluate recall@k, precision@k, MRR, nDCG, context precision/recall, faithfulness, relevance, citation correctness, latency, tokens, duplication, cost, and permission leaks per source.
 
 ## Sprint 7 — Decouple embedding from live tools
 
@@ -238,104 +238,104 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 ## Sprint 8 — Dependency-aware durable executor
 
-- [ ] Execute independent reads concurrently and dependent/high-risk writes in verified order.
-- [ ] Bound concurrency per run/user/API/model and avoid unbounded gather.
-- [ ] Retry transient network/429/5xx/worker failures only; do not retry invalid input, permission denial, invalid timezone, or cancellation blindly.
-- [ ] Use deterministic idempotency keys and artifact lookup before retrying Google writes.
+- [x] Execute independent reads concurrently and dependent/high-risk writes in verified order.
+- [x] Bound concurrency per run/user/API/model and avoid unbounded gather.
+- [x] Retry transient network/429/5xx/worker failures only; do not retry invalid input, permission denial, invalid timezone, or cancellation blindly.
+- [x] Use deterministic idempotency keys and artifact lookup before retrying Google writes.
 
 ## Sprint 9 — Verification and deterministic postconditions
 
-- [ ] Add tool-specific postconditions and read-after-write for critical Sheets, Drive, Chat, Calendar/Meet, Gmail, Docs, Tasks, and sharing states.
-- [ ] Require resource IDs, expected content/rows/recipient/timezone/link/sharing state; HTTP 200 alone is not success.
-- [ ] Prevent the final agent from claiming unverified success.
+- [x] Add tool-specific postconditions and read-after-write for critical Sheets, Drive, Chat, Calendar/Meet, Gmail, Docs, Tasks, and sharing states.
+- [x] Require resource IDs, expected content/rows/recipient/timezone/link/sharing state; HTTP 200 alone is not success.
+- [x] Prevent the final agent from claiming unverified success.
 
 ## Sprint 10 — Recovery, resume, and compensation
 
 - [x] Implement failure taxonomy for user/planning/routing/model/tool/auth/permission/quota/network/database/embedding/verification/cancellation/worker/proxy/security.
 - [x] Resume from the first safe incomplete step without recreating verified artifacts.
-- [ ] Preserve/report, retry population, roll back sharing, cancel incorrect events, or delete only when explicitly approved and safe.
-- [ ] Surface pending high-risk action approvals in the run state and frontend.
+- [x] Preserve/report, retry population, roll back sharing, cancel incorrect events, or delete only when explicitly approved and safe.
+- [x] Surface pending high-risk action approvals in the run state and frontend.
 
 ## Sprint 11 — Token, latency, quota, and budget accounting
 
-- [~] Capture per-call input/output/schema tokens where available, model, queue/prompt/completion/tool time, fallback, and rate-limit metadata.
-- [ ] Attribute to planner/router/executor/verifier/recovery/summarizer and aggregate per step/run/user/model.
-- [ ] Reserve quality-model quota for complex tasks; avoid spending it on capability questions.
-- [ ] Stop/replan before runaway loops and present quota-aware defer/simplify choices.
+- [x] Capture per-call input/output/schema tokens where available, model, queue/prompt/completion/tool time, fallback, and rate-limit metadata.
+- [x] Attribute to planner/router/executor/verifier/recovery/summarizer and aggregate per step/run/user/model.
+- [x] Reserve quality-model quota for complex tasks; avoid spending it on capability questions.
+- [x] Stop/replan before runaway loops and present quota-aware defer/simplify choices.
 
 ## Sprint 12 — Automatic incident summaries
 
 - [x] Deterministically identify last success, first failure, primary/contributing causes, evidence, artifacts, and cancellation source.
-- [ ] Generate a short summary only after structured facts exist.
+- [x] Generate a short summary only after structured facts exist.
 - [x] Calculate technical, functional, user-visible, and side-effect-integrity completion separately.
-- [ ] Link diagnosis to events, attempts, traces, artifacts, metrics, and external errors with confidence.
+- [x] Link diagnosis to events, attempts, traces, artifacts, metrics, and external errors with confidence.
 
 ## Sprint 13 — Production observability and Grafana
 
-- [ ] Deploy lightweight Alloy on Railway; scrape metrics and forward to Grafana Cloud with filtering, WAL buffering, privacy, and cardinality controls.
-- [ ] Add structured logs and OpenTelemetry HTTP/DB/worker traces progressively; keep LangSmith for agent/LLM traces.
-- [ ] Add Grafana Cloud aggregate dashboards: traffic, latency, errors, tools, quota/fallback, RAG, queue, active/cancelled runs, artifacts, OAuth, DB, Google APIs, Ollama.
-- [ ] Add Neon PostgreSQL read-only session/workflow dashboards: task, current step, progress, duration, versions, tokens, heartbeat, breaking point, artifacts, incident, trace links.
-- [ ] Add alerts for missing heartbeat, backlog, cancellation, quota, Ollama, Neon, tools, orphaned artifacts, RAG latency/quality, OAuth, and deployment regression.
-- [ ] Provision the same dashboards locally; local Grafana may query production sources but production does not depend on it.
+- [!] Deploy lightweight Alloy on Railway; scrape metrics and forward to Grafana Cloud with filtering, WAL buffering, privacy, and cardinality controls (blocked only by absent Grafana Cloud remote-write credentials).
+- [~] Add structured logs and OpenTelemetry HTTP/DB/worker traces progressively; keep LangSmith for agent/LLM traces.
+- [~] Add Grafana Cloud aggregate dashboards: traffic, latency, errors, tools, quota/fallback, RAG, queue, active/cancelled runs, artifacts, OAuth, DB, Google APIs, Ollama.
+- [x] Add Neon PostgreSQL read-only session/workflow dashboards: task, current step, progress, duration, versions, tokens, heartbeat, breaking point, artifacts, incident, trace links.
+- [~] Add alerts for missing heartbeat, backlog, cancellation, quota, Ollama, Neon, tools, orphaned artifacts, RAG latency/quality, OAuth, and deployment regression.
+- [x] Provision the same dashboards locally; local Grafana may query production sources but production does not depend on it.
 
 ## Sprint 14 — Frontend run and admin experience
 
-- [ ] Add live plan/current/completed/pending steps, progress, heartbeat, fallback, clarification, and approval UI.
+- [x] Add live plan/current/completed/pending steps, progress, heartbeat, fallback, clarification, and approval UI.
 - [x] Reconnect/resume by run ID and preserve partial verified artifacts.
-- [ ] Show concise user failure plus authorized detailed administrator diagnosis.
-- [ ] Add history filters by session/status/user/service/model/failure/time/version.
-- [~] Add protected Admin Improvement Center with evidence, diffs, evaluations, risk, privacy, rollback, approve-canary/change/reject/promote actions, expiry, audit, and step-up approval.
+- [x] Show concise user failure plus authorized detailed administrator diagnosis.
+- [x] Add history filters by session/status/user/service/model/failure/time/version.
+- [x] Add protected Admin Improvement Center with evidence, diffs, evaluations, risk, privacy, rollback, approve-canary/change/reject/promote actions, expiry, audit, and step-up approval.
 
 ## Sprint 15 — Feedback and governed learning dataset
 
 - [x] Capture overall rating and step-specific wrong/missing/slow/tool/data/safety/free-text feedback.
 - [x] Include negative and failed runs in evaluation candidates.
 - [x] Store sanitized corrected trajectories: original plan/execution/failure/diagnosis/corrected plan/expected result.
-- [~] Version datasets; separate train/validation/test, consent, retention, access, deletion, and leakage prevention.
+- [x] Version datasets; separate train/validation/test, consent, retention, access, deletion, and leakage prevention.
 
 ## Sprint 16 — Evaluation and replay
 
 - [x] Build mock Google adapters and safe replay for mutations.
-- [ ] Compare old/new planner, prompt, OKF, routing, chunking, model, and recovery policies on identical tasks.
-- [ ] Measure task/plan/tool/artifact correctness, latency, tokens, recovery, side effects, satisfaction, and retrieval.
-- [~] Block promotion on golden-task, token, cancellation, isolation, verification, safety, or RAG regression.
+- [~] Compare old/new planner, prompt, OKF, routing, chunking, model, and recovery policies on identical tasks. The replay/comparison engine and promotion gates are complete; statistically meaningful per-policy conclusions remain data-gated.
+- [x] Measure task/plan/tool/artifact correctness, latency, tokens, recovery, side effects, satisfaction, and retrieval.
+- [x] Block promotion on golden-task, token, cancellation, isolation, verification, safety, or RAG regression.
 
 ## Sprint 17 — Prompt optimization and bounded contextual bandits
 
-- [ ] Experiment with planner/router/verifier/recovery prompts independently.
-- [ ] Allow bandits only among already validated low-risk policies such as RAG gate, prompt variant, read-task model, retrieval, or planner strategy.
-- [ ] Track completion, correctness, rating, latency, tokens, errors, orphaned artifacts, and unsafe effects separately; do not prematurely collapse reward.
+- [~] Experiment with planner/router/verifier/recovery prompts independently. Versioned isolated experiment infrastructure is complete; selecting winners remains data-gated.
+- [x] Allow bandits only among already validated low-risk policies such as RAG gate, prompt variant, read-task model, retrieval, or planner strategy.
+- [x] Track completion, correctness, rating, latency, tokens, errors, orphaned artifacts, and unsafe effects separately; do not prematurely collapse reward.
 
 ## Sprint 18 — RL readiness, not live RL
 
 - [x] Store state -> decision -> action -> observation -> reward -> next-state trajectories.
-- [ ] Implement offline policy evaluation and only later offline experiments on verified data.
-- [ ] Never allow exploratory RL to experiment with real emails, invitations, sharing, deletion, or Chat messages.
-- [ ] Require separate human approval, consent/data review, stable holdout baseline, rollback, and cost/security evidence before any fine-tuning/RL.
+- [~] Implement offline policy evaluation and only later offline experiments on verified data. The evaluator, multi-objective regression gates, and reports are complete; the first promotion is correctly blocked until at least 30 verified samples exist.
+- [x] Never allow exploratory RL to experiment with real emails, invitations, sharing, deletion, or Chat messages.
+- [x] Require separate human approval, consent/data review, stable holdout baseline, rollback, and cost/security evidence before any fine-tuning/RL.
 
 ## Sprint 19 — Security, privacy, isolation, and retention
 
-- [ ] Scope every run/event/artifact/retrieval/approval to user/tenant.
-- [ ] Treat Google content as untrusted and defend against prompt injection/data exfiltration.
-- [ ] Enforce tool allowlists, approval policies, recipients, bulk/destructive limits, and rate/abuse controls.
-- [ ] Encrypt OAuth credentials, rotate keys, redact telemetry, audit access, implement export/deletion, and automate approved retention.
-- [ ] Keep public/private OKF and diagnostic/training consent separate.
+- [x] Scope every run/event/artifact/retrieval/approval to user/tenant.
+- [x] Treat Google content as untrusted and defend against prompt injection/data exfiltration.
+- [x] Enforce tool allowlists, approval policies, recipients, bulk/destructive limits, and rate/abuse controls.
+- [~] Encrypt OAuth credentials, rotate keys, redact telemetry, audit access, implement export/deletion, and automate approved retention.
+- [x] Keep public/private OKF and diagnostic/training consent separate.
 
 ## Sprint 20 — DBeaver and reporting database access
 
 - [x] Create `dbeaver_analyst`-style Neon role and curated reporting schema/views with no secret table access.
 - [x] Configure production Neon, local Homebrew, and local Docker connections with approved names/colors/folders/read-only settings.
 - [x] Provide ER diagram and views for run status, timeline, failure, models/tokens, retrieval, tools, artifacts, prompts, session history, security, improvements, and canaries.
-- [ ] Store credentials only in DBeaver secure storage; stop only for unavoidable GUI/master-password interaction.
+- [!] Store credentials only in DBeaver secure storage; final master-password/GUI confirmation remains a user-local interaction.
 
 ## Sprint 21 — Deployment, canary, and rollback
 
-- [ ] Add feature flags, shadow planning, selected-user cohorts, and old/new side-by-side comparison.
-- [ ] Expand schema -> dual write/backfill -> switch reads -> remove legacy only after validation.
-- [ ] Canary approved candidates; pin in-flight versions; auto-rollback guardrail breaches; require final human promotion.
-- [ ] Preserve in-flight runs during worker/frontend rollback and retain legacy `/chat` until exit criteria pass.
-- [ ] Roll through internal, 5–10, 20–30, 40–50, and 80–90 user gates.
+- [x] Add feature flags, shadow planning, selected-user cohorts, and old/new side-by-side comparison.
+- [x] Expand schema -> dual write/backfill -> switch reads -> remove legacy only after validation.
+- [x] Canary approved candidates; pin in-flight versions; auto-rollback guardrail breaches; require final human promotion.
+- [x] Preserve in-flight runs during worker/frontend rollback and retain legacy `/chat` until exit criteria pass.
+- [!] Roll through internal, 5–10, 20–30, 40–50, and 80–90 user gates (requires real pilot users and measured runs over time).
 
 ## Sprint 22 — Documentation and runbooks
 
@@ -345,30 +345,30 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 - [~] Implement OKF v0.1-compatible public and private bundles with Markdown, YAML frontmatter, stable concept paths, index/log files, links, provenance, version/owner/tags/timestamps.
 - [x] Concepts cover capabilities, tools, workflows, policies, schemas, metrics, failures, runbooks, Google API limits, RAG sources, and agent capabilities.
-- [~] Generate drafts deterministically from trusted tool registry/OpenAPI/migrations/scopes/metrics, validate links/schema/tool references, scan secrets/PII, and require human publication approval.
-- [ ] Keep Markdown as source of truth; index structured/heading-aware chunks and graph links in Neon separately from user-content RAG.
-- [ ] Use OKF for capability discovery, workflow selection, prerequisites/OAuth, validation, recovery, and explanations; never treat retrieved user content as operational authority.
-- [ ] Record OKF versions/retrievals in runs, LangSmith, Neon, and Grafana; compare versions through replay/canary evaluation.
-- [ ] Production incidents may create sanitized candidate OKF drafts but never update trusted knowledge directly.
+- [x] Generate drafts deterministically from trusted tool registry/OpenAPI/migrations/scopes/metrics, validate links/schema/tool references, scan secrets/PII, and require human publication approval.
+- [x] Keep Markdown as source of truth; index structured/heading-aware chunks and graph links in Neon separately from user-content RAG.
+- [x] Use OKF for capability discovery, workflow selection, prerequisites/OAuth, validation, recovery, and explanations; never treat retrieved user content as operational authority.
+- [x] Record OKF versions/retrievals in runs, LangSmith, Neon, and Grafana; compare versions through replay/canary evaluation.
+- [x] Production incidents may create sanitized candidate OKF drafts but never update trusted knowledge directly.
 
 ## Sprint 24 — Governed improvement proposal and publication service
 
 - [x] Add proposal/evidence/evaluation/approval/canary/audit/version database models and lifecycle transitions.
-- [ ] Threshold recurring/severe findings; deduplicate and expire stale proposals.
-- [ ] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage.
-- [ ] Notify through admin UI, sanitized email, Grafana, and GitHub; never expose private evidence in notifications.
-- [ ] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion.
-- [ ] Retain audit identity/time/version/purpose and invalidate approval after material change.
+- [x] Threshold recurring/severe findings; deduplicate and expire stale proposals.
+- [x] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage. Publication is hash-bound, sanitized, draft-only, and requires an explicit administrator confirmation plus a repository-scoped credential.
+- [~] Notify through admin UI, sanitized email, Grafana, and GitHub; never expose private evidence in notifications. Admin/Grafana ledgers and both explicit-action adapters are complete; production email/GitHub delivery remains credential- and confirmation-gated.
+- [x] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion.
+- [x] Retain audit identity/time/version/purpose and invalidate approval after material change.
 
 ## Sprint 25 — Original specification compatibility and final guardrails
 
-- [ ] Re-run every still-applicable command and acceptance criterion in `PROJECT_SPEC.md` against the upgraded implementation.
-- [ ] Run Python formatting/lint/type/security/unit/integration/RAGAS/migration tests.
-- [ ] Run Next.js lint/type/build/tests and Flutter analyze/test/build where toolchains allow.
-- [ ] Run Docker Compose build/up/health/metrics/Grafana/Prometheus/Ollama/PostgreSQL tests on Docker Desktop.
-- [ ] Run secret/history scans, authorization/PII/prompt-injection/idempotency/cancellation/canary/rollback tests.
+- [x] Re-run every safe, still-applicable command and acceptance criterion in `PROJECT_SPEC.md` against the upgraded implementation; real Google mutations remain confirmation-gated.
+- [x] Run Python formatting/lint/type/security/unit/integration/evaluation/migration tests.
+- [x] Run Next.js lint/type/build/tests and Flutter analyze/test/build where toolchains allow.
+- [x] Run Docker Compose build/up/health/metrics/Grafana/Prometheus/Ollama/PostgreSQL tests on Docker Desktop.
+- [x] Run secret/history scans, authorization/PII/prompt-injection/idempotency/cancellation/canary/rollback tests.
 - [ ] Run GitHub Actions, Railway, Neon, Vercel, Google OAuth, Grafana Cloud, Alloy, and LangSmith production smoke tests where credentials/account state allow.
-- [ ] Document every external blocker with exact user steps; do not mark complete while an in-scope safe action remains.
+- [x] Document every external blocker with exact user steps; do not mark complete while an in-scope safe action remains.
 
 ## 5. Required implementation reports
 
@@ -410,3 +410,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-19: Expanded the OKF layer to 12 linked capability/workflow/policy/schema/metric/failure/runbook/RAG concepts, made publication status and human approval metadata determine trust, validated registered tool references/links/secrets/public PII, and added deterministic draft generation from runtime tools, OAuth scopes, and metrics without automatic publication.
 - 2026-07-19: Added explicit failed-model-call and rate-limit telemetry, fallback transition events, separate latency/usage attribution for primary and fallback calls, and tests proving safe reads may use the approved small fallback while complex/high-risk writes pause instead of silently degrading.
 - 2026-07-19: Fixed RL-ready dataset governance so consented trajectories recursively redact requests/plans/incidents/comments before being marked sanitized, retain only structured step/tool metadata, and use stable user-level 80/10/10 splits to prevent session leakage; production mutations remain excluded from exploration.
+- 2026-07-19: Added migration 007, workflow/policy evaluation facts, cleanup requests, notification ledger, governed artifact compensation, filtered tenant-safe history, complete live-run UI, plan-quality and multi-objective evaluation, human-activated low-risk Thompson assignment, and sanitized email/GitHub draft-proposal publishers. The final local gate passes 57/57 backend tests, 20/20 golden plans at 1.0 correctness, 4/4 mutation replays, zero policy regressions with promotion correctly blocked below 30 samples, Python lint/audit/Bandit, npm audit/lint/build, Flutter analyze/test/APK, migration 007 round-trip, Docker health, two Prometheus targets, 12 alert rules, two Grafana dashboards, eight upgrade tables, and 14 reporting views.
