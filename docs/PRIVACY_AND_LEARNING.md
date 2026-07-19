@@ -9,8 +9,14 @@
 
 Feedback is user-scoped. A trajectory is added to the learning dataset only when the
 user explicitly consents; email addresses and common secret forms are redacted first.
-Dataset split begins as `unassigned` so train/validation/test assignment can be done
-once with leakage checks. Production mutations are never exploration actions.
+Legacy trajectories began as `unassigned`; they cannot enter an evaluation dataset until
+the governed sanitizer/backfill assigns them. Production mutations are never exploration
+actions.
+
+New consented trajectories are recursively sanitized before insertion and assigned by
+a stable user-level hash to `train` (80%), `validation` (10%), or `test` (10%). Keeping
+all runs from the same user in one split prevents near-duplicate session leakage. Existing
+legacy `unassigned` rows must pass the same sanitizer before a governed backfill.
 
 Automatic analysis groups recurring sanitized failure categories, creates evidence
 links and a frozen candidate hash, then exposes it in the protected Admin Improvement

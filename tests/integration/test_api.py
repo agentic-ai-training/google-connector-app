@@ -105,6 +105,58 @@ def test_feedback_preserves_retrieved_context():
         assert (json.loads(stored) if isinstance(stored, str) else stored) == context
 
 
+def test_consented_trajectory_is_sanitized_and_assigned_without_leakage():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"learning-{uuid.uuid4()}@example.com"
+    private_email = "private.person@company.test"
+    run_key = f"learning-run-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()["access_token"]
+
+        async def seed():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                return await conn.fetchval(
+                    """INSERT INTO agent_runs
+                       (session_id,user_id,request,status,idempotency_key,plan,result,
+                        incident_summary)
+                       VALUES($1,$2,$3,'completed',$1,$4::jsonb,$5::jsonb,$6::jsonb)
+                       RETURNING id""",
+                    run_key, user_id, f"Email {private_email}",
+                    json.dumps({"objective": f"Email {private_email}"}),
+                    json.dumps({"output": f"Prepared for {private_email}"}),
+                    json.dumps({"error": f"token=do-not-store for {private_email}"}),
+                )
+
+        async def read_and_cleanup(run_id):
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """SELECT state,decision,observation,dataset_split,sanitized,consented
+                       FROM learning_trajectories WHERE run_id=$1""", run_id,
+                )
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run_id)
+                return dict(row)
+
+        run_id = client.portal.call(seed)
+        response = client.post(
+            "/feedback", headers={"Authorization": f"Bearer {token}"},
+            json={"run_id": str(run_id), "rating": -1, "categories": ["wrong_data"],
+                  "comment": f"Wrong recipient {private_email}",
+                  "consented_for_learning": True},
+        )
+        assert response.status_code == 200
+        trajectory = client.portal.call(read_and_cleanup, run_id)
+        serialized = json.dumps(trajectory, default=str)
+        assert private_email not in serialized
+        assert "do-not-store" not in serialized
+        assert trajectory["dataset_split"] in {"train", "validation", "test"}
+        assert trajectory["sanitized"] is True
+        assert trajectory["consented"] is True
+
+
 def test_durable_high_risk_run_requires_action_bound_approval():
     from app.api.main import app
 

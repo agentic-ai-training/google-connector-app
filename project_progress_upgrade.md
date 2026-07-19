@@ -292,7 +292,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 - [x] Capture overall rating and step-specific wrong/missing/slow/tool/data/safety/free-text feedback.
 - [x] Include negative and failed runs in evaluation candidates.
 - [x] Store sanitized corrected trajectories: original plan/execution/failure/diagnosis/corrected plan/expected result.
-- [ ] Version datasets; separate train/validation/test, consent, retention, access, deletion, and leakage prevention.
+- [~] Version datasets; separate train/validation/test, consent, retention, access, deletion, and leakage prevention.
 
 ## Sprint 16 — Evaluation and replay
 
@@ -409,3 +409,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-19: Added migration 006 with complete read-only DBeaver reporting views/ER map and grants, plus a tenant-scoped account export that excludes OAuth ciphertext and vector embeddings; corrected Docker reporting access to explicit IPv4 to avoid Homebrew PostgreSQL collisions.
 - 2026-07-19: Expanded the OKF layer to 12 linked capability/workflow/policy/schema/metric/failure/runbook/RAG concepts, made publication status and human approval metadata determine trust, validated registered tool references/links/secrets/public PII, and added deterministic draft generation from runtime tools, OAuth scopes, and metrics without automatic publication.
 - 2026-07-19: Added explicit failed-model-call and rate-limit telemetry, fallback transition events, separate latency/usage attribution for primary and fallback calls, and tests proving safe reads may use the approved small fallback while complex/high-risk writes pause instead of silently degrading.
+- 2026-07-19: Fixed RL-ready dataset governance so consented trajectories recursively redact requests/plans/incidents/comments before being marked sanitized, retain only structured step/tool metadata, and use stable user-level 80/10/10 splits to prevent session leakage; production mutations remain excluded from exploration.

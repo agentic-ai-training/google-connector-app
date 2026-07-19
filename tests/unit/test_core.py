@@ -13,6 +13,7 @@ from app.agents.supervisor import (
 )
 from app.api.middleware.auth import create_token
 from app.api.routes.chat import capability_answer, classify_graph_results
+from app.api.routes.feedback import _dataset_split, _sanitize_value
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 from jose import jwt
@@ -36,6 +37,18 @@ def test_context_packer_orders_by_score():
         {"source": "high", "content": "first", "score": 0.9},
     ])
     assert text.index("first") < text.index("second")
+
+
+def test_learning_payload_is_recursively_sanitized_and_split_by_user():
+    sanitized = _sanitize_value({
+        "objective": "Email private.user@company.test",
+        "nested": [{"authorization": "token=super-secret-value"}],
+    })
+    serialized = str(sanitized)
+    assert "private.user" not in serialized
+    assert "super-secret-value" not in serialized
+    assert _dataset_split("person@example.com") == _dataset_split("PERSON@example.com")
+    assert _dataset_split("person@example.com") in {"train", "validation", "test"}
 
 
 def test_untrusted_context_strips_prompt_injection_commands():

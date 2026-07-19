@@ -1,5 +1,6 @@
 import json
 import re
+import hashlib
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -30,6 +31,27 @@ def _sanitize(value: str | None) -> str:
     text = re.sub(r"(?i)(token|secret|authorization|api[_ -]?key)\s*[:=]\s*\S+",
                   r"\1=[redacted]", text)
     return text[:8_000]
+
+
+def _sanitize_value(value):
+    """Recursively sanitize trajectory payloads before marking them sanitized."""
+    if isinstance(value, str):
+        return _sanitize(value)
+    if isinstance(value, dict):
+        return {str(key): _sanitize_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
+def _dataset_split(user_id: str) -> str:
+    """Keep every trajectory from one user in one stable split to prevent leakage."""
+    bucket = int(hashlib.sha256(user_id.lower().encode()).hexdigest()[:8], 16) % 100
+    if bucket < 80:
+        return "train"
+    if bucket < 90:
+        return "validation"
+    return "test"
 
 
 @router.post("/feedback")
@@ -86,19 +108,32 @@ async def feedback(req: FeedbackRequest, request: Request):
             req.consented_for_learning, req.expected_result,
         )
         if req.run_id and req.consented_for_learning:
+            steps = [dict(row) for row in await conn.fetch(
+                """SELECT step_key,sequence_no,service,operation,read_only,status,
+                          error_category,duration_ms,input_tokens,output_tokens
+                   FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no""",
+                req.run_id,
+            )]
+            attempts = [dict(row) for row in await conn.fetch(
+                """SELECT tool_name,attempt_no,status,duration_ms,error_category
+                   FROM agent_tool_attempts WHERE run_id=$1 ORDER BY created_at""",
+                req.run_id,
+            )]
             await conn.execute(
                 """INSERT INTO learning_trajectories
                    (run_id,consented,sanitized,state,decision,action,observation,reward,
                     next_state,dataset_split)
                    VALUES($1,TRUE,TRUE,$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,
-                          $6::jsonb,$7::jsonb,'unassigned')""",
+                          $6::jsonb,$7::jsonb,$8)""",
                 req.run_id,
                 json.dumps({"request": _sanitize(question)}),
-                json.dumps({"plan": run["plan"]}, default=str),
-                json.dumps({"steps": "see sanitized run events"}),
-                json.dumps({"response": _sanitize(response),
-                            "comment": _sanitize(req.comment)}),
+                json.dumps({"plan": _sanitize_value(run["plan"])}, default=str),
+                json.dumps({"steps": steps, "tool_attempts": attempts}, default=str),
+                json.dumps({"response": _sanitize(response), "incident":
+                            _sanitize_value(run["incident_summary"]),
+                            "comment": _sanitize(req.comment)}, default=str),
                 json.dumps({"rating": req.rating, "categories": req.categories}),
                 json.dumps({"expected_result": _sanitize(req.expected_result)}),
+                _dataset_split(request.state.user_id),
             )
     return {"status": "recorded", "learning_candidate": req.consented_for_learning}
