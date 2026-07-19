@@ -27,13 +27,16 @@ from app.okf.loader import load_bundle
 from app.okf.generator import build_catalog_draft
 from pathlib import Path
 from app.rag.chunking import chunk_gmail, chunk_meet_transcript, chunk_pdf, chunk_sheet
-from app.runs.worker import verify_step
+from app.runs.worker import classify_error, verify_step
 from app.tools.base import tool_run_id
 from app.tools.registry import _request_id
 from app.tools.registry import registered_tool_names
 from app.evaluation.replay import replay_case
 from app.improvements.analyzer import assess_canary
 from app.improvements.publisher import proposal_markdown
+from app.api.middleware.metrics import _correlation_id, _route_template
+from app.mlops.tracing import _headers as otlp_headers, _trace_endpoint
+from types import SimpleNamespace
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -86,6 +89,44 @@ def test_public_proposal_excludes_private_evidence_and_rejects_pii():
     proposal["sanitized_summary"] = "Contact private.person@example.com"
     with pytest.raises(ValueError, match="email address"):
         proposal_markdown(proposal)
+
+
+def test_request_correlation_accepts_only_bounded_safe_identifiers():
+    safe = SimpleNamespace(headers={"x-request-id": "safe-request-123"})
+    unsafe = SimpleNamespace(headers={"x-request-id": "contains user@example.com"})
+    assert _correlation_id(safe) == "safe-request-123"
+    generated = _correlation_id(unsafe)
+    assert len(generated) == 32
+    assert "@" not in generated
+    request = SimpleNamespace(scope={"route": SimpleNamespace(path="/runs/{run_id}")})
+    assert _route_template(request) == "/runs/{run_id}"
+    assert _route_template(SimpleNamespace(scope={})) == "unmatched"
+
+
+@pytest.mark.parametrize(("message", "category"), [
+    ("HTTP 429 quota exceeded", "rate_limit"),
+    ("OAuth credential rejected", "authentication"),
+    ("Google API 403 permission denied", "permission"),
+    ("upstream returned 500", "network"),
+    ("502 bad gateway", "network"),
+    ("resource not found 404", "execution"),
+])
+def test_google_failure_taxonomy_distinguishes_retryable_statuses(message, category):
+    assert classify_error(RuntimeError(message)) == category
+
+
+def test_otlp_configuration_requires_safe_endpoints_and_well_formed_headers():
+    assert _trace_endpoint("https://tempo.example.com") == (
+        "https://tempo.example.com/v1/traces"
+    )
+    assert _trace_endpoint("http://localhost:4318") == "http://localhost:4318/v1/traces"
+    with pytest.raises(ValueError, match="HTTPS"):
+        _trace_endpoint("http://public.example.com:4318")
+    assert otlp_headers("Authorization=Basic redacted,X-Scope=tenant") == {
+        "Authorization": "Basic redacted", "X-Scope": "tenant",
+    }
+    with pytest.raises(ValueError, match="key=value"):
+        otlp_headers("malformed")
 
 
 def test_learning_payload_is_recursively_sanitized_and_split_by_user():
@@ -487,6 +528,13 @@ def test_multi_service_plan_is_dependency_ordered():
     ]
     assert plan.steps[0].read_only is True
     assert plan.steps[1].read_only is False
+
+
+def test_meet_space_routes_only_to_meet_create():
+    plan, policy = build_plan("Create an instant Google Meet space")
+    assert plan.services == ["meet"]
+    assert [step.operation for step in plan.steps] == ["create"]
+    assert policy["rag_mode"] == "none"
 
 
 def test_dependency_free_reads_can_execute_in_parallel():

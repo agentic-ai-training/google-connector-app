@@ -85,7 +85,7 @@ SERVICE_OPERATION_PATTERNS = {
     "meet": [("create", r"\b(create|start|schedule)\b"),
              ("participants", r"\b(participant|attendee|attendance)\b"),
              ("conferences", r"\b(list|recent|conference|record)\b"),
-             ("get", r"\b(get|find|meet)\b")],
+             ("get", r"\b(get|find|lookup)\b")],
 }
 
 OPERATION_TOOLS = {
@@ -159,6 +159,10 @@ def classify_request(message: str) -> dict:
         service for service, terms in SERVICES.items()
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
     ]
+    # "Space" is a resource noun for both Chat and Meet. Do not invent a Chat
+    # step when the user explicitly asks for a Meet space without mentioning Chat.
+    if "meet" in services and "chat" in services and not re.search(r"\bchat\b", text):
+        services.remove("chat")
     write = _matches(WRITE_PATTERNS, text)
     high_risk = _matches(HIGH_RISK_PATTERNS, text)
     approval_bypassed = any(phrase in text for phrase in APPROVAL_OPT_OUT)

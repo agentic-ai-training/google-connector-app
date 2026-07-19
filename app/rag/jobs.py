@@ -5,6 +5,8 @@ from contextlib import suppress
 
 from app.rag.embedder import NomicEmbedder
 from app.rag.ingestion import TOOL_SOURCES, index_tool_result
+from app.config.settings import get_settings
+from app.mlops.metrics import embedding_admission_rejections
 
 
 async def enqueue_tool_result(name, args, result, pool, user_id) -> bool:
@@ -15,11 +17,31 @@ async def enqueue_tool_result(name, args, result, pool, user_id) -> bool:
         {"tool": name, "args": args, "result": result}, default=str,
         separators=(",", ":"),
     )
+    settings = get_settings()
+    if len(serialized) > settings.max_embedding_payload_chars:
+        embedding_admission_rejections.labels("payload_too_large").inc()
+        return False
     content_hash = hashlib.sha256(serialized.encode()).hexdigest()
     source_id = hashlib.sha256(
         json.dumps(args, sort_keys=True, default=str).encode()
     ).hexdigest()
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        # Serialize the small admission decision, not embedding execution. This
+        # prevents concurrent API processes from racing past the durable caps.
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('embedding-admission'))")
+        global_pending, user_pending = await conn.fetchrow(
+            """SELECT count(*) FILTER (WHERE status IN ('queued','failed','running')),
+                      count(*) FILTER (WHERE user_id=$1 AND
+                        status IN ('queued','failed','running'))
+               FROM embedding_jobs""",
+            user_id,
+        )
+        if global_pending >= settings.max_embedding_jobs_global:
+            embedding_admission_rejections.labels("global_queue_full").inc()
+            return False
+        if user_pending >= settings.max_embedding_jobs_per_user:
+            embedding_admission_rejections.labels("user_queue_full").inc()
+            return False
         status = await conn.execute(
             """INSERT INTO embedding_jobs
                (user_id,source_type,source_id,payload,content_hash)

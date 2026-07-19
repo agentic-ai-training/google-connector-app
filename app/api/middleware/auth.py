@@ -21,6 +21,7 @@ from app.db.oauth_credentials import (
     google_connection_status,
     save_google_credentials,
 )
+from app.mlops.metrics import oauth_outcomes
 
 router = APIRouter()
 OAUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", *SCOPES]
@@ -142,15 +143,18 @@ async def google_callback(code: str, state: str):
         if not email or not identity.get("email_verified"):
             raise ValueError("Google email is not verified")
         await save_google_credentials(await get_pool(), email, flow.credentials)
+        oauth_outcomes.labels("success").inc()
         token = create_token(email)
         fragment = urlencode({"access_token": token})
         return RedirectResponse(f"{return_to}/#{fragment}", status_code=302)
     except OAuth2Error:
+        oauth_outcomes.labels("expired_or_reused_code").inc()
         fragment = urlencode({
             "oauth_error": "Authorization expired or was already used. Please sign in again."
         })
         return RedirectResponse(f"{return_to}/#{fragment}", status_code=302)
     except (jwt.PyJWTError, ValueError, KeyError) as exc:
+        oauth_outcomes.labels("invalid_callback").inc()
         raise HTTPException(400, f"Google OAuth failed: {exc}") from exc
 
 

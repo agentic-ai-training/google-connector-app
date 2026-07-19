@@ -22,7 +22,9 @@ def classify_error(exc: Exception) -> str:
         return "authentication"
     if "permission" in text or "403" in text:
         return "permission"
-    if "timeout" in text or "connection" in text:
+    if any(code in text for code in ("500", "502", "503", "504")):
+        return "network"
+    if "timeout" in text or "connection" in text or "temporarily unavailable" in text:
         return "network"
     return "execution"
 

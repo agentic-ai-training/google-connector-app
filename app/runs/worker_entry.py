@@ -7,9 +7,11 @@ from app.db.connection import close_pool, get_pool
 from app.okf.loader import sync_bundle
 from app.runs.worker import worker_loop
 from app.rag.jobs import embedding_worker_loop
+from app.mlops.tracing import configure_tracing
 
 
 async def main():
+    configure_tracing()
     start_http_server(8001)
     pool = await get_pool()
     await sync_bundle(pool)

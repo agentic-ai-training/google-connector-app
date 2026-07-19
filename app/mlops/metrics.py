@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram, Info
 tool_errors = Counter("agent_tool_errors_total", "Tool errors", ["tool_name"])
 tool_latency = Histogram("agent_tool_latency_seconds", "Tool latency", ["tool_name"])
 llm_latency = Histogram("agent_llm_latency_seconds", "LLM latency", ["model"])
@@ -54,3 +54,15 @@ embedding_overflows = Counter(
 ollama_model_loaded = Gauge(
     "agent_ollama_model_loaded", "Whether the configured embedding model answered successfully"
 )
+embedding_admission_rejections = Counter(
+    "agent_embedding_admission_rejections_total",
+    "Embedding persistence jobs rejected before queueing",
+    ["reason"],
+)
+oauth_outcomes = Counter(
+    "agent_oauth_outcomes_total", "Google OAuth outcomes", ["outcome"]
+)
+rag_quality = Gauge(
+    "agent_rag_quality", "Latest rolling offline RAG quality score", ["metric"]
+)
+build_info = Info("agent_build", "Immutable deployed application version")

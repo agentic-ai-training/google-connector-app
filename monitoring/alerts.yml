@@ -61,3 +61,23 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations: {summary: "Embedding p95 latency exceeds ten seconds"}
+      - alert: EmbeddingAdmissionRejected
+        expr: sum(rate(agent_embedding_admission_rejections_total[15m])) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Embedding persistence is being backpressured"}
+      - alert: GoogleOAuthFailures
+        expr: sum(rate(agent_oauth_outcomes_total{outcome!="success"}[15m])) > 0.02
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Google OAuth callback failures increased"}
+      - alert: RAGQualityRegression
+        expr: min(agent_rag_quality{metric=~"faithfulness|context_recall"}) < 0.70
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "Offline RAG quality fell below the guarded baseline"}
+      - alert: DeploymentVersionMissing
+        expr: absent(agent_build_info)
+        for: 10m
+        labels: {severity: critical}
+        annotations: {summary: "Application deployment version telemetry is absent"}
