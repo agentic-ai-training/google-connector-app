@@ -59,3 +59,18 @@ callback URI in Google Cloud. Never log access/refresh tokens.
 Created artifacts are retained and reported by default. Delete, revoke sharing, or
 cancel a Calendar event only through an explicit approved action. The system never
 interprets a failed later step as permission to delete an earlier verified artifact.
+
+## Legacy tenant-safe RAG import
+
+The old source tables predate multi-user ownership. Never expose them directly to the
+new retriever. For a known original owner, first run a count-only preview and then the
+reversible import:
+
+```bash
+NEON_DATABASE_URL=... python scripts/backfill_legacy_rag.py --user-id owner@example.com
+NEON_DATABASE_URL=... python scripts/backfill_legacy_rag.py --user-id owner@example.com --apply
+```
+
+This reuses existing vectors, assigns an explicit ACL owner, and labels rows
+`legacy-import-<source>-v1`. As each source is refreshed, the v2 source-aware ingester
+tombstones the legacy chunk. Roll back only this import with `--rollback`.
