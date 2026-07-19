@@ -141,11 +141,12 @@ source succeeds once.
 
 ### Governed GitHub proposal PR notification
 
-The publisher is implemented and remains disabled until production receives a
-separately scoped credential. Create a GitHub App owned by `agentic-ai-training`
+The publisher target is configured as `agentic-ai-training/google-connector-app`
+and remains disabled until production receives a separately scoped credential.
+Create a GitHub App owned by `agentic-ai-training`
 with Contents and Pull requests write access only to this repository, generate a
-short-lived installation token, and store it as `GITHUB_PROPOSAL_TOKEN` in Railway;
-set `GITHUB_PROPOSAL_REPOSITORY=agentic-ai-training/google-connector-app`. After a
+short-lived installation token, and store it as `GITHUB_PROPOSAL_TOKEN` in Railway.
+After a
 proposal passes its canary and final human promotion approval, an administrator
 must press **Publish sanitized draft PR** and confirm the frozen hash. The adapter
 publishes only the curated proposal Markdown, records the URL in the notification
