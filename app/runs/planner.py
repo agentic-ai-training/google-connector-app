@@ -116,7 +116,7 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
             title=f"Execute and verify the {service} portion",
             service=service,
             operation="read" if not policy["write"] else "execute_and_verify",
-            dependencies=[previous] if previous else [],
+            dependencies=([previous] if previous and policy["write"] else []),
             arguments={"request": message, "service": service},
             read_only=not policy["write"],
             risk_level=policy["risk_level"],

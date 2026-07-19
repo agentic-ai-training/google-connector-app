@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     governed_improvements_enabled: bool = True
     worker_poll_seconds: float = 1.0
     worker_lease_seconds: int = 120
+    worker_step_concurrency: int = 3
+    max_active_runs_per_user: int = 3
+    max_runs_per_user_hour: int = 60
+    max_active_runs_global: int = 100
+    max_request_chars: int = 12000
     raw_telemetry_retention_days: int = 14
     workflow_retention_days: int = 90
     aggregate_retention_days: int = 365

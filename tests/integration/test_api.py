@@ -1,4 +1,5 @@
 import os
+import asyncio
 import json
 import uuid
 
@@ -161,6 +162,28 @@ def test_run_idempotency_and_cross_user_isolation():
         ).json() == {"runs": []}
 
 
+def test_per_user_active_run_limit_is_enforced():
+    from app.api.main import app
+
+    email = f"limit-{uuid.uuid4()}@example.com"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": email}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        for index in range(3):
+            response = client.post("/runs", headers=headers, json={
+                "message": f"Send an email to recipient{index}@example.com",
+                "session_id": f"limit-{uuid.uuid4()}",
+            })
+            assert response.status_code == 202
+            assert response.json()["status"] == "awaiting_approval"
+        limited = client.post("/runs", headers=headers, json={
+            "message": "Send an email to last@example.com",
+            "session_id": f"limit-{uuid.uuid4()}",
+        })
+        assert limited.status_code == 429
+        assert "Too many active runs" in limited.json()["detail"]
+
+
 def test_worker_executes_dependency_steps_and_recovers_expired_lease():
     from types import SimpleNamespace
 
@@ -172,10 +195,16 @@ def test_worker_executes_dependency_steps_and_recovers_expired_lease():
     class FakeGraph:
         def __init__(self):
             self.services = []
+            self.active = 0
+            self.max_active = 0
 
         async def ainvoke(self, state, config):
             self.services.append(state["forced_service"])
             service = state["forced_service"]
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.02)
+            self.active -= 1
             return {
                 "output": f"verified {service}",
                 "tool_results": [{"id": f"{service}-resource"}],
@@ -202,11 +231,12 @@ def test_worker_executes_dependency_steps_and_recovers_expired_lease():
             fake_app = SimpleNamespace(state=SimpleNamespace(agent_graph=graph))
             await execute_run(fake_app, pool, claimed)
             completed = await get_run(pool, run["id"], "worker@example.com")
-            return completed, graph.services
+            return completed, graph.services, graph.max_active
 
-        completed, services = client.portal.call(exercise)
+        completed, services, max_active = client.portal.call(exercise)
         assert completed["status"] == "completed"
         assert [step["status"] for step in completed["steps"]] == [
             "completed", "completed",
         ]
-        assert services == ["gmail", "drive"]
+        assert set(services) == {"gmail", "drive"}
+        assert max_active == 2

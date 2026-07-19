@@ -156,6 +156,66 @@ async def _store_artifacts(conn, run, step, artifacts):
         )
 
 
+async def _execute_step(app, pool, run, step, dependencies):
+    run_id = run["id"]
+    user_id = run["user_id"]
+    await append_event(pool, run_id, user_id, "step_started", step_id=step["id"],
+                       phase="execution", message=step["title"])
+    step_started = time.perf_counter()
+    dependency_text = json.dumps(dependencies, default=str)
+    scoped_message = (
+        f"Overall request: {run['request']}\n\n"
+        f"Execute only the {step['service']} portion now. Do not repeat work from "
+        f"completed dependency steps. Dependency outputs: {dependency_text}"
+    )
+    initial = {
+        "message": scoped_message, "session_id": run["session_id"],
+        "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
+        "forced_service": step["service"], "messages": [],
+        "risk_level": run["risk_level"],
+        "allow_small_fallback": (
+            run["risk_level"] == "low" and len((run["plan"] or {}).get("services", [])) <= 1
+        ),
+    }
+    result = await app.state.agent_graph.ainvoke(
+        initial, config={"configurable": {"thread_id": f"{run_id}:{step['step_key']}"}}
+    )
+    output = result.get("output", "")
+    executions = result.get("tool_executions", [])
+    if executions:
+        verified, evidence, artifacts = await verify_executions(executions)
+        if verified and not result.get("task_complete"):
+            verified = False
+            evidence = result.get("error") or "The agent did not reach a completed state"
+    else:
+        verified, evidence, artifacts = verify_step(step, result)
+    elapsed_ms = int((time.perf_counter() - step_started) * 1000)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,
+               duration_ms=$3,completed_at=now(),error_category=$4,error_message=$5
+               WHERE id=$6""",
+            "completed" if verified else "failed",
+            json.dumps({"output": output, "tool_results": result.get("tool_results", []),
+                        "tool_executions": executions, "verification": evidence}, default=str),
+            elapsed_ms, None if verified else "verification",
+            None if verified else evidence, step["id"],
+        )
+        await _store_artifacts(conn, run, step, artifacts)
+    await append_event(
+        pool, run_id, user_id,
+        "verification_succeeded" if verified else "verification_failed",
+        step_id=step["id"], phase="verification", message=evidence,
+        payload={"artifacts": len(artifacts)},
+    )
+    if not verified:
+        raise RuntimeError(evidence)
+    await append_event(pool, run_id, user_id, "step_completed", step_id=step["id"],
+                       phase="execution", message=output,
+                       payload={"artifact_count": len(artifacts)})
+    return output
+
+
 async def execute_run(app, pool, run):
     run_id = run["id"]
     user_id = run["user_id"]
@@ -167,7 +227,7 @@ async def execute_run(app, pool, run):
         if credentials is None and not get_settings().allow_dev_auth:
             raise RuntimeError("Google credentials are not connected")
         credential_token = request_google_credentials.set(credentials)
-        final_output = ""
+        final_outputs = []
         while True:
             async with pool.acquire() as conn:
                 current_status = await conn.fetchval(
@@ -175,8 +235,15 @@ async def execute_run(app, pool, run):
                 )
                 if current_status == "cancelled":
                     return
-                step_row = await _claim_step(conn, run_id)
-                if not step_row:
+                ready = []
+                limit = max(1, min(get_settings().worker_step_concurrency, 8))
+                for _ in range(limit):
+                    step_row = await _claim_step(conn, run_id)
+                    if not step_row:
+                        break
+                    step = dict(step_row)
+                    ready.append((step, await _dependency_context(conn, step)))
+                if not ready:
                     pending = await conn.fetchval(
                         "SELECT count(*) FROM agent_run_steps WHERE run_id=$1 AND status='pending'",
                         run_id,
@@ -184,72 +251,24 @@ async def execute_run(app, pool, run):
                     if pending:
                         raise RuntimeError("No executable step: dependency graph is blocked")
                     break
-                step = dict(step_row)
-                dependencies = await _dependency_context(conn, step)
                 await conn.execute(
                     "UPDATE agent_runs SET current_step_id=$1,heartbeat_at=now() WHERE id=$2",
-                    step["id"], run_id,
+                    ready[0][0]["id"], run_id,
                 )
-            await append_event(pool, run_id, user_id, "step_started", step_id=step["id"],
-                               phase="execution", message=step["title"])
-            step_started = time.perf_counter()
-            dependency_text = json.dumps(dependencies, default=str)
-            scoped_message = (
-                f"Overall request: {run['request']}\n\n"
-                f"Execute only the {step['service']} portion now. Do not repeat work from "
-                f"completed dependency steps. Dependency outputs: {dependency_text}"
+            batch_results = await asyncio.gather(*(
+                _execute_step(app, pool, run, step, dependencies)
+                for step, dependencies in ready
+            ), return_exceptions=True)
+            final_outputs.extend(
+                result for result in batch_results if isinstance(result, str)
             )
-            initial = {
-                "message": scoped_message, "session_id": run["session_id"],
-                "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
-                "forced_service": step["service"], "messages": [],
-                "risk_level": run["risk_level"],
-                "allow_small_fallback": (
-                    run["risk_level"] == "low" and len((run["plan"] or {}).get("services", [])) <= 1
-                ),
-            }
-            result = await app.state.agent_graph.ainvoke(
-                initial, config={"configurable": {
-                    "thread_id": f"{run_id}:{step['step_key']}"
-                }}
+            failure = next(
+                (result for result in batch_results if isinstance(result, BaseException)), None
             )
-            final_output = result.get("output", "")
-            executions = result.get("tool_executions", [])
-            if executions:
-                verified, evidence, artifacts = await verify_executions(executions)
-                if verified and not result.get("task_complete"):
-                    verified = False
-                    evidence = result.get("error") or "The agent did not reach a completed state"
-            else:
-                verified, evidence, artifacts = verify_step(step, result)
-            elapsed_ms = int((time.perf_counter() - step_started) * 1000)
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,
-                       duration_ms=$3,completed_at=now(),error_category=$4,error_message=$5
-                       WHERE id=$6""",
-                    "completed" if verified else "failed",
-                    json.dumps({"output": final_output,
-                                "tool_results": result.get("tool_results", []),
-                                "tool_executions": executions,
-                                "verification": evidence}, default=str),
-                    elapsed_ms, None if verified else "verification",
-                    None if verified else evidence, step["id"],
-                )
-                await _store_artifacts(conn, run, step, artifacts)
-            await append_event(
-                pool, run_id, user_id,
-                "verification_succeeded" if verified else "verification_failed",
-                step_id=step["id"], phase="verification", message=evidence,
-                payload={"artifacts": len(artifacts)},
-            )
-            if not verified:
-                raise RuntimeError(evidence)
-            await append_event(pool, run_id, user_id, "step_completed",
-                               step_id=step["id"], phase="execution",
-                               message=final_output,
-                               payload={"artifact_count": len(artifacts)})
+            if failure:
+                raise failure
 
+        final_output = "\n\n".join(output for output in final_outputs if output)
         async with pool.acquire() as conn:
             steps = [dict(row) for row in await conn.fetch(
                 "SELECT * FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no", run_id
@@ -283,19 +302,19 @@ async def execute_run(app, pool, run):
         category = classify_error(exc)
         retrying = False
         async with pool.acquire() as conn, conn.transaction():
-            running_step = await conn.fetchrow(
+            running_steps = await conn.fetch(
                 "SELECT * FROM agent_run_steps WHERE run_id=$1 AND status='running'",
                 run_id,
             )
             if (
-                running_step and running_step["read_only"]
+                running_steps and all(step["read_only"] for step in running_steps)
                 and category in {"network", "rate_limit", "worker"}
-                and running_step["attempt_count"] < running_step["max_attempts"]
+                and all(step["attempt_count"] < step["max_attempts"] for step in running_steps)
             ):
                 await conn.execute(
                     """UPDATE agent_run_steps SET status='pending',error_category=$1,
-                         error_message=$2 WHERE id=$3""",
-                    category, str(exc), running_step["id"],
+                         error_message=$2 WHERE run_id=$3 AND status='running'""",
+                    category, str(exc), run_id,
                 )
                 await conn.execute(
                     """UPDATE agent_runs SET status='queued',current_phase='retry_wait',

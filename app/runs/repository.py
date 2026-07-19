@@ -8,6 +8,10 @@ from app.runs.planner import action_hash, build_plan, validate_plan
 from app.mlops.metrics import approval_requests, run_transitions
 
 
+class RunLimitExceeded(RuntimeError):
+    pass
+
+
 def _json(value):
     return json.dumps(value, default=str)
 
@@ -25,12 +29,16 @@ async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
 
 
 async def create_run(pool, user_id, message, session_id, idempotency_key=None):
+    settings = get_settings()
+    if len(message) > settings.max_request_chars:
+        raise RunLimitExceeded(
+            f"Request exceeds the {settings.max_request_chars}-character safety limit"
+        )
     plan, policy = build_plan(message)
     plan_errors = validate_plan(plan)
     if plan_errors:
         raise ValueError("Invalid execution plan: " + "; ".join(plan_errors))
     key = idempotency_key or str(uuid.uuid4())
-    settings = get_settings()
     status = (
         "awaiting_clarification" if policy["required_clarifications"]
         else ("awaiting_approval" if policy["requires_approval"] else "queued")
@@ -46,6 +54,26 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None):
             )
             if existing:
                 return dict(existing), False
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", user_id)
+            active = await conn.fetchval(
+                """SELECT count(*) FROM agent_runs WHERE user_id=$1 AND deleted_at IS NULL
+                   AND status IN ('queued','running','awaiting_approval','awaiting_clarification')""",
+                user_id,
+            )
+            if active >= settings.max_active_runs_per_user:
+                raise RunLimitExceeded("Too many active runs; finish or cancel one first")
+            recent = await conn.fetchval(
+                "SELECT count(*) FROM agent_runs WHERE user_id=$1 AND queued_at>=now()-interval '1 hour'",
+                user_id,
+            )
+            if recent >= settings.max_runs_per_user_hour:
+                raise RunLimitExceeded("Hourly run limit reached; retry later")
+            global_active = await conn.fetchval(
+                """SELECT count(*) FROM agent_runs WHERE deleted_at IS NULL
+                   AND status IN ('queued','running')"""
+            )
+            if global_active >= settings.max_active_runs_global:
+                raise RunLimitExceeded("The service is at its active-run capacity; retry later")
             run = await conn.fetchrow(
                 """INSERT INTO agent_runs
                    (session_id,user_id,request,objective,status,current_phase,plan,

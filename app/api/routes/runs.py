@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from app.config.settings import get_settings
 from app.db.connection import get_pool
 from app.runs.repository import (
+    RunLimitExceeded,
     cancel_run,
     clarify_run,
     create_run,
@@ -28,10 +29,13 @@ def _serializable(value):
 async def start_run(body: RunCreate, request: Request):
     if not get_settings().durable_runs_enabled:
         raise HTTPException(503, "Durable runs are disabled")
-    run, created = await create_run(
-        await get_pool(), request.state.user_id, body.message,
-        body.session_id, body.idempotency_key,
-    )
+    try:
+        run, created = await create_run(
+            await get_pool(), request.state.user_id, body.message,
+            body.session_id, body.idempotency_key,
+        )
+    except RunLimitExceeded as exc:
+        raise HTTPException(429, str(exc)) from exc
     return {
         "run_id": str(run["id"]), "status": run["status"],
         "created": created, "requires_approval": run["requires_approval"],
