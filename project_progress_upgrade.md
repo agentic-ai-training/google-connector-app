@@ -132,7 +132,7 @@ Legend: `[ ]` pending, `[~]` active, `[x]` complete, `[!]` externally blocked.
 
 ### Epic 0.2 — Golden evaluation set
 
-- [~] Cover Gmail reads/writes, Drive, Sheets, Docs, Calendar/Meet, Chat, Tasks, Contacts, multi-service workflows, ambiguity, misspellings, missing destinations/timezones, quota exhaustion, cold starts, Google 4xx/5xx, cancellation, browser disconnect, Vercel timeout, worker restart, duplicate submission, partial side effects, prompt injection, and cross-user isolation.
+- [x] Cover Gmail reads/writes, Drive, Sheets, Docs, Calendar/Meet, Chat, Tasks, Contacts, multi-service workflows, ambiguity, misspellings, missing destinations/timezones, quota exhaustion, cold starts, Google 4xx/5xx, cancellation, browser disconnect, Vercel timeout, worker restart, duplicate submission, partial side effects, prompt injection, and cross-user isolation through the planner, resilience, integration, and no-network replay suites.
 - [x] Define expected plans, tools, arguments, artifacts, approvals, postconditions, and summaries.
 - [x] Replace unsafe mutations with deterministic Google adapter fakes in tests.
 
@@ -234,7 +234,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 - [x] Return live Google results first and enqueue optional persistence/embedding.
 - [x] Batch, dedupe by hash, bound concurrency, time out per item, retry asynchronously, dead-letter failures, and expose embedding health.
-- [~] Apply backpressure to Ollama and monitor cold start, queue, duration, loaded state, errors, input size, and overflow retries.
+- [x] Apply global/per-user/payload admission backpressure to Ollama persistence and monitor cold start, queue, duration, loaded state, errors, input size, overflow retries, and rejection reason.
 
 ## Sprint 8 — Dependency-aware durable executor
 
@@ -273,10 +273,10 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 ## Sprint 13 — Production observability and Grafana
 
 - [!] Deploy lightweight Alloy on Railway; scrape metrics and forward to Grafana Cloud with filtering, WAL buffering, privacy, and cardinality controls (blocked only by absent Grafana Cloud remote-write credentials).
-- [~] Add structured logs and OpenTelemetry HTTP/DB/worker traces progressively; keep LangSmith for agent/LLM traces.
-- [~] Add Grafana Cloud aggregate dashboards: traffic, latency, errors, tools, quota/fallback, RAG, queue, active/cancelled runs, artifacts, OAuth, DB, Google APIs, Ollama.
+- [x] Add privacy-safe structured request logs with correlation IDs plus optional OpenTelemetry FastAPI/HTTPX/asyncpg OTLP traces; keep LangSmith for agent/LLM traces.
+- [!] Add Grafana Cloud aggregate dashboards: traffic, latency, errors, tools, quota/fallback, RAG, queue, active/cancelled runs, artifacts, OAuth, DB, Google APIs, Ollama. Version-controlled dashboards are complete and local; cloud installation is blocked only by absent Grafana Cloud credentials.
 - [x] Add Neon PostgreSQL read-only session/workflow dashboards: task, current step, progress, duration, versions, tokens, heartbeat, breaking point, artifacts, incident, trace links.
-- [~] Add alerts for missing heartbeat, backlog, cancellation, quota, Ollama, Neon, tools, orphaned artifacts, RAG latency/quality, OAuth, and deployment regression.
+- [x] Add alerts for missing heartbeat, backlog, cancellation, quota, Ollama, Neon/tool failures, orphaned artifacts, RAG latency/quality, OAuth, embedding backpressure, and deployment telemetry regression.
 - [x] Provision the same dashboards locally; local Grafana may query production sources but production does not depend on it.
 
 ## Sprint 14 — Frontend run and admin experience
@@ -319,7 +319,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 - [x] Scope every run/event/artifact/retrieval/approval to user/tenant.
 - [x] Treat Google content as untrusted and defend against prompt injection/data exfiltration.
 - [x] Enforce tool allowlists, approval policies, recipients, bulk/destructive limits, and rate/abuse controls.
-- [~] Encrypt OAuth credentials, rotate keys, redact telemetry, audit access, implement export/deletion, and automate approved retention.
+- [x] Encrypt OAuth credentials, support ordered-key lazy rotation, redact telemetry, audit access, implement tenant export/deletion, and automate approved retention.
 - [x] Keep public/private OKF and diagnostic/training consent separate.
 
 ## Sprint 20 — DBeaver and reporting database access
@@ -343,7 +343,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 ## Sprint 23 — Open Knowledge Format operational knowledge layer
 
-- [~] Implement OKF v0.1-compatible public and private bundles with Markdown, YAML frontmatter, stable concept paths, index/log files, links, provenance, version/owner/tags/timestamps.
+- [x] Implement OKF v0.1-compatible public and protected private bundles with Markdown, YAML frontmatter, stable namespaced concept paths, index/log files, links, provenance, version/owner/tags/timestamps, and default-deny private retrieval.
 - [x] Concepts cover capabilities, tools, workflows, policies, schemas, metrics, failures, runbooks, Google API limits, RAG sources, and agent capabilities.
 - [x] Generate drafts deterministically from trusted tool registry/OpenAPI/migrations/scopes/metrics, validate links/schema/tool references, scan secrets/PII, and require human publication approval.
 - [x] Keep Markdown as source of truth; index structured/heading-aware chunks and graph links in Neon separately from user-content RAG.
@@ -412,3 +412,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-19: Fixed RL-ready dataset governance so consented trajectories recursively redact requests/plans/incidents/comments before being marked sanitized, retain only structured step/tool metadata, and use stable user-level 80/10/10 splits to prevent session leakage; production mutations remain excluded from exploration.
 - 2026-07-19: Added migration 007, workflow/policy evaluation facts, cleanup requests, notification ledger, governed artifact compensation, filtered tenant-safe history, complete live-run UI, plan-quality and multi-objective evaluation, human-activated low-risk Thompson assignment, and sanitized email/GitHub draft-proposal publishers. The final local gate passes 57/57 backend tests, 20/20 golden plans at 1.0 correctness, 4/4 mutation replays, zero policy regressions with promotion correctly blocked below 30 samples, Python lint/audit/Bandit, npm audit/lint/build, Flutter analyze/test/APK, migration 007 round-trip, Docker health, two Prometheus targets, 12 alert rules, two Grafana dashboards, eight upgrade tables, and 14 reporting views.
 - 2026-07-19: Merged PR #17 as `ac1ee81`; PR and main CI pass all backend/web/Flutter jobs. Railway API and worker deployments are successful on that immutable version, Vercel and its backend health proxy return HTTP 200, production Neon is at 007 with eight upgrade tables and 14 reporting views, OAuth redirects through Vercel with PKCE and Workspace/Meet scopes, unauthenticated run/admin access returns 401, production metrics are reachable, and LangSmith read access passes. Grafana Cloud/Alloy and optional external improvement notifications remain credential-gated exactly as documented.
+- 2026-07-20: Closed the strict completion-audit engineering gaps: atomic embedding admission/backpressure, corrected HTTP/Google failure taxonomy, reconnect/cancellation coverage, Meet routing fixes, privacy-safe structured logs and route-template metrics (including rejected requests), raw access-log suppression, optional safe OTLP tracing, OAuth/RAG/build/admission telemetry, 16 alert rules, 34 Grafana panels, and default-deny mounted private OKF. The exact production image passes 69/69 tests; planner golden coverage is 22/22; migration, Python/web/mobile/security/replay guardrails all pass. Only credential-, GUI-, pilot-, and verified-production-data-dependent conclusions remain open and are enumerated in `docs/COMPLETION_AUDIT_2026-07-20.md`.

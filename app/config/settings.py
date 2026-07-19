@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     embedded_worker_enabled: bool = True
     legacy_chat_enabled: bool = True
     okf_enabled: bool = True
+    okf_private_bundle_path: str = ""
     governed_improvements_enabled: bool = True
     worker_poll_seconds: float = 1.0
     worker_lease_seconds: int = 120
@@ -48,6 +49,9 @@ class Settings(BaseSettings):
     max_runs_per_user_hour: int = 60
     max_active_runs_global: int = 100
     max_request_chars: int = 12000
+    max_embedding_jobs_global: int = 5000
+    max_embedding_jobs_per_user: int = 500
+    max_embedding_payload_chars: int = 250000
     groq_daily_token_budget: int = 100000
     groq_quality_reserve_tokens: int = 15000
     raw_telemetry_retention_days: int = 14
@@ -59,6 +63,10 @@ class Settings(BaseSettings):
     grafana_cloud_prometheus_url: str = ""
     grafana_cloud_prometheus_username: str = ""
     grafana_cloud_api_key: str = ""
+    otel_enabled: bool = True
+    otel_service_name: str = ""
+    otel_exporter_otlp_endpoint: str = ""
+    otel_exporter_otlp_headers: str = ""
     deployment_version: str = "local"
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"), extra="ignore"

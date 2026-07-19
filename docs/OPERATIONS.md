@@ -53,6 +53,27 @@ requests write permission only for this repository. **Send sanitized review emai
 is a separate confirmation and requires `ADMIN_NOTIFICATION_EMAIL` plus the
 administrator's connected Google account.
 
+## Embedding backpressure
+
+Embedding persistence is outside the user-response critical path. Admission is
+bounded by `MAX_EMBEDDING_JOBS_GLOBAL`, `MAX_EMBEDDING_JOBS_PER_USER`, and
+`MAX_EMBEDDING_PAYLOAD_CHARS`. A rejected persistence job does not invalidate the
+live Google result; it increments `agent_embedding_admission_rejections_total`
+with a bounded reason label. Investigate sustained rejections before increasing
+limits: first inspect Ollama health, dead letters, input size, and queue age.
+
+## Structured logs and OTLP traces
+
+HTTP logs and spans intentionally contain only a validated request ID, trace ID,
+method, route template, response status, and duration. They never contain raw
+paths, run IDs, query strings, bodies, users, OAuth tokens, or Google content.
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` and optional comma-separated
+`OTEL_EXPORTER_OTLP_HEADERS` only in the deployment secret manager. Non-local
+endpoints must use HTTPS. The API and worker derive distinct service names from
+`RAILWAY_SERVICE_NAME`; local Compose sets them explicitly. With no endpoint the
+instrumentation remains local/inert and does not attempt an export.
+
 ## Rollback
 
 1. Stop the worker so no new step is claimed.

@@ -119,6 +119,25 @@ async def sync_bundle(pool, root: Path | None = None):
     root = root or Path(__file__).resolve().parents[2] / "knowledge"
     from app.tools.registry import registered_tool_names
     documents, errors = load_bundle(root, registered_tool_names())
+    from app.config.settings import get_settings
+    private_path = get_settings().okf_private_bundle_path.strip()
+    if private_path and root.name == "knowledge":
+        private_root = Path(private_path).expanduser()
+        if not private_root.is_dir():
+            errors.append(f"private bundle directory does not exist: {private_root}")
+        else:
+            private_documents, private_errors = load_bundle(
+                private_root, registered_tool_names()
+            )
+            errors.extend(f"private/{error}" for error in private_errors)
+            for document in private_documents:
+                if document["visibility"] != "private":
+                    errors.append(
+                        f"private/{document['id']}: protected bundle documents must "
+                        "declare visibility: private"
+                    )
+                document["id"] = f"private/{document['id']}"
+            documents.extend(private_documents)
     if errors:
         raise ValueError("Invalid OKF bundle:\n" + "\n".join(errors))
     async with pool.acquire() as conn:

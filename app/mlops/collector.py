@@ -6,6 +6,7 @@ from app.mlops.metrics import (
     embedding_queue,
     improvement_queue,
     improvement_notifications,
+    rag_quality,
     run_queue_depth,
     stale_runs,
 )
@@ -64,6 +65,15 @@ async def collect_operational_metrics(pool):
                GROUP BY channel,status"""
         ):
             improvement_notifications.labels(row["channel"], row["status"]).set(row["count"])
+        quality = await conn.fetchrow(
+            """SELECT avg(faithfulness) AS faithfulness,
+                      avg(answer_relevancy) AS answer_relevancy,
+                      avg(context_recall) AS context_recall
+               FROM prompt_metrics WHERE recorded_at >= now()-interval '7 days'"""
+        )
+        for metric in ("faithfulness", "answer_relevancy", "context_recall"):
+            if quality[metric] is not None:
+                rag_quality.labels(metric).set(float(quality[metric]))
 
 
 async def metrics_collection_loop(pool, stop_event: asyncio.Event):

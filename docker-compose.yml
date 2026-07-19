@@ -9,6 +9,7 @@ services:
       OLLAMA_HOST: http://ollama:11434
       EMBEDDED_WORKER_ENABLED: "false"
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-development-only-secret-32-bytes}
+      OTEL_SERVICE_NAME: google-connector-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +44,7 @@ services:
       OLLAMA_HOST: http://ollama:11434
       EMBEDDED_WORKER_ENABLED: "false"
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-development-only-secret-32-bytes}
+      OTEL_SERVICE_NAME: google-connector-worker
     depends_on:
       api:
         condition: service_healthy

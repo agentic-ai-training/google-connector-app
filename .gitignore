@@ -2,6 +2,8 @@ credentials.json
 google-oauth-web.json
 token.pkl
 token.json
+knowledge-private/*
+!knowledge-private/.gitkeep
 .venv/
 __pycache__/
 .env

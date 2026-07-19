@@ -20,11 +20,14 @@ from app.runs.retention import retention_loop
 from app.rag.jobs import embedding_worker_loop
 from app.improvements.analyzer import improvement_analysis_loop
 from app.mlops.collector import metrics_collection_loop
+from app.mlops.metrics import build_info
+from app.mlops.tracing import configure_tracing
 from app.okf.loader import sync_bundle
 @asynccontextmanager
 async def lifespan(app):
     settings=get_settings()
     validate_runtime_security(settings)
+    build_info.info({"version": settings.deployment_version})
     langsmith_key = settings.langsmith_api_key or settings.langchain_api_key
     valid_langsmith = bool(langsmith_key and "your_" not in langsmith_key)
     os.environ.update({
@@ -81,6 +84,7 @@ async def lifespan(app):
         scheduler.shutdown(wait=False)
     await close_pool()
 app=FastAPI(title="Google Workspace AI Agent",lifespan=lifespan)
+configure_tracing(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -92,8 +96,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.middleware("http")(metrics_middleware)
+# Starlette executes the last registered HTTP middleware first. Keep metrics
+# outermost so authentication rejections are still correlated, counted, and
+# traced without exposing the requested resource identifier or query string.
 app.middleware("http")(auth_middleware)
+app.middleware("http")(metrics_middleware)
 app.include_router(auth_router); app.include_router(chat.router); app.include_router(runs.router); app.include_router(runs.sessions_router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
 app.mount("/metrics",make_asgi_app())
 @app.get("/health")

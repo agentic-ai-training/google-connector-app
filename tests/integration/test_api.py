@@ -13,11 +13,31 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_health_auth_and_route_protection():
+def test_health_auth_and_route_protection(caplog):
     from app.api.main import app
 
     with TestClient(app) as client:
-        assert client.get("/health").json() == {"status": "ok"}
+        health = client.get("/health", headers={"X-Request-ID": "integration-request-123"})
+        assert health.json() == {"status": "ok"}
+        assert health.headers["x-request-id"] == "integration-request-123"
+        assert any(
+            '"request_id":"integration-request-123"' in record.message
+            for record in caplog.records
+        )
+        generated = client.get("/health", headers={"X-Request-ID": "unsafe value"})
+        assert generated.headers["x-request-id"] != "unsafe value"
+        assert len(generated.headers["x-request-id"]) == 32
+        protected = client.get(
+            "/runs/private-dynamic-id?token=must-not-appear-in-telemetry"
+        )
+        assert protected.status_code == 401
+        request_logs = "\n".join(
+            record.message for record in caplog.records
+            if '"event":"http_request"' in record.message
+        )
+        assert '"path":"/runs/{run_id}"' in request_logs
+        assert "private-dynamic-id" not in request_logs
+        assert "must-not-appear-in-telemetry" not in request_logs
         preflight = client.options(
             "/chat",
             headers={
@@ -57,6 +77,116 @@ def test_health_auth_and_route_protection():
             json={"enabled": True, "config": {}},
         )
         assert locked.status_code == 409
+
+
+def test_embedding_queue_admission_is_bounded_per_user():
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+    from app.rag.jobs import enqueue_tool_result
+
+    with TestClient(app) as client:
+        settings = get_settings()
+        original = settings.max_embedding_jobs_per_user
+
+        async def attempt():
+            settings.max_embedding_jobs_per_user = 0
+            try:
+                return await enqueue_tool_result(
+                    "search_gmail", {"query": "bounded"},
+                    {"messages": [{"id": "bounded", "body": "safe"}]},
+                    await get_pool(), "bounded@example.com",
+                )
+            finally:
+                settings.max_embedding_jobs_per_user = original
+
+        assert client.portal.call(attempt) is False
+
+
+def test_private_okf_bundle_is_namespaced_and_excluded_by_default(tmp_path):
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+    from app.okf.loader import sync_bundle
+    from app.okf.retriever import retrieve_operational_knowledge
+
+    private_doc = tmp_path / "confidential.md"
+    private_doc.write_text(
+        """---
+type: policy
+title: Confidential fixture
+owner: test-admin
+version: 1
+timestamp: 2026-07-20T00:00:00Z
+visibility: private
+publication_status: approved
+approved_by: test-admin
+approved_at: 2026-07-20T00:00:00Z
+---
+# Confidential fixture
+ultraviolet-private-knowledge-marker
+""",
+        encoding="utf-8",
+    )
+    with TestClient(app) as client:
+        settings = get_settings()
+        original = settings.okf_private_bundle_path
+
+        async def verify():
+            settings.okf_private_bundle_path = str(tmp_path)
+            try:
+                pool = await get_pool()
+                await sync_bundle(pool)
+                public = await retrieve_operational_knowledge(
+                    "ultraviolet private knowledge marker"
+                )
+                private = await retrieve_operational_knowledge(
+                    "ultraviolet private knowledge marker", include_private=True
+                )
+                return public, private
+            finally:
+                settings.okf_private_bundle_path = original
+                async with (await get_pool()).acquire() as conn:
+                    await conn.execute(
+                        "DELETE FROM okf_documents WHERE id='private/confidential.md'"
+                    )
+
+        public, private = client.portal.call(verify)
+        assert public == []
+        assert private[0]["id"] == "private/confidential.md"
+
+
+def test_run_survives_browser_disconnect_and_can_be_cancelled_after_reconnect():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    email = f"reconnect-{uuid.uuid4()}@example.com"
+    session_id = f"reconnect-{uuid.uuid4()}"
+    with TestClient(app) as first_browser:
+        token = first_browser.post("/auth/token", json={"email": email}).json()[
+            "access_token"
+        ]
+        created = first_browser.post(
+            "/runs", headers={"Authorization": f"Bearer {token}"},
+            json={"message": "Send an email to pilot@example.com",
+                  "session_id": session_id},
+        ).json()
+        run_id = created["run_id"]
+
+    with TestClient(app) as reconnected_browser:
+        headers = {"Authorization": f"Bearer {token}"}
+        restored = reconnected_browser.get(f"/runs/{run_id}", headers=headers)
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "awaiting_approval"
+        cancelled = reconnected_browser.post(f"/runs/{run_id}/cancel", headers=headers)
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+
+        async def cleanup():
+            async with (await get_pool()).acquire() as conn:
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id))
+
+        reconnected_browser.portal.call(cleanup)
 
 
 def test_prompt_bandit_requires_human_activation_and_evidence():
@@ -542,7 +672,10 @@ def test_canary_regression_is_evaluated_and_rolled_back():
             return changed, dict(canary), proposal, dict(evaluation)
 
         changed, canary, proposal, evaluation = client.portal.call(exercise)
-        assert changed == 1
+        # The background analyzer and this explicit call intentionally race on
+        # the same row lock. Either caller may perform the one allowed state
+        # transition; the durable state below is the authoritative assertion.
+        assert changed in (0, 1)
         assert canary["status"] == "rolled_back"
         assert "failure_rate" in canary["rollback_reason"]
         assert proposal == "rolled_back"

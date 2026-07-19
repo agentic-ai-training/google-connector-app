@@ -5,7 +5,8 @@ from app.db.connection import get_pool
 
 
 async def retrieve_operational_knowledge(
-    query: str, *, run_id: str | None = None, step_id: str | None = None, limit: int = 4
+    query: str, *, run_id: str | None = None, step_id: str | None = None,
+    limit: int = 4, include_private: bool = False,
 ) -> list[dict]:
     """Retrieve trusted operational knowledge separately from tenant content."""
     started = time.perf_counter()
@@ -19,12 +20,13 @@ async def retrieve_operational_knowledge(
                         websearch_to_tsquery('english',$1)
                       ) AS score
                FROM okf_chunks c JOIN okf_documents d ON d.id=c.document_id
-               WHERE d.trusted=TRUE AND d.visibility='public'
+               WHERE d.trusted=TRUE
+                 AND (d.visibility='public' OR ($3=TRUE AND d.visibility='private'))
                  AND to_tsvector('english',coalesce(d.title,'') || ' ' ||
                        coalesce(c.heading,'') || ' ' || c.content)
                      @@ websearch_to_tsquery('english',$1)
                ORDER BY score DESC,d.id,c.chunk_index LIMIT $2""",
-            query, limit,
+            query, limit, include_private,
         )
         documents = [dict(row) for row in rows]
         if run_id:
