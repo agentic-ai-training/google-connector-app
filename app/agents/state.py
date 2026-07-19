@@ -9,6 +9,7 @@ class AgentState(TypedDict, total=False):
     user_id: str
     current_tool: str
     tool_results: list
+    tool_executions: list[dict]
     retrieved_context: str
     model_to_use: str
     error: str

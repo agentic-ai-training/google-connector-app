@@ -17,13 +17,15 @@ export default function Improvements(){
   };
   useEffect(()=>{
     let active=true;
-    queueMicrotask(()=>{
+    const refresh=()=>{
       void fetch(`${API}/admin/improvements`,{headers:{Authorization:`Bearer ${getToken()??""}`}})
         .then(response=>{if(!response.ok)throw new Error(response.status===403?"Administrator access is required":"Unable to load proposals");return response.json();})
         .then(data=>{if(active)setProposals(data.proposals);})
         .catch(value=>{if(active)setError(value instanceof Error?value.message:"Unable to load");});
-    });
-    return()=>{active=false};
+    };
+    queueMicrotask(refresh);
+    const timer=window.setInterval(refresh,30000);
+    return()=>{active=false;window.clearInterval(timer)};
   },[]);
   const decide=async(proposal:Proposal,decision:"approved"|"rejected"|"changes_requested",stage:"canary-decision"|"activate-canary"|"promotion-decision"="canary-decision")=>{
     const response=await fetch(`${API}/admin/improvements/${proposal.proposal_key}/${stage}`,{method:"POST",headers:{...headers(),"Content-Type":"application/json"},body:JSON.stringify({decision,proposal_hash:proposal.content_hash})});

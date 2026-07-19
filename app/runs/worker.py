@@ -9,6 +9,7 @@ from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
 from app.runs.repository import append_event
+from app.runs.verifier import verify_executions
 from app.mlops.metrics import run_duration, run_failures, run_transitions
 
 
@@ -96,6 +97,7 @@ def _find_artifacts(value, found=None):
 
 
 def verify_step(step, result) -> tuple[bool, str, list[dict]]:
+    """Legacy structural verifier retained for old graph/test compatibility."""
     tool_results = result.get("tool_results", [])
     if _contains_failure(tool_results):
         return False, "At least one tool returned explicit failure evidence", []
@@ -212,7 +214,14 @@ async def execute_run(app, pool, run):
                 }}
             )
             final_output = result.get("output", "")
-            verified, evidence, artifacts = verify_step(step, result)
+            executions = result.get("tool_executions", [])
+            if executions:
+                verified, evidence, artifacts = await verify_executions(executions)
+                if verified and not result.get("task_complete"):
+                    verified = False
+                    evidence = result.get("error") or "The agent did not reach a completed state"
+            else:
+                verified, evidence, artifacts = verify_step(step, result)
             elapsed_ms = int((time.perf_counter() - step_started) * 1000)
             async with pool.acquire() as conn:
                 await conn.execute(
@@ -222,6 +231,7 @@ async def execute_run(app, pool, run):
                     "completed" if verified else "failed",
                     json.dumps({"output": final_output,
                                 "tool_results": result.get("tool_results", []),
+                                "tool_executions": executions,
                                 "verification": evidence}, default=str),
                     elapsed_ms, None if verified else "verification",
                     None if verified else evidence, step["id"],
@@ -313,6 +323,10 @@ async def execute_run(app, pool, run):
             )]
             completion = completion_from_steps(steps)
             incident = build_incident(steps, category, str(exc))
+            terminal_status = (
+                "partial" if any(step["status"] == "completed" for step in steps)
+                else "failed"
+            )
             usage = await conn.fetchrow(
                 """SELECT coalesce(array_agg(DISTINCT model) FILTER(WHERE model IS NOT NULL),'{}') AS models,
                           coalesce(sum(input_tokens),0) AS input_tokens,
@@ -321,22 +335,24 @@ async def execute_run(app, pool, run):
                 run_id,
             )
             await conn.execute(
-                """UPDATE agent_runs SET status='failed',current_phase='failed',
-                   incident_summary=$1::jsonb,technical_completion=$2,
-                   functional_completion=$3,user_visible_completion=$4,
-                   side_effect_integrity=$5,error_category=$6,error_message=$7,
+                """UPDATE agent_runs SET status=$1,current_phase=$1,
+                   incident_summary=$2::jsonb,technical_completion=$3,
+                   functional_completion=$4,user_visible_completion=$5,
+                   side_effect_integrity=$6,error_category=$7,error_message=$8,
                    completed_at=now(),lease_owner=NULL,lease_expires_at=NULL,
-                   models_used=$8,input_tokens=$9,output_tokens=$10 WHERE id=$11""",
-                json.dumps(incident), completion["technical_completion"],
+                   models_used=$9,input_tokens=$10,output_tokens=$11 WHERE id=$12""",
+                terminal_status, json.dumps(incident), completion["technical_completion"],
                 completion["functional_completion"], completion["user_visible_completion"],
                 completion["side_effect_integrity"], category, str(exc),
                 usage["models"], usage["input_tokens"], usage["output_tokens"], run_id,
             )
-        await append_event(pool, run_id, user_id, "run_failed", phase="failed",
-                           message=str(exc), payload={"category": category})
-        run_transitions.labels("failed").inc()
+        await append_event(
+            pool, run_id, user_id, f"run_{terminal_status}", phase=terminal_status,
+            message=str(exc), payload={"category": category},
+        )
+        run_transitions.labels(terminal_status).inc()
         run_failures.labels(category).inc()
-        run_duration.labels("failed").observe(time.perf_counter() - started)
+        run_duration.labels(terminal_status).observe(time.perf_counter() - started)
     finally:
         if credential_token is not None:
             request_google_credentials.reset(credential_token)

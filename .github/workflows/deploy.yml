@@ -12,6 +12,10 @@ jobs:
         run: npx -y @railway/cli@latest up --service google-connector-app --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      - name: Deploy durable worker with Railway CLI
+        run: npx -y @railway/cli@latest up --service google-connector-worker --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
   deploy-web:
     runs-on: ubuntu-latest
     steps:
