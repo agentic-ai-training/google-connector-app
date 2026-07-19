@@ -46,6 +46,17 @@ def test_health_auth_and_route_protection():
         )
         assert response.status_code == 200
         assert len(response.json()["prompts"]) >= 2
+        flags = client.get(
+            "/admin/feature-flags", headers={"Authorization": f"Bearer {admin}"}
+        )
+        assert flags.status_code == 200
+        assert any(item["name"] == "live_rl" for item in flags.json()["feature_flags"])
+        locked = client.put(
+            "/admin/feature-flags/live_rl",
+            headers={"Authorization": f"Bearer {admin}"},
+            json={"enabled": True, "config": {}},
+        )
+        assert locked.status_code == 409
 
 
 def test_feedback_preserves_retrieved_context():

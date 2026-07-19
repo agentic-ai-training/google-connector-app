@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.config.settings import get_settings
+from app.config.feature_flags import feature_enabled, get_feature_flag
 from app.db.connection import get_pool
 from app.runs.repository import (
     RunLimitExceeded,
@@ -29,9 +30,17 @@ def _serializable(value):
 async def start_run(body: RunCreate, request: Request):
     if not get_settings().durable_runs_enabled:
         raise HTTPException(503, "Durable runs are disabled")
+    pool = await get_pool()
+    if not await feature_enabled(pool, "durable_runs", request.state.user_id):
+        raise HTTPException(503, "Durable runs are disabled by the runtime feature flag")
+    pilot = await get_feature_flag(pool, "pilot_cohorts")
+    if pilot and pilot["enabled"] and not await feature_enabled(
+        pool, "pilot_cohorts", request.state.user_id
+    ):
+        raise HTTPException(403, "This account is not in the active pilot cohort")
     try:
         run, created = await create_run(
-            await get_pool(), request.state.user_id, body.message,
+            pool, request.state.user_id, body.message,
             body.session_id, body.idempotency_key,
         )
     except RunLimitExceeded as exc:

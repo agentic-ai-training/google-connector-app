@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.db.connection import get_pool
 from app.db.prompt_service import create_experiment, conclude_experiment
 from app.runs.schemas import ImprovementDecision
@@ -11,6 +11,9 @@ class ExperimentIn(BaseModel):
 class ConcludeIn(BaseModel): winner:str
 class PromptIn(BaseModel):
     name:str; content:str; model_target:str="groq/llama-3.3-70b"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
+class FeatureFlagIn(BaseModel):
+    enabled: bool
+    config: dict = Field(default_factory=dict)
 @router.get("/experiments/{name}/summary")
 async def summary(name:str):
     pool=await get_pool()
@@ -30,6 +33,31 @@ async def add_prompt(body:PromptIn):
     pool=await get_pool()
     async with pool.acquire() as conn:
         row=await conn.fetchrow("INSERT INTO prompts(name,version,content,model_target,temperature,max_tokens,notes) SELECT $1,coalesce(max(version),0)+1,$2,$3,$4,$5,$6 FROM prompts WHERE name=$1 RETURNING *",body.name,body.content,body.model_target,body.temperature,body.max_tokens,body.notes)
+    return dict(row)
+
+
+@router.get("/feature-flags")
+async def feature_flags():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM feature_flags ORDER BY name")
+    return {"feature_flags": [dict(row) for row in rows]}
+
+
+@router.put("/feature-flags/{name}")
+async def update_feature_flag(name: str, body: FeatureFlagIn, request: Request):
+    if name == "live_rl" and body.enabled:
+        raise HTTPException(409, "Live RL is safety-locked; only offline evaluation is allowed")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO feature_flags(name,enabled,config,updated_by,updated_at)
+               VALUES($1,$2,$3::jsonb,$4,now())
+               ON CONFLICT(name) DO UPDATE SET enabled=excluded.enabled,
+                 config=excluded.config,updated_by=excluded.updated_by,updated_at=now()
+               RETURNING *""",
+            name, body.enabled, json.dumps(body.config), request.state.user_id,
+        )
     return dict(row)
 
 

@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     max_runs_per_user_hour: int = 60
     max_active_runs_global: int = 100
     max_request_chars: int = 12000
+    groq_daily_token_budget: int = 100000
+    groq_quality_reserve_tokens: int = 15000
     raw_telemetry_retention_days: int = 14
     workflow_retention_days: int = 90
     aggregate_retention_days: int = 365

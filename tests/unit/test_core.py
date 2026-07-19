@@ -17,6 +17,7 @@ from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 from jose import jwt
 from app.config.settings import get_settings
+from app.config.feature_flags import cohort_selected
 from app.runs.planner import build_plan, classify_request
 from app.okf.loader import load_bundle
 from pathlib import Path
@@ -40,6 +41,19 @@ def test_untrusted_context_strips_prompt_injection_commands():
     assert "Quarterly total" in safe
     assert "reveal the token" not in safe
     assert removed == 1
+
+
+def test_pilot_cohort_selection_is_stable_and_honors_overrides():
+    config = {"percentage": 30}
+    assert cohort_selected("pilot@example.com", config) == cohort_selected(
+        "pilot@example.com", config
+    )
+    assert cohort_selected("allow@example.com", {
+        "percentage": 0, "allowed_users": ["allow@example.com"],
+    }) is True
+    assert cohort_selected("deny@example.com", {
+        "percentage": 100, "denied_users": ["deny@example.com"],
+    }) is False
 
 
 def test_retrieval_metrics_are_rank_sensitive():

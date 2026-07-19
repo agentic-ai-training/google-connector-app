@@ -74,6 +74,17 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None):
             )
             if global_active >= settings.max_active_runs_global:
                 raise RunLimitExceeded("The service is at its active-run capacity; retry later")
+            used_tokens = await conn.fetchval(
+                """SELECT coalesce(sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)),0)
+                   FROM agent_model_calls WHERE created_at>=date_trunc('day',now())"""
+            )
+            estimated = plan.estimated_max_tokens
+            remaining_after = settings.groq_daily_token_budget - used_tokens - estimated
+            if policy["write"] and remaining_after < settings.groq_quality_reserve_tokens:
+                raise RunLimitExceeded(
+                    "Quality-model token reserve is too low for a mutating workflow; "
+                    "retry after quota resets or increase the configured budget"
+                )
             run = await conn.fetchrow(
                 """INSERT INTO agent_runs
                    (session_id,user_id,request,objective,status,current_phase,plan,

@@ -24,6 +24,7 @@ from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
 from app.runs.planner import classify_request
 from app.okf.retriever import pack_operational_knowledge, retrieve_operational_knowledge
+from app.config.feature_flags import feature_enabled
 
 SERVICES = ("gmail", "calendar", "drive", "docs", "sheets", "tasks", "chat", "contacts", "meet")
 ALIASES = {
@@ -114,9 +115,14 @@ async def retrieve_context_node(state: AgentState):
         # Railway's small Ollama service can take over a minute to cold-start.
         # RAG is optional context, so never let a cold embedding model block chat.
         async with asyncio.timeout(20):
-            docs = await hybrid_retrieve(
-                state.get("message", ""), user_id=state.get("user_id")
-            )
+            from app.db.connection import get_pool
+            pool = await get_pool()
+            if await feature_enabled(pool, "new_rag", state.get("user_id")):
+                docs = await hybrid_retrieve(
+                    state.get("message", ""), pool=pool, user_id=state.get("user_id")
+                )
+            else:
+                docs = []
     except Exception as exc:
         docs = []
         return {"retrieved_context": "", "operational_context": pack_operational_knowledge(operational),
