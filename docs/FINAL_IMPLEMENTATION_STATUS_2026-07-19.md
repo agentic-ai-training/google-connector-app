@@ -43,15 +43,20 @@ still requires an external account action.
 
 ## Verified state
 
-- Production Neon: migration `006`; 11 reporting views; `dbeaver_analyst` can
+- Production Neon: migration `007`; 14 reporting views; `dbeaver_analyst` can
   query reporting but not OAuth credentials.
 - Tenant-safe production RAG import: 14,521 owner-scoped legacy chunks; unrelated
   users retrieve zero of those chunks.
 - Production OKF: 12 trusted documents.
-- Railway: API and dedicated worker deploy from the same immutable Git commit.
-- Vercel frontend and `/api/health`: reachable; OAuth login redirects to Google
+- Railway: API and dedicated worker are successful on immutable merge commit
+  `ac1ee81afa8129b1342d8591a0bd8336401616e1`.
+- Vercel frontend and `/api/health`: HTTP 200; OAuth login redirects to Google
   with the required Workspace and Meet scopes.
-- LangSmith: project and production trace access verified read-only.
+- LangSmith: project and production trace access verified read-only after deploy.
+- GitHub Actions: PR #17 and the explicit main-branch CI run passed all backend,
+  web, and Flutter jobs; deployment run `29698803558` passed for Railway and
+  Vercel. GitHub did not automatically emit a push run for this merge, so the
+  repository's supported `workflow_dispatch` entry points were used on `main`.
 - Final local pre-merge gate: 57/57 backend unit/integration tests; 20/20 planner
   golden cases at 1.0 correctness; four/four mutation replays; candidate policy
   with zero regressions and promotion correctly blocked below 30 verified samples;
