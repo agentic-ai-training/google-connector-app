@@ -13,6 +13,13 @@ TOOL_SOURCES = {
     "list_meet_conferences": "meet", "list_meet_participants": "meet",
 }
 
+CHUNKER_VERSIONS = {
+    "gmail": "gmail-v2", "drive": "drive-v2", "docs": "docs-v2",
+    "sheets": "sheets-v2", "calendar": "calendar-v2", "chat": "chat-v2",
+    "contacts": "contacts-v2", "tasks": "tasks-v2", "meet": "meet-v2",
+    "pdf": "pdf-layout-v2", "meet_transcript": "meet-transcript-v2",
+}
+
 
 def _items(result):
     if isinstance(result, list):
@@ -45,7 +52,7 @@ async def index_tool_result(name, args, result, pool, embedder, user_id):
             candidates.append((source_id, chunk))
     if not candidates:
         return 0
-    chunker_version = f"{source_type}-v1"
+    chunker_version = CHUNKER_VERSIONS.get(source_type, f"{source_type}-v2")
     async with pool.acquire() as conn:
         existing = await conn.fetch(
             """SELECT source_id,chunk_index,content_hash FROM rag_chunks
@@ -70,6 +77,13 @@ async def index_tool_result(name, args, result, pool, embedder, user_id):
             json.dumps({"owner": user_id}), vector, "nomic-embed-text", chunker_version,
         ))
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute(
+            """UPDATE rag_chunks SET deleted_at=now()
+               WHERE user_id=$1 AND source_type=$2 AND source_id=ANY($3::text[])
+                 AND chunker_version<>$4 AND deleted_at IS NULL""",
+            user_id, source_type,
+            list(dict.fromkeys(item[0] for item in candidates)), chunker_version,
+        )
         await conn.executemany(
             """INSERT INTO rag_chunks
                (user_id,source_type,source_id,parent_id,chunk_index,heading,content,

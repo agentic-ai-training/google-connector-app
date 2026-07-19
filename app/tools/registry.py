@@ -7,12 +7,23 @@ from pathlib import Path
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
-from app.tools.base import instrument_tool
+from app.tools.base import instrument_tool, tool_run_id
 
 
 def _request_id(action, *values):
-    canonical = "|".join([action, *(str(value) for value in values)])
+    canonical = "|".join([str(tool_run_id.get() or "legacy"), action,
+                           *(str(value) for value in values)])
     return hashlib.sha256(canonical.encode()).hexdigest()[:32]
+
+
+def _existing_drive_resource(request_id):
+    escaped = request_id.replace("'", "\\'")
+    files = g.drive_service.files().list(
+        q=("appProperties has { key='agentRequestId' and "
+           f"value='{escaped}' }} and trashed=false"),
+        pageSize=1, fields="files(id,name,mimeType,webViewLink)",
+    ).execute().get("files", [])
+    return files[0] if files else None
 
 def _headers(msg): return {h["name"].lower():h["value"] for h in msg.get("payload",{}).get("headers",[])}
 def _decode(data):
@@ -68,8 +79,16 @@ def search_gmail(query:str,max_results:int=10,after_date:str|None=None):
 def get_gmail_message(message_id:str): return _gmail(g.gmail_service.users().messages().get(userId="me",id=message_id,format="full").execute())
 @tool("send_gmail", description="Google Workspace operation")
 def send_gmail(to:str,subject:str,body:str,cc:str|None=None):
+    request_id = _request_id('gmail',to,subject,body,cc)
+    existing = g.gmail_service.users().messages().list(
+        userId="me", q=f"rfc822msgid:{request_id}@google-connector-agent", maxResults=1
+    ).execute().get("messages", [])
+    if existing:
+        return g.gmail_service.users().messages().get(
+            userId="me", id=existing[0]["id"], format="minimal"
+        ).execute()
     msg=MIMEText(body); msg["to"]=to; msg["subject"]=subject
-    msg["Message-ID"] = f"<{_request_id('gmail',to,subject,body,cc)}@google-connector-agent>"
+    msg["Message-ID"] = f"<{request_id}@google-connector-agent>"
     if cc: msg["cc"]=cc
     return g.gmail_service.users().messages().send(userId="me",body={"raw":base64.urlsafe_b64encode(msg.as_bytes()).decode()}).execute()
 @tool("reply_gmail", description="Google Workspace operation")
@@ -90,8 +109,15 @@ def list_calendar_events(start_date:str,end_date:str,calendar_id:str="primary"):
 def get_calendar_event(event_id:str,calendar_id:str="primary"): return g.calendar_service.events().get(calendarId=calendar_id,eventId=event_id).execute()
 @tool("create_calendar_event", description="Google Workspace operation")
 def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True):
-    body={"summary":title,"start":{"dateTime":start_datetime},"end":{"dateTime":end_datetime},"description":description,"attendees":[{"email":x} for x in attendees or []]}
-    if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{_request_id('meet',title,start_datetime,end_datetime)}"}}
+    request_id = _request_id('calendar',title,start_datetime,end_datetime,attendees,description)
+    existing = g.calendar_service.events().list(
+        calendarId="primary", privateExtendedProperty=f"agentRequestId={request_id}",
+        maxResults=1, singleEvents=True,
+    ).execute().get("items", [])
+    if existing:
+        return existing[0]
+    body={"summary":title,"start":{"dateTime":start_datetime},"end":{"dateTime":end_datetime},"description":description,"attendees":[{"email":x} for x in attendees or []],"extendedProperties":{"private":{"agentRequestId":request_id}}}
+    if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{request_id}"}}
     return g.calendar_service.events().insert(calendarId="primary",body=body,conferenceDataVersion=1,sendUpdates="all").execute()
 @tool("update_calendar_event", description="Google Workspace operation")
 def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None):
@@ -147,8 +173,17 @@ def _doc_text(doc): return "".join(e.get("textRun",{}).get("content","") for s i
 def read_google_doc(document_id:str): return _doc_text(g.docs_service.documents().get(documentId=document_id).execute())
 @tool("create_google_doc", description="Google Workspace operation")
 def create_google_doc(title:str,content:str|None=None):
+    request_id = _request_id("doc", title, content)
+    existing = _existing_drive_resource(request_id)
+    if existing:
+        return {"documentId": existing["id"],
+                "link": existing.get("webViewLink") or f"https://docs.google.com/document/d/{existing['id']}/edit"}
     doc=g.docs_service.documents().create(body={"title":title}).execute()
     if content: g.docs_service.documents().batchUpdate(documentId=doc["documentId"],body={"requests":[{"insertText":{"location":{"index":1},"text":content}}]}).execute()
+    g.drive_service.files().update(
+        fileId=doc["documentId"], body={"appProperties":{"agentRequestId":request_id}},
+        fields="id",
+    ).execute()
     return {**doc,"link":f"https://docs.google.com/document/d/{doc['documentId']}/edit"}
 @tool("append_to_google_doc", description="Google Workspace operation")
 def append_to_google_doc(document_id:str,content:str):
@@ -162,7 +197,21 @@ def write_google_sheet(spreadsheet_id:str,range:str,values:list[list]): return g
 @tool("append_to_google_sheet", description="Google Workspace operation")
 def append_to_google_sheet(spreadsheet_id:str,values:list[list],sheet_name:str="Sheet1"): return g.sheets_service.spreadsheets().values().append(spreadsheetId=spreadsheet_id,range=sheet_name,valueInputOption="USER_ENTERED",insertDataOption="INSERT_ROWS",body={"values":values}).execute()
 @tool("create_google_sheet", description="Google Workspace operation")
-def create_google_sheet(title:str): return g.sheets_service.spreadsheets().create(body={"properties":{"title":title}},fields="spreadsheetId,spreadsheetUrl").execute()
+def create_google_sheet(title:str):
+    request_id = _request_id("sheet", title)
+    existing = _existing_drive_resource(request_id)
+    if existing:
+        return {"spreadsheetId": existing["id"],
+                "spreadsheetUrl": existing.get("webViewLink") or
+                f"https://docs.google.com/spreadsheets/d/{existing['id']}/edit"}
+    sheet = g.sheets_service.spreadsheets().create(
+        body={"properties":{"title":title}}, fields="spreadsheetId,spreadsheetUrl"
+    ).execute()
+    g.drive_service.files().update(
+        fileId=sheet["spreadsheetId"],
+        body={"appProperties":{"agentRequestId":request_id}}, fields="id",
+    ).execute()
+    return sheet
 
 @tool("list_tasks", description="Google Workspace operation")
 def list_tasks(tasklist_id:str="@default",show_completed:bool=False): return g.tasks_service.tasks().list(tasklist=tasklist_id,showCompleted=show_completed,showHidden=show_completed).execute().get("items",[])

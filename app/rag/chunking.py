@@ -114,6 +114,76 @@ def chunk_chat(item: dict) -> list[Chunk]:
     )] if text else []
 
 
+def chunk_pdf(item: dict) -> list[Chunk]:
+    """Chunk already-extracted PDF layout without flattening unrelated columns."""
+    pages = item.get("pages") or []
+    if not pages:
+        return [Chunk(
+            content=chunk.content, index=chunk.index, heading=chunk.heading,
+            parent_id=chunk.parent_id,
+            metadata={**chunk.metadata, "page_number": None,
+                      "layout_available": False, "ocr": bool(item.get("ocr"))},
+        ) for chunk in chunk_document(item)]
+    output = []
+    for page_index, page in enumerate(pages, 1):
+        page_number = page.get("page_number", page_index)
+        blocks = page.get("blocks") or ([{"text": page.get("text", "")}] if page.get("text") else [])
+        for block in blocks:
+            text = block.get("text", "").strip()
+            if not text:
+                continue
+            for part in _windows(text):
+                output.append(Chunk(
+                    content=f"Page {page_number}\n{part}", index=len(output),
+                    heading=block.get("heading"),
+                    metadata={"page_number": page_number, "bbox": block.get("bbox"),
+                              "column": block.get("column"),
+                              "ocr": bool(block.get("ocr", page.get("ocr", False))),
+                              "layout_available": True},
+                ))
+        for table_index, table in enumerate(page.get("tables") or []):
+            rows = table.get("rows") or []
+            if rows:
+                output.append(Chunk(
+                    content="\n".join(" | ".join(map(str, row)) for row in rows),
+                    index=len(output), heading=f"Table {table_index + 1}",
+                    metadata={"page_number": page_number, "bbox": table.get("bbox"),
+                              "content_type": "table", "layout_available": True},
+                ))
+    return output
+
+
+def chunk_meet_transcript(item: dict) -> list[Chunk]:
+    turns = item.get("turns") or item.get("speaker_turns") or []
+    if not turns:
+        return chunk_document(item)
+    output = []
+    buffer = []
+    for turn in turns:
+        speaker = turn.get("speaker") or "Unknown speaker"
+        text = str(turn.get("text") or "").strip()
+        if not text:
+            continue
+        line = f"{speaker}: {text}"
+        if sum(len(value) for value in buffer) + len(line) > 1800 and buffer:
+            output.append(Chunk(
+                content="\n".join(buffer), index=len(output),
+                parent_id=item.get("conference_id"),
+                metadata={"conference_id": item.get("conference_id"),
+                          "content_type": "transcript"},
+            ))
+            buffer = []
+        buffer.append(line)
+    if buffer:
+        output.append(Chunk(
+            content="\n".join(buffer), index=len(output),
+            parent_id=item.get("conference_id"),
+            metadata={"conference_id": item.get("conference_id"),
+                      "content_type": "transcript"},
+        ))
+    return output
+
+
 def chunk_structured(item: dict, fields: list[str]) -> list[Chunk]:
     content = "\n".join(f"{field}: {item.get(field)}" for field in fields
                         if item.get(field) not in (None, "", []))
@@ -123,8 +193,12 @@ def chunk_structured(item: dict, fields: list[str]) -> list[Chunk]:
 def chunks_for_source(source_type: str, item: dict) -> list[Chunk]:
     if source_type == "gmail":
         return chunk_gmail(item)
-    if source_type in {"drive", "docs", "pdf", "meet_transcript"}:
+    if source_type in {"drive", "docs"}:
         return chunk_document(item)
+    if source_type == "pdf":
+        return chunk_pdf(item)
+    if source_type == "meet_transcript":
+        return chunk_meet_transcript(item)
     if source_type == "sheets":
         return chunk_sheet(item)
     if source_type == "chat":

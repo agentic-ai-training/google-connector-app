@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from app.rag.context_packer import pack_context
+from app.rag.evaluation import retrieval_metrics
 from app.agents.router import route_model_node
 from app.agents.supervisor import (
     make_service_node,
@@ -19,8 +20,10 @@ from app.config.settings import get_settings
 from app.runs.planner import build_plan, classify_request
 from app.okf.loader import load_bundle
 from pathlib import Path
-from app.rag.chunking import chunk_gmail, chunk_sheet
+from app.rag.chunking import chunk_gmail, chunk_meet_transcript, chunk_pdf, chunk_sheet
 from app.runs.worker import verify_step
+from app.tools.base import tool_run_id
+from app.tools.registry import _request_id
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -28,6 +31,14 @@ def test_context_packer_orders_by_score():
         {"source": "high", "content": "first", "score": 0.9},
     ])
     assert text.index("first") < text.index("second")
+
+
+def test_retrieval_metrics_are_rank_sensitive():
+    metrics = retrieval_metrics(["wrong", "right", "also-right"], {"right", "also-right"}, 3)
+    assert metrics["recall@3"] == 1
+    assert metrics["precision@3"] == pytest.approx(2 / 3)
+    assert metrics["mrr"] == 0.5
+    assert 0 < metrics["ndcg@3"] < 1
 
 
 @pytest.mark.parametrize(
@@ -228,6 +239,20 @@ def test_explicit_confirmation_opt_out_is_respected():
     assert policy["approval_bypassed"] is True
 
 
+def test_google_idempotency_keys_are_stable_per_run_but_not_cross_run():
+    token = tool_run_id.set("run-a")
+    try:
+        first = _request_id("sheet", "Report")
+        assert _request_id("sheet", "Report") == first
+    finally:
+        tool_run_id.reset(token)
+    token = tool_run_id.set("run-b")
+    try:
+        assert _request_id("sheet", "Report") != first
+    finally:
+        tool_run_id.reset(token)
+
+
 def test_live_operations_skip_rag_and_semantic_questions_use_it():
     assert classify_request("List my latest Gmail messages")["rag_mode"] == "none"
     assert classify_request(
@@ -254,3 +279,22 @@ def test_source_aware_chunking_removes_quoted_mail_and_preserves_sheet_headers()
     sheet = chunk_sheet({"values": [["Name", "Email"], ["A", "a@example.com"]]})
     assert "Name | Email" in sheet[0].content
     assert "A | a@example.com" in sheet[0].content
+
+
+def test_pdf_and_meet_chunking_preserve_layout_and_speakers():
+    pdf = chunk_pdf({"pages": [{
+        "page_number": 3,
+        "blocks": [{"text": "Left column only", "bbox": [0, 0, 100, 200], "column": 1}],
+        "tables": [{"rows": [["Name", "Score"], ["A", 9]], "bbox": [0, 210, 500, 400]}],
+    }]})
+    assert pdf[0].metadata["page_number"] == 3
+    assert pdf[0].metadata["column"] == 1
+    assert pdf[1].metadata["content_type"] == "table"
+    transcript = chunk_meet_transcript({
+        "conference_id": "conference-1",
+        "turns": [{"speaker": "A", "text": "Hello"},
+                  {"speaker": "B", "text": "Decision approved"}],
+    })
+    assert "A: Hello" in transcript[0].content
+    assert "B: Decision approved" in transcript[0].content
+    assert transcript[0].parent_id == "conference-1"
