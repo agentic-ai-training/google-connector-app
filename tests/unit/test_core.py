@@ -277,6 +277,83 @@ async def test_service_node_retries_rejected_groq_tool_generation(monkeypatch):
     assert result["task_complete"] is True
 
 
+@pytest.mark.asyncio
+async def test_safe_read_records_rate_limit_and_fallback_model(monkeypatch):
+    records = []
+    events = []
+
+    class Primary:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            raise RuntimeError("429 rate limit reached")
+
+    class Fallback:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="fallback answer")
+
+    async def record(*args, **kwargs):
+        records.append(kwargs.get("status", "success"))
+
+    async def event(*args, **kwargs):
+        events.append(args[2])
+
+    monkeypatch.setattr("app.agents.supervisor.get_toolsets", lambda: {"gmail": []})
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_llm",
+        lambda choice, fallback=False: Fallback() if fallback else Primary(),
+    )
+    monkeypatch.setattr("app.agents.supervisor._record_model_call", record)
+    monkeypatch.setattr("app.agents.supervisor._record_model_event", event)
+    result = await make_service_node("gmail", pool=object())({
+        "message": "read mail", "model_to_use": "groq_fast", "services": ["gmail"],
+        "session_id": "test", "run_id": "run", "step_id": "step",
+        "allow_small_fallback": True,
+    })
+    assert result["output"] == "fallback answer"
+    assert records == ["error", "success"]
+    assert events == ["rate_limit_encountered", "fallback_model_used"]
+
+
+@pytest.mark.asyncio
+async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch):
+    events = []
+
+    class Primary:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            raise RuntimeError("rate_limit_exceeded")
+
+    async def record(*args, **kwargs):
+        return None
+
+    async def event(*args, **kwargs):
+        events.append((args[2], args[4]))
+
+    def llm(choice, fallback=False):
+        assert fallback is False
+        return Primary()
+
+    monkeypatch.setattr("app.agents.supervisor.get_toolsets", lambda: {"gmail": []})
+    monkeypatch.setattr("app.agents.supervisor.get_llm", llm)
+    monkeypatch.setattr("app.agents.supervisor._record_model_call", record)
+    monkeypatch.setattr("app.agents.supervisor._record_model_event", event)
+    result = await make_service_node("gmail", pool=object())({
+        "message": "send mail", "model_to_use": "groq_fast", "services": ["gmail"],
+        "session_id": "test", "run_id": "run", "step_id": "step",
+        "allow_small_fallback": False,
+    })
+    assert result["task_complete"] is False
+    assert "paused" in result["error"]
+    assert events == [("rate_limit_encountered", None)]
+
+
 def test_admin_claim_is_derived_from_email():
     settings = get_settings()
     admin = jwt.decode(

@@ -258,7 +258,7 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 ## Sprint 11 — Token, latency, quota, and budget accounting
 
-- [ ] Capture per-call input/output/schema tokens where available, model, queue/prompt/completion/tool time, fallback, and rate-limit metadata.
+- [~] Capture per-call input/output/schema tokens where available, model, queue/prompt/completion/tool time, fallback, and rate-limit metadata.
 - [ ] Attribute to planner/router/executor/verifier/recovery/summarizer and aggregate per step/run/user/model.
 - [ ] Reserve quality-model quota for complex tasks; avoid spending it on capability questions.
 - [ ] Stop/replan before runaway loops and present quota-aware defer/simplify choices.
@@ -408,3 +408,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-19: Strengthened canary evaluation with minimum sample, failure, cancellation, side-effect integrity, p95 latency, and token guardrails; persisted every conclusion, automatically rolled back regressions, and serialized concurrent evaluators so each canary concludes exactly once.
 - 2026-07-19: Added migration 006 with complete read-only DBeaver reporting views/ER map and grants, plus a tenant-scoped account export that excludes OAuth ciphertext and vector embeddings; corrected Docker reporting access to explicit IPv4 to avoid Homebrew PostgreSQL collisions.
 - 2026-07-19: Expanded the OKF layer to 12 linked capability/workflow/policy/schema/metric/failure/runbook/RAG concepts, made publication status and human approval metadata determine trust, validated registered tool references/links/secrets/public PII, and added deterministic draft generation from runtime tools, OAuth scopes, and metrics without automatic publication.
+- 2026-07-19: Added explicit failed-model-call and rate-limit telemetry, fallback transition events, separate latency/usage attribution for primary and fallback calls, and tests proving safe reads may use the approved small fallback while complex/high-risk writes pause instead of silently degrading.

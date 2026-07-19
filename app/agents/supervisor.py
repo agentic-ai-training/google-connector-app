@@ -231,7 +231,26 @@ async def _record_model_call(pool, state, model, response, elapsed_ms,
                VALUES($1,$2,'executor',$3,$4,$5,$6,$7,$8,$9)""",
             state["run_id"], state["step_id"], model, status,
             usage.get("input_tokens"), usage.get("output_tokens"), elapsed_ms,
-            fallback_from, "model" if error else None,
+            fallback_from, (
+                "rate_limit" if error and any(term in str(error).lower()
+                                                for term in ("rate limit", "rate_limit", "429"))
+                else ("model" if error else None)
+            ),
+        )
+
+
+async def _record_model_event(pool, state, event_type, model, fallback_model=None):
+    if not pool or not state.get("run_id") or not state.get("step_id"):
+        return
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO agent_run_events
+               (run_id,step_id,user_id,event_type,phase,message,payload)
+               VALUES($1,$2,$3,$4,'model',$5,$6::jsonb)""",
+            state["run_id"], state["step_id"], state.get("user_id"), event_type,
+            "Provider rate limit encountered" if event_type == "rate_limit_encountered"
+            else "Approved fallback model selected",
+            json.dumps({"model": model, "fallback_model": fallback_model}),
         )
 
 
@@ -330,20 +349,56 @@ def make_service_node(service: str, pool=None):
                     llm_started = time.perf_counter()
                     try:
                         response = await llm.ainvoke(messages)
+                        llm_elapsed = int((time.perf_counter() - llm_started) * 1000)
+                        llm_latency.labels(used_model).observe(llm_elapsed / 1000)
                         break
                     except Exception as exc:
+                        llm_elapsed = int((time.perf_counter() - llm_started) * 1000)
+                        llm_latency.labels(used_model).observe(llm_elapsed / 1000)
+                        await _record_model_call(
+                            pool, state, used_model, None, llm_elapsed,
+                            status="error", error=str(exc),
+                        )
                         error_text = str(exc).lower()
-                        if "rate_limit" in error_text or "rate limit" in error_text:
+                        if any(value in error_text for value in ("rate_limit", "rate limit", "429")):
+                            fallback_model = get_model_name(model_choice, fallback=True)
+                            await _record_model_event(
+                                pool, state, "rate_limit_encountered", used_model,
+                                fallback_model if state.get("allow_small_fallback", True) else None,
+                            )
                             if not state.get("allow_small_fallback", True):
                                 raise RuntimeError(
                                     "Quality-model quota is unavailable; this complex or "
                                     "high-risk workflow was paused instead of silently "
                                     "downgrading to the small fallback model."
                                 ) from exc
+                            fallback_from = used_model
+                            used_model = fallback_model
                             llm = get_llm(model_choice, fallback=True).bind_tools(available)
-                            response = await llm.ainvoke(messages)
-                            used_model = get_model_name(model_choice, fallback=True)
-                            fallback_from = get_model_name(model_choice)
+                            fallback_started = time.perf_counter()
+                            try:
+                                response = await llm.ainvoke(messages)
+                            except Exception as fallback_exc:
+                                fallback_elapsed = int(
+                                    (time.perf_counter() - fallback_started) * 1000
+                                )
+                                llm_latency.labels(used_model).observe(
+                                    fallback_elapsed / 1000
+                                )
+                                await _record_model_call(
+                                    pool, state, used_model, None, fallback_elapsed,
+                                    status="error", fallback_from=fallback_from,
+                                    error=str(fallback_exc),
+                                )
+                                raise
+                            llm_elapsed = int(
+                                (time.perf_counter() - fallback_started) * 1000
+                            )
+                            llm_latency.labels(used_model).observe(llm_elapsed / 1000)
+                            await _record_model_event(
+                                pool, state, "fallback_model_used", fallback_from,
+                                used_model,
+                            )
                             break
                         if "tool_use_failed" not in error_text:
                             raise
@@ -351,11 +406,6 @@ def make_service_node(service: str, pool=None):
                             response = recover_rejected_tool_call(exc)
                             if response is None:
                                 raise
-                    finally:
-                        llm_elapsed = int((time.perf_counter() - llm_started) * 1000)
-                        llm_latency.labels(
-                            used_model
-                        ).observe(llm_elapsed / 1000)
                 await _record_model_call(
                     pool, state, used_model, response, llm_elapsed,
                     fallback_from=fallback_from,
