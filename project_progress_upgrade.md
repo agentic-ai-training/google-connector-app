@@ -355,9 +355,9 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 - [x] Add proposal/evidence/evaluation/approval/canary/audit/version database models and lifecycle transitions.
 - [x] Threshold recurring/severe findings; deduplicate and expire stale proposals.
-- [~] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage. Audit on 2026-07-20 found that the analyzer emitted recommendation text rather than executable files. Sprint 26 corrects this before further canaries.
+- [x] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage. Audit on 2026-07-20 found that the analyzer emitted recommendation text rather than executable files; Sprint 26 now requires and publishes concrete candidate files.
 - [~] Notify through admin UI, sanitized email, Grafana, and GitHub; never expose private evidence in notifications. Admin/Grafana ledgers and both explicit-action adapters are complete; production email/GitHub delivery remains credential- and confirmation-gated.
-- [~] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion. Candidate/deployment proof was missing from the original approval gate and is corrected in Sprint 26.
+- [x] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion. Candidate/deployment proof was missing from the original approval gate and is now enforced by Sprint 26.
 - [x] Retain audit identity/time/version/purpose and invalidate approval after material change.
 
 ## Sprint 25 — Original specification compatibility and final guardrails
@@ -372,13 +372,13 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 ## Sprint 26 — Truthful implementation candidates and informational-run repair
 
-- [~] Distinguish `diagnosis_only`, `implementation_draft`, `validated_implementation`, and `deployed_canary`; never label a recommendation as a deployable candidate.
-- [~] Require concrete changed files, safe paths, content hashes, a base/candidate version, exact diff, rollback plan, and passing command evidence before canary approval.
-- [~] Require verified deployment identity and passing smoke evidence before canary activation; bind every decision to the frozen candidate hash.
-- [~] Publish actual candidate files in a sanitized draft PR rather than publishing only a proposal Markdown file.
-- [~] Require a human note when requesting changes, and visibly disable canary approval for diagnosis-only findings.
-- [~] Route identity/capability/help questions through the durable run path using trusted product identity and the registered tool catalog, with no Google API, user RAG, or LLM call.
-- [~] Cover combined questions, service-focused questions, common wording, and actionable-command separation with unit, integration, and golden replay tests.
+- [x] Distinguish `diagnosis_only`, `implementation_draft`, `validated_implementation`, and `deployed_canary`; never label a recommendation as a deployable candidate.
+- [x] Require concrete changed files, safe paths, content hashes, a base/candidate version, exact diff, rollback plan, and passing command evidence before canary approval.
+- [x] Require verified deployment identity and passing smoke evidence before canary activation; bind every decision to the frozen candidate hash.
+- [x] Publish actual candidate files in a sanitized draft PR rather than publishing only a proposal Markdown file.
+- [x] Require a human note when requesting changes, and visibly disable canary approval for diagnosis-only findings.
+- [x] Route identity/capability/help questions through the durable run path using trusted product identity and the registered tool catalog, with no Google API, user RAG, or LLM call.
+- [x] Cover combined questions, service-focused questions, common wording, and actionable-command separation with unit, integration, and golden replay tests.
 
 Guardrail: a diagnosis-only proposal cannot create or activate a canary; an informational run completes at 100% with zero model/tool calls.
 
@@ -430,3 +430,4 @@ After implementation and verification, teach through this repository:
 - 2026-07-20: GitHub Actions run 29754230916 completed successfully across backend, web, and Flutter, including the Android debug build. Captured the production evidence deficit and exact canary, policy, RAG, pilot, privacy, automatic rollback, and human publication gates in `docs/PILOT_AND_LEARNING_GATE_2026-07-20.md`; no pilot or learning winner is claimed from the current one-user/one-run dataset.
 - 2026-07-20: Completed the requested post-upgrade teaching phase through this repository: DAG/topological execution, durable state machines and queues, DP context packing, idempotency, chunk trees/windows, HNSW/hybrid retrieval, memoization, compensation, rate limiting, consistent hashing, bandits/MDPs/offline RL, and practical OKF v0.1 governance. The final strict audit confirms all autonomous engineering work is complete; only secure-vault GUI entry, real pilot evidence, and confirmation-gated external publication remain externally dependent.
 - 2026-07-20: Diagnosed the production Improvement portal's vague load failure from bounded route telemetry: all observed admin requests were HTTP 401, so no database query failed. Updated the portal to distinguish expired/missing sessions from non-admin access, clear expired tokens, offer Google reauthentication, stop presenting unauthenticated default rollout values, and hide protected controls until authorization succeeds. Commit `cd03279` deployed successfully to Vercel and Railway; live portal and health endpoints return 200, and web/backend CI pass.
+- 2026-07-20: Audited Sprint 24 and corrected an overstated completion claim: recurring-failure recommendations were diagnosis-level text with synthetic candidate labels, not implementation candidates. Migration 009 now marks them `diagnosis_only`, stores concrete candidate files/hashes/manifests/validation/deployment evidence, blocks canary approval and activation without those proofs, publishes real files in governed draft PRs, and requires change-request notes. Fixed durable product-information routing with a trusted registry-derived responder that makes zero Google/RAG/LLM calls. PR #20 merged as `11cd477`; PR and main backend/web/Flutter CI, production deployment, Railway API/worker health, Vercel, and Neon 009 pass. The existing execution proposal is truthfully `diagnosis_only:none` and was not approved or activated.
