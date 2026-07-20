@@ -37,7 +37,7 @@ optional GUI action stores a second copy in DBeaver's encrypted credential vault
 - Folder: `Google Connector/Local`
 - Color: blue
 - Host: `127.0.0.1` (explicit IPv4 avoids the local Homebrew listener)
-- Port: `5433` (container port remains 5432)
+- Port: `55432` (dedicated loopback binding; container port remains 5432)
 - Database/user: `agent_db` / `agent_user`
 
 Never commit DBeaver credentials or a Neon owner URL. Use the reporting views for run status, timelines, failures, tokens, retrieval, artifacts, compensation, evaluations, notifications, improvements, and canaries.
@@ -66,8 +66,9 @@ Refresh the `reporting` schema after migration 011. The dedicated role can selec
 without parent text. The analyst still cannot read encrypted OAuth credential rows.
 
 Reverified on 2026-07-21 against the installed DBeaver definitions and actual database
-endpoints: Production Neon, local Homebrew, and local Docker exposed 17 reporting
-views. Neon reports `current_user=dbeaver_analyst` and
-`transaction_read_only=on`; all three migration-010 failure views are selectable; a
-direct `google_oauth_credentials` query is denied. Migration 011 adds the 18th
-`rag_parent_lineage` view; refresh the three definitions after deployment.
+endpoints: Production Neon, local Homebrew, and local Docker each expose 18 reporting
+views at revision 011. Neon reports `current_user=dbeaver_analyst` and
+`transaction_read_only=on`; all failure and RAG-lineage views are selectable; a direct
+`google_oauth_credentials` query is denied. The Docker definition uses port 55432
+because another local PostgreSQL cluster owns 5433; this avoids silently inspecting
+the wrong database.

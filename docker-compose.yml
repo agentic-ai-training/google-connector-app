@@ -26,7 +26,7 @@ services:
       POSTGRES_DB: agent_db
       POSTGRES_USER: agent_user
       POSTGRES_PASSWORD: agent_pass_2024
-    ports: ["5433:5432"]
+    ports: ["127.0.0.1:55432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agent_user -d agent_db"]

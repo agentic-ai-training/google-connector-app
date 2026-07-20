@@ -94,6 +94,11 @@ matches on children, expands a deduplicated parent under the same tenant, preser
 matched-child citation, and applies only a bounded recency tie-breaker. Tests cover
 parent expansion and cross-tenant denial.
 
+The DBeaver verification found that a separate host PostgreSQL process had reclaimed
+port 5433 ahead of Docker. The Docker database is now bound only to
+`127.0.0.1:55432`, the installed DBeaver definition was updated, and Neon read-only,
+Homebrew, and Docker were each live-queried at revision 011 with 18 reporting views.
+
 ## Correctly unresolved conclusions
 
 - Chunk-size, overlap, parent-size, query transformation, HyDE, reranker, and

@@ -7,7 +7,7 @@
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
 - Ollama: `http://localhost:11434/api/tags`
-- Docker PostgreSQL: `localhost:5433`
+- Docker PostgreSQL: `127.0.0.1:55432`
 
 Start with `docker compose up -d --build`; inspect with `docker compose ps -a` and
 `docker compose logs --tail=200 api worker`. The API runs Alembic before serving and
