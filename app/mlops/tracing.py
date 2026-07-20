@@ -1,5 +1,5 @@
 import os
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -22,7 +22,9 @@ def _headers(value: str) -> dict[str, str]:
         key, separator, content = item.partition("=")
         if not separator or not key.strip() or not content.strip():
             raise ValueError("OTLP headers must use comma-separated key=value entries")
-        parsed[key.strip()] = content.strip()
+        # OTEL_EXPORTER_OTLP_HEADERS uses URL-encoded header values. Grafana's
+        # setup wizard therefore emits ``Authorization=Basic%20...``.
+        parsed[unquote(key.strip())] = unquote(content.strip())
     return parsed
 
 

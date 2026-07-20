@@ -125,6 +125,9 @@ def test_otlp_configuration_requires_safe_endpoints_and_well_formed_headers():
     assert otlp_headers("Authorization=Basic redacted,X-Scope=tenant") == {
         "Authorization": "Basic redacted", "X-Scope": "tenant",
     }
+    assert otlp_headers("Authorization=Basic%20redacted") == {
+        "Authorization": "Basic redacted",
+    }
     with pytest.raises(ValueError, match="key=value"):
         otlp_headers("malformed")
 
