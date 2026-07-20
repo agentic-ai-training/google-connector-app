@@ -8,12 +8,19 @@ from app.db.connection import get_pool
 from app.db.prompt_service import (
     activate_experiment, create_experiment, conclude_experiment,
 )
-from app.runs.schemas import ImprovementDecision
+from app.runs.schemas import (
+    ImprovementCandidateRegistration,
+    ImprovementDecision,
+    ImprovementDeploymentEvidence,
+)
 from app.runs.repository import search_runs
 from app.config.settings import get_settings
 from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.improvements.publisher import publish_github_draft, send_proposal_email
+from app.improvements.candidates import (
+    candidate_digest, file_digest, validate_candidate_files,
+)
 router=APIRouter(prefix="/admin")
 class ExperimentIn(BaseModel):
     name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
@@ -121,6 +128,80 @@ async def improvements(status: str | None = None):
     return {"proposals": [dict(row) for row in rows]}
 
 
+@router.put("/improvements/{proposal_key}/candidate")
+async def register_improvement_candidate(
+    proposal_key: str, body: ImprovementCandidateRegistration, request: Request,
+):
+    files = [item.model_dump() for item in body.files]
+    errors = validate_candidate_files(files)
+    if body.validation_report.get("passed") is not True:
+        errors.append("Validation report must explicitly record passed=true")
+    if not body.validation_report.get("commands"):
+        errors.append("Validation report must list the commands that were run")
+    if errors:
+        raise HTTPException(422, errors)
+    digest = candidate_digest(body.base_version, files, body.validation_report)
+    manifest = {
+        "file_count": len(files), "candidate_digest": digest,
+        "registered_by": request.state.user_id,
+        "canary_eligible": True,
+    }
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        proposal = await conn.fetchrow(
+            "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
+            proposal_key,
+        )
+        if not proposal or proposal["status"] not in {"awaiting_review", "changes_requested"}:
+            raise HTTPException(409, "Proposal cannot accept a candidate in its current state")
+        await conn.execute("DELETE FROM improvement_candidate_files WHERE proposal_id=$1", proposal["id"])
+        for item in files:
+            await conn.execute(
+                """INSERT INTO improvement_candidate_files
+                   (proposal_id,path,change_type,content,content_hash)
+                   VALUES($1,$2,$3,$4,$5)""",
+                proposal["id"], item["path"], item["change_type"], item.get("content"),
+                file_digest(item.get("content")),
+            )
+        await conn.execute(
+            """UPDATE improvement_proposals SET candidate_kind=$1,
+               candidate_state='validated_implementation',source_version=$2,
+               candidate_version=$3,exact_diff=$4,candidate_manifest=$5::jsonb,
+               validation_report=$6::jsonb,rollback_plan=$7::jsonb,
+               deployment_evidence='{}'::jsonb,content_hash=$8,status='awaiting_review',
+               updated_at=now() WHERE id=$9""",
+            body.candidate_kind, body.base_version, body.candidate_version,
+            body.exact_diff, json.dumps(manifest), json.dumps(body.validation_report),
+            json.dumps(body.rollback_plan), digest, proposal["id"],
+        )
+    return {"proposal_key": proposal_key, "candidate_state": "validated_implementation",
+            "content_hash": digest}
+
+
+@router.put("/improvements/{proposal_key}/deployment-evidence")
+async def register_candidate_deployment(
+    proposal_key: str, body: ImprovementDeploymentEvidence, request: Request,
+):
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        proposal = await conn.fetchrow(
+            "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
+            proposal_key,
+        )
+        if not proposal or proposal["candidate_state"] != "validated_implementation":
+            raise HTTPException(409, "A validated implementation candidate is required")
+        if proposal["candidate_version"] != body.candidate_version:
+            raise HTTPException(409, "Deployment version does not match the frozen candidate")
+        if not body.verified or body.smoke_tests.get("passed") is not True:
+            raise HTTPException(422, "Verified deployment and passing smoke tests are required")
+        evidence = {**body.model_dump(), "verified_by": request.state.user_id}
+        await conn.execute(
+            "UPDATE improvement_proposals SET deployment_evidence=$1::jsonb,updated_at=now() WHERE id=$2",
+            json.dumps(evidence), proposal["id"],
+        )
+    return {"proposal_key": proposal_key, "deployment_verified": True}
+
+
 @router.get("/improvements-pending/count")
 async def pending_improvement_count():
     pool = await get_pool()
@@ -216,7 +297,12 @@ async def publish_proposal_draft(
     if notification["status"] == "sent":
         return {"status": "sent", "url": notification["external_reference"]}
     try:
-        result = await publish_github_draft(proposal)
+        async with pool.acquire() as conn:
+            candidate_files = [dict(row) for row in await conn.fetch(
+                "SELECT path,change_type,content FROM improvement_candidate_files WHERE proposal_id=$1 ORDER BY path",
+                proposal["id"],
+            )]
+        result = await publish_github_draft(proposal, candidate_files)
         await _finish_notification(pool, notification["id"], reference=result["url"])
         return {"status": "sent", **result}
     except Exception as exc:
@@ -295,6 +381,13 @@ async def decide_canary(proposal_key: str, body: ImprovementDecision, request: R
                 raise HTTPException(409, "Proposal is not awaiting review")
             if proposal["content_hash"] != body.proposal_hash:
                 raise HTTPException(409, "Proposal changed; review the new version")
+            if body.decision == "approved" and proposal["candidate_state"] != "validated_implementation":
+                raise HTTPException(
+                    409,
+                    "This is a diagnosis-only finding. Attach concrete files and passing validation evidence before canary approval.",
+                )
+            if body.decision == "changes_requested" and not (body.note or "").strip():
+                raise HTTPException(422, "A change-request note is required")
             await conn.execute(
                 """INSERT INTO improvement_approvals
                    (proposal_id,stage,proposal_hash,decision,decided_by,decision_note)
@@ -337,6 +430,9 @@ async def activate_canary(proposal_key: str, body: ImprovementDecision,
             raise HTTPException(409, "Proposal is not approved for canary")
         if proposal["content_hash"] != body.proposal_hash:
             raise HTTPException(409, "Proposal changed; review the new version")
+        evidence = proposal["deployment_evidence"] or {}
+        if evidence.get("verified") is not True or evidence.get("candidate_version") != proposal["candidate_version"]:
+            raise HTTPException(409, "Verified deployment evidence for the frozen candidate is required")
         updated = await conn.fetchval(
             """UPDATE improvement_canaries SET status='active',started_at=now()
                WHERE id=(SELECT id FROM improvement_canaries WHERE proposal_id=$1

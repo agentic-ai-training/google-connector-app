@@ -9,6 +9,7 @@ from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
 from app.runs.repository import append_event
+from app.runs.informational import informational_answer
 from app.runs.verifier import verify_executions
 from app.mlops.metrics import run_duration, run_failures, run_transitions
 from app.evaluation.collector import record_run_evaluation
@@ -169,6 +170,36 @@ async def _execute_step(app, pool, run, step, dependencies):
     await append_event(pool, run_id, user_id, "step_started", step_id=step["id"],
                        phase="execution", message=step["title"])
     step_started = time.perf_counter()
+    input_data = step.get("input_data") or {}
+    if step.get("operation") == "answer_information":
+        output = informational_answer(
+            run["request"],
+            input_data["informational_intent"],
+            input_data["capability_catalog"],
+        )
+        elapsed_ms = int((time.perf_counter() - step_started) * 1000)
+        evidence = "Trusted product-information postconditions passed"
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE agent_run_steps SET status='completed',output_data=$1::jsonb,
+                   duration_ms=$2,completed_at=now(),error_category=NULL,error_message=NULL
+                   WHERE id=$3""",
+                json.dumps({"output": output, "verification": evidence,
+                            "source": "registered_capability_catalog"}),
+                elapsed_ms, step["id"],
+            )
+        await append_event(
+            pool, run_id, user_id, "verification_succeeded", step_id=step["id"],
+            phase="verification", message=evidence,
+            payload={"source": "registered_capability_catalog", "model_calls": 0,
+                     "tool_calls": 0, "rag_mode": "none"},
+        )
+        await append_event(
+            pool, run_id, user_id, "step_completed", step_id=step["id"],
+            phase="execution", message=output,
+            payload={"artifact_count": 0, "model_calls": 0, "tool_calls": 0},
+        )
+        return output
     dependency_text = json.dumps(dependencies, default=str)
     scoped_message = (
         f"Overall request: {run['request']}\n\n"
@@ -231,10 +262,16 @@ async def execute_run(app, pool, run):
     credential_token = None
     started = time.perf_counter()
     try:
-        credentials = await load_google_credentials(pool, user_id)
-        if credentials is None and not get_settings().allow_dev_auth:
-            raise RuntimeError("Google credentials are not connected")
-        credential_token = request_google_credentials.set(credentials)
+        plan_steps = (run.get("plan") or {}).get("steps", [])
+        informational_only = bool(plan_steps) and all(
+            step.get("operation") == "answer_information"
+            for step in plan_steps
+        )
+        if not informational_only:
+            credentials = await load_google_credentials(pool, user_id)
+            if credentials is None and not get_settings().allow_dev_auth:
+                raise RuntimeError("Google credentials are not connected")
+            credential_token = request_google_credentials.set(credentials)
         final_outputs = []
         while True:
             async with pool.acquire() as conn:

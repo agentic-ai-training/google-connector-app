@@ -48,7 +48,7 @@ jobs:
         run: |
           alembic downgrade 002
           alembic upgrade head
-          test "$(alembic current | tail -1)" = "008 (head)"
+          test "$(alembic current | tail -1)" = "009 (head)"
       - name: Validate Docker Compose model
         run: |
           cp .env.example .env

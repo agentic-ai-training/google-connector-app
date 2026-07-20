@@ -11,29 +11,20 @@ from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.config.settings import get_settings
 from app.db.prompt_service import get_prompt, record_metric
-from app.runs.planner import classify_request
+from app.runs.planner import OPERATION_TOOLS, classify_request
+from app.runs.informational import (
+    capability_catalog,
+    classify_informational_intent,
+    informational_answer,
+)
 
 router = APIRouter()
 
-CAPABILITIES = (
-    "I can work with Gmail, Google Calendar, Drive, Docs, Sheets, Tasks, "
-    "Google Chat, Contacts, and Google Meet. For Meet I can create an instant "
-    "meeting link, inspect a meeting space, list recent conference records, and "
-    "list conference participants. I can also schedule Calendar events with a "
-    "Google Meet link. Tell me the action and any required names, dates, or IDs."
-)
-
-
 def capability_answer(message: str) -> str | None:
-    text = " ".join(message.lower().split())
-    capability_phrases = (
-        "what can you do", "can you only", "what about google meet",
-        "what about meet", "other operations", "which operations",
-        "what operations", "your capabilities",
-    )
-    if any(phrase in text for phrase in capability_phrases):
-        return CAPABILITIES
-    return None
+    intent = classify_informational_intent(message)
+    if not intent:
+        return None
+    return informational_answer(message, intent, capability_catalog(OPERATION_TOOLS))
 
 
 class ChatRequest(BaseModel):

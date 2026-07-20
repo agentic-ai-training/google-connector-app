@@ -65,3 +65,27 @@ class ImprovementDecision(BaseModel):
     decision: Literal["approved", "rejected", "changes_requested"]
     proposal_hash: str
     note: str | None = Field(default=None, max_length=4_000)
+
+
+class ImprovementCandidateFile(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    change_type: Literal["create", "replace", "delete"]
+    content: str | None = Field(default=None, max_length=500_000)
+
+
+class ImprovementCandidateRegistration(BaseModel):
+    candidate_kind: Literal["code", "okf", "config", "prompt"]
+    base_version: str = Field(min_length=7, max_length=100)
+    candidate_version: str = Field(min_length=7, max_length=100)
+    exact_diff: str = Field(min_length=1, max_length=500_000)
+    files: list[ImprovementCandidateFile] = Field(min_length=1, max_length=50)
+    validation_report: dict[str, Any]
+    rollback_plan: dict[str, Any]
+
+
+class ImprovementDeploymentEvidence(BaseModel):
+    candidate_version: str = Field(min_length=7, max_length=100)
+    deployment_id: str = Field(min_length=1, max_length=300)
+    deployment_url: str = Field(min_length=1, max_length=2_000)
+    verified: bool
+    smoke_tests: dict[str, Any]

@@ -43,13 +43,15 @@ def proposal_markdown(proposal: dict) -> str:
     return document
 
 
-async def publish_github_draft(proposal: dict) -> dict:
+async def publish_github_draft(proposal: dict, candidate_files: list[dict]) -> dict:
     settings = get_settings()
     if not settings.github_proposal_token:
         raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     repository = settings.github_proposal_repository.strip("/")
     if repository.count("/") != 1:
         raise RuntimeError("GITHUB_PROPOSAL_REPOSITORY must be owner/repository")
+    if proposal.get("candidate_state") != "validated_implementation" or not candidate_files:
+        raise RuntimeError("A validated implementation candidate with concrete files is required")
     markdown = proposal_markdown(proposal)
     branch = f"governed/{proposal['proposal_key']}-{proposal['content_hash'][:8]}"
     path = f".improvement-proposals/{proposal['proposal_key']}.md"
@@ -74,16 +76,32 @@ async def publish_github_draft(proposal: dict) -> dict:
         )
         if created_ref.status_code not in {201, 422}:
             created_ref.raise_for_status()
-        content = base64.b64encode(markdown.encode()).decode()
-        file_response = await client.put(
-            f"{base_url}/contents/{path}",
-            json={
-                "message": f"docs: governed proposal {proposal['proposal_key']}",
-                "content": content,
+        files_to_publish = [
+            {"path": path, "change_type": "create", "content": markdown},
+            *candidate_files,
+        ]
+        for item in files_to_publish:
+            target = quote(item["path"], safe="/")
+            existing = await client.get(f"{base_url}/contents/{target}", params={"ref": branch})
+            existing_sha = existing.json().get("sha") if existing.status_code == 200 else None
+            if item["change_type"] == "delete":
+                if existing_sha:
+                    response = await client.request(
+                        "DELETE", f"{base_url}/contents/{target}",
+                        json={"message": f"apply {proposal['proposal_key']}",
+                              "sha": existing_sha, "branch": branch},
+                    )
+                    response.raise_for_status()
+                continue
+            payload = {
+                "message": f"apply governed candidate {proposal['proposal_key']}",
+                "content": base64.b64encode(item["content"].encode()).decode(),
                 "branch": branch,
-            },
-        )
-        file_response.raise_for_status()
+            }
+            if existing_sha:
+                payload["sha"] = existing_sha
+            response = await client.put(f"{base_url}/contents/{target}", json=payload)
+            response.raise_for_status()
         pull_response = await client.post(
             f"{base_url}/pulls",
             json={

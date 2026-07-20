@@ -608,6 +608,145 @@ def test_worker_executes_dependency_steps_and_recovers_expired_lease():
         assert max_active == 2
 
 
+def test_durable_informational_run_completes_without_graph_or_model_calls():
+    from types import SimpleNamespace
+
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run, get_run
+    from app.runs.worker import execute_run
+
+    class ForbiddenGraph:
+        async def ainvoke(self, *_args, **_kwargs):
+            raise AssertionError("Informational runs must not invoke the agent graph")
+
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            marker = f"information-{uuid.uuid4()}"
+            run, _ = await create_run(
+                pool, "information@example.com",
+                "what can you do and what is your name?", marker, marker,
+            )
+            async with pool.acquire() as conn:
+                claimed = await conn.fetchrow(
+                    """UPDATE agent_runs SET status='running',lease_owner='information-test',
+                       lease_expires_at=now()+interval '1 minute' WHERE id=$1 RETURNING *""",
+                    run["id"],
+                )
+            fake_app = SimpleNamespace(state=SimpleNamespace(agent_graph=ForbiddenGraph()))
+            await execute_run(fake_app, pool, dict(claimed))
+            completed = await get_run(pool, run["id"], "information@example.com")
+            async with pool.acquire() as conn:
+                model_calls = await conn.fetchval(
+                    "SELECT count(*) FROM agent_model_calls WHERE run_id=$1", run["id"]
+                )
+                tool_calls = await conn.fetchval(
+                    "SELECT count(*) FROM agent_tool_attempts WHERE run_id=$1", run["id"]
+                )
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run["id"])
+            return completed, model_calls, tool_calls
+
+        completed, model_calls, tool_calls = client.portal.call(exercise)
+        assert completed["status"] == "completed"
+        assert completed["technical_completion"] == 100
+        assert completed["functional_completion"] == 100
+        assert completed["user_visible_completion"] == 100
+        assert "Google Workspace Agent" in completed["result"]["output"]
+        assert model_calls == 0
+        assert tool_calls == 0
+
+
+def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    marker = str(uuid.uuid4())
+    proposal_key = f"diagnosis-{marker}"
+    with TestClient(app) as client:
+        admin = client.post(
+            "/auth/token", json={"email": "achintyat256@gmail.com"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {admin}"}
+
+        async def seed():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO improvement_proposals
+                       (proposal_key,proposal_type,title,sanitized_summary,status,
+                        content_hash,candidate_kind,candidate_state)
+                       VALUES($1,'policy','Diagnosis','No private content','awaiting_review',
+                              $2,'diagnosis','diagnosis_only')""",
+                    proposal_key, marker,
+                )
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM improvement_proposals WHERE proposal_key=$1", proposal_key
+                )
+
+        client.portal.call(seed)
+        response = client.post(
+            f"/admin/improvements/{proposal_key}/canary-decision",
+            headers=headers,
+            json={"decision": "approved", "proposal_hash": marker},
+        )
+        assert response.status_code == 409
+        assert "diagnosis-only" in response.json()["detail"]
+        candidate = client.put(
+            f"/admin/improvements/{proposal_key}/candidate",
+            headers=headers,
+            json={
+                "candidate_kind": "code",
+                "base_version": "abcdef1",
+                "candidate_version": "abcdef2",
+                "exact_diff": "--- app/example.py\n+++ app/example.py\n+VALUE = 2",
+                "files": [{
+                    "path": "app/example.py", "change_type": "create",
+                    "content": "VALUE = 2\n",
+                }],
+                "validation_report": {
+                    "passed": True, "commands": ["pytest tests/unit -q"],
+                },
+                "rollback_plan": {"action": "restore abcdef1"},
+            },
+        )
+        assert candidate.status_code == 200
+        candidate_hash = candidate.json()["content_hash"]
+        approved = client.post(
+            f"/admin/improvements/{proposal_key}/canary-decision",
+            headers=headers,
+            json={"decision": "approved", "proposal_hash": candidate_hash},
+        )
+        assert approved.status_code == 200
+        blocked_activation = client.post(
+            f"/admin/improvements/{proposal_key}/activate-canary",
+            headers=headers,
+            json={"decision": "approved", "proposal_hash": candidate_hash},
+        )
+        assert blocked_activation.status_code == 409
+        deployed = client.put(
+            f"/admin/improvements/{proposal_key}/deployment-evidence",
+            headers=headers,
+            json={
+                "candidate_version": "abcdef2", "deployment_id": "fixture-deploy",
+                "deployment_url": "https://example.invalid/deploy",
+                "verified": True, "smoke_tests": {"passed": True},
+            },
+        )
+        assert deployed.status_code == 200
+        activated = client.post(
+            f"/admin/improvements/{proposal_key}/activate-canary",
+            headers=headers,
+            json={"decision": "approved", "proposal_hash": candidate_hash},
+        )
+        assert activated.status_code == 200
+        client.portal.call(cleanup)
+
+
 def test_canary_regression_is_evaluated_and_rolled_back():
     from app.api.main import app
     from app.db.connection import get_pool

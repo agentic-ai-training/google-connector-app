@@ -89,10 +89,11 @@ async def analyze_recent_failures(pool) -> int:
                    (proposal_key,proposal_type,title,sanitized_summary,status,severity,
                     risk_level,root_cause_confidence,affected_sessions,exact_diff,
                     expected_impact,privacy_report,security_report,rollback_plan,
-                    source_version,candidate_version,content_hash,expires_at)
+                    source_version,candidate_version,content_hash,expires_at,
+                    candidate_kind,candidate_state,candidate_manifest)
                    VALUES($1,'policy',$2,$3,'awaiting_review',$4,'medium',85,$5,$6,
                           $7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,'current',$11,$12,
-                          now()+interval '30 days')
+                          now()+interval '30 days','diagnosis','diagnosis_only',$13::jsonb)
                    ON CONFLICT(proposal_key) DO NOTHING RETURNING id""",
                 proposal_key, f"Reduce recurring {category} failures",
                 f"{group['failures']} recent runs share the sanitized category {category}. {recommendation}",
@@ -102,7 +103,12 @@ async def analyze_recent_failures(pool) -> int:
                 json.dumps({"raw_content_included": False, "pii_scan": "passed"}),
                 json.dumps({"external_writes_changed": False, "review_required": True}),
                 json.dumps({"action": "restore source_version", "automatic": True}),
-                f"candidate-{digest[:12]}", digest,
+                None, digest,
+                json.dumps({
+                    "kind": "diagnosis",
+                    "canary_eligible": False,
+                    "next_action": "Attach concrete changed files and passing validation evidence",
+                }),
             )
             if not proposal_id:
                 continue

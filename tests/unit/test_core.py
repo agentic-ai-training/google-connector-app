@@ -34,6 +34,9 @@ from app.tools.registry import registered_tool_names
 from app.evaluation.replay import replay_case
 from app.improvements.analyzer import assess_canary
 from app.improvements.publisher import proposal_markdown
+from app.improvements.candidates import (
+    candidate_digest, validate_candidate_files,
+)
 from app.api.middleware.metrics import _correlation_id, _route_template
 from app.mlops.tracing import _headers as otlp_headers, _logs_endpoint, _trace_endpoint
 from types import SimpleNamespace
@@ -522,6 +525,44 @@ def test_capability_questions_are_answered_without_an_llm_call():
     assert answer is not None
     assert "Google Meet" in answer
     assert capability_answer("Search Gmail for invoices") is None
+
+
+@pytest.mark.parametrize("message,intent", [
+    ("what can you do?", "capabilities"),
+    ("what is your name?", "identity"),
+    ("what can you do and what is your name?", "identity_and_capabilities"),
+    ("Other than Drive and Gmail, what about Google Meet?", "capabilities"),
+])
+def test_durable_product_information_uses_trusted_local_plan(message, intent):
+    plan, policy = build_plan(message)
+    assert policy["informational_intent"] == intent
+    assert plan.rag_mode == "none"
+    assert plan.estimated_max_tokens == 0
+    assert len(plan.steps) == 1
+    assert plan.steps[0].operation == "answer_information"
+    assert plan.steps[0].arguments["allowed_tools"] == []
+    assert "meet" in plan.steps[0].arguments["capability_catalog"]
+
+
+def test_actionable_workspace_command_is_not_product_information():
+    plan, policy = build_plan("Search Gmail for invoices")
+    assert policy["informational_intent"] is None
+    assert plan.steps[0].service == "gmail"
+    assert plan.steps[0].operation == "search"
+
+
+def test_implementation_candidate_requires_safe_concrete_files():
+    files = [{"path": "app/runs/example.py", "change_type": "replace",
+              "content": "VALUE = 1\n"}]
+    assert validate_candidate_files(files) == []
+    assert candidate_digest("abcdef1", files, {"passed": True}) == candidate_digest(
+        "abcdef1", files, {"passed": True}
+    )
+    errors = validate_candidate_files([
+        {"path": "../.env", "change_type": "replace", "content": "API_KEY=x"},
+    ])
+    assert any("Unsafe" in error for error in errors)
+    assert any("credentials" in error or "secret-like" in error for error in errors)
 
 
 def test_added_google_scopes_require_fresh_consent():

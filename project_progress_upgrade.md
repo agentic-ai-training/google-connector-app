@@ -355,9 +355,9 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 - [x] Add proposal/evidence/evaluation/approval/canary/audit/version database models and lifecycle transitions.
 - [x] Threshold recurring/severe findings; deduplicate and expire stale proposals.
-- [x] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage. Publication is hash-bound, sanitized, draft-only, and requires an explicit administrator confirmation plus a repository-scoped credential.
+- [~] Produce exact versioned diffs and GitHub draft PRs for public code/OKF/config; store private revisions in protected storage. Audit on 2026-07-20 found that the analyzer emitted recommendation text rather than executable files. Sprint 26 corrects this before further canaries.
 - [~] Notify through admin UI, sanitized email, Grafana, and GitHub; never expose private evidence in notifications. Admin/Grafana ledgers and both explicit-action adapters are complete; production email/GitHub delivery remains credential- and confirmation-gated.
-- [x] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion.
+- [~] Freeze approved hashes, rerun all gates, deploy selected-user/5–10% canary, compare control/candidate, auto-rollback on guardrail failure, and request final promotion. Candidate/deployment proof was missing from the original approval gate and is corrected in Sprint 26.
 - [x] Retain audit identity/time/version/purpose and invalidate approval after material change.
 
 ## Sprint 25 — Original specification compatibility and final guardrails
@@ -369,6 +369,18 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 - [x] Run secret/history scans, authorization/PII/prompt-injection/idempotency/cancellation/canary/rollback tests.
 - [x] Run GitHub Actions, Railway, Neon, Vercel, Google OAuth, Grafana Cloud, Alloy, and LangSmith production smoke tests where credentials/account state allow. GitHub backend/web/Flutter CI, Railway API/worker, Neon migration 008, Vercel, OAuth redirect/PKCE/scopes, metrics, logs, traces, alerts, dashboards, authorization, and LangSmith pass. Time/data-dependent pilot conclusions are evidence gates, not an unfinished smoke test, and are recorded in `docs/PILOT_AND_LEARNING_GATE_2026-07-20.md`.
 - [x] Document every external blocker with exact user steps; do not mark complete while an in-scope safe action remains.
+
+## Sprint 26 — Truthful implementation candidates and informational-run repair
+
+- [~] Distinguish `diagnosis_only`, `implementation_draft`, `validated_implementation`, and `deployed_canary`; never label a recommendation as a deployable candidate.
+- [~] Require concrete changed files, safe paths, content hashes, a base/candidate version, exact diff, rollback plan, and passing command evidence before canary approval.
+- [~] Require verified deployment identity and passing smoke evidence before canary activation; bind every decision to the frozen candidate hash.
+- [~] Publish actual candidate files in a sanitized draft PR rather than publishing only a proposal Markdown file.
+- [~] Require a human note when requesting changes, and visibly disable canary approval for diagnosis-only findings.
+- [~] Route identity/capability/help questions through the durable run path using trusted product identity and the registered tool catalog, with no Google API, user RAG, or LLM call.
+- [~] Cover combined questions, service-focused questions, common wording, and actionable-command separation with unit, integration, and golden replay tests.
+
+Guardrail: a diagnosis-only proposal cannot create or activate a canary; an informational run completes at 100% with zero model/tool calls.
 
 ## 5. Required implementation reports
 

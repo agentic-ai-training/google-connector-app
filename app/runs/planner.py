@@ -3,6 +3,10 @@ import json
 import re
 
 from app.runs.schemas import ExecutionPlan, PlanStep
+from app.runs.informational import (
+    capability_catalog,
+    classify_informational_intent,
+)
 
 SERVICES = {
     "gmail": ("gmail", "email", "mail"),
@@ -155,6 +159,7 @@ def _matches(patterns: tuple[str, ...], text: str) -> bool:
 
 def classify_request(message: str) -> dict:
     text = " ".join(message.lower().split())
+    informational_intent = classify_informational_intent(message)
     services = [
         service for service, terms in SERVICES.items()
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
@@ -179,6 +184,12 @@ def classify_request(message: str) -> dict:
             clarifications.append("Which timezone should be used?")
     if "chat" in services and write and "space" not in text:
         clarifications.append("Which Google Chat space should receive the message?")
+    if informational_intent:
+        services = ["general"]
+        write = False
+        high_risk = False
+        rag_mode = "none"
+        clarifications = []
     return {
         "services": list(dict.fromkeys(services)),
         "write": write,
@@ -187,11 +198,43 @@ def classify_request(message: str) -> dict:
         "approval_bypassed": approval_bypassed,
         "rag_mode": rag_mode,
         "required_clarifications": clarifications,
+        "informational_intent": informational_intent,
     }
 
 
 def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
     policy = classify_request(message)
+    if policy["informational_intent"]:
+        intent = policy["informational_intent"]
+        step = PlanStep(
+            id="answer_product_information",
+            title="Answer from the trusted product capability registry",
+            service="general",
+            operation="answer_information",
+            arguments={
+                "request": message,
+                "informational_intent": intent,
+                "capability_catalog": capability_catalog(OPERATION_TOOLS),
+                "allowed_tools": [],
+            },
+            read_only=True,
+            risk_level="low",
+            requires_approval=False,
+            weight=1.0,
+            preconditions=["The product capability registry is available"],
+            postconditions=[
+                "The answer is grounded in product identity and registered operations",
+                "No Google API, user-content RAG, or language model call is made",
+            ],
+        )
+        return ExecutionPlan(
+            objective=message,
+            services=["general"],
+            rag_mode="none",
+            steps=[step],
+            success_criteria=step.postconditions,
+            estimated_max_tokens=0,
+        ), policy
     services = policy["services"] or ["general"]
     ordered = sorted(services, key=lambda item: SERVICE_ORDER.get(item, 100))
     steps = []
