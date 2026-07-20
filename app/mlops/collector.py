@@ -6,6 +6,8 @@ from app.mlops.metrics import (
     embedding_queue,
     improvement_queue,
     improvement_notifications,
+    failure_notifications,
+    failure_review_queue,
     rag_quality,
     rag_quality_samples,
     run_queue_depth,
@@ -41,6 +43,11 @@ async def collect_operational_metrics(pool):
     for channel in NOTIFICATION_CHANNELS:
         for state in NOTIFICATION_STATES:
             improvement_notifications.labels(channel, state).set(0)
+            failure_notifications.labels(channel, state).set(0)
+    for stage in ("intake", "classification", "planning", "validation", "admission",
+                  "approval", "execution", "verification", "recovery", "persistence", "api"):
+        for risk in ("low", "medium", "high"):
+            failure_review_queue.labels(stage, risk).set(0)
     async with pool.acquire() as conn:
         for row in await conn.fetch(
             "SELECT status,count(*) AS count FROM agent_runs WHERE deleted_at IS NULL GROUP BY status"
@@ -66,6 +73,16 @@ async def collect_operational_metrics(pool):
                GROUP BY channel,status"""
         ):
             improvement_notifications.labels(row["channel"], row["status"]).set(row["count"])
+        for row in await conn.fetch(
+            """SELECT stage,risk_level,count(*) AS count FROM failure_incidents
+               WHERE analysis_status='awaiting_review' GROUP BY stage,risk_level"""
+        ):
+            failure_review_queue.labels(row["stage"], row["risk_level"]).set(row["count"])
+        for row in await conn.fetch(
+            """SELECT channel,status,count(*) AS count FROM failure_incident_notifications
+               GROUP BY channel,status"""
+        ):
+            failure_notifications.labels(row["channel"], row["status"]).set(row["count"])
         quality = await conn.fetchrow(
             """SELECT avg(faithfulness) AS faithfulness,
                       avg(answer_relevancy) AS answer_relevancy,

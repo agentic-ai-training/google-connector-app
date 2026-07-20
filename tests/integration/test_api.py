@@ -103,6 +103,75 @@ def test_embedding_queue_admission_is_bounded_per_user():
         assert client.portal.call(attempt) is False
 
 
+def test_contextual_workflow_and_failure_inbox_are_durable():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.improvements.failure_intelligence import record_failure_incident
+
+    user_id = f"failure-routing-{uuid.uuid4()}@example.com"
+    session_id = f"failure-routing-{uuid.uuid4()}"
+    occurrence = f"integration:{uuid.uuid4()}"
+    incident_id = run_id = None
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        response = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": (
+                "Create a sheet of the names of last 20 people who did mails to me, "
+                "use its Drive link in Google Chat, and schedule a Calendar Meet invite "
+                "tomorrow at 10 AM to fixture@example.com"
+            ),
+        })
+        assert response.status_code == 202
+        assert response.json()["status"] == "awaiting_clarification"
+        run_id = response.json()["run_id"]
+        run = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert [(item["service"], item["operation"]) for item in run["steps"]] == [
+            ("gmail", "search"), ("sheets", "create_and_write"),
+            ("chat", "send"), ("calendar", "create"),
+        ]
+        assert run["steps"][2]["dependencies"] == ["execute_sheets"]
+        assert run["steps"][3]["dependencies"] == ["execute_sheets"]
+
+        async def seed_incident():
+            return await record_failure_incident(
+                await get_pool(), occurrence_key=occurrence, run_id=uuid.UUID(run_id),
+                session_id=session_id, user_id=user_id, message="private@example.com failed",
+                intent_kind="workspace_action", stage="validation", category="planning",
+                component="typed_planner", error="Invalid execution plan: unknown operation",
+                breaking_point="Plan validation",
+            )
+        incident = client.portal.call(seed_incident)
+        incident_id = str(incident["id"])
+        admin = client.post(
+            "/auth/token", json={"email": "achintyat256@gmail.com"}
+        ).json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin}"}
+        inbox = client.get("/admin/failure-incidents", headers=admin_headers)
+        assert inbox.status_code == 200
+        match = next(item for item in inbox.json()["incidents"] if item["id"] == incident_id)
+        assert len(match["improvement_options"]) == 2
+        decision = client.post(
+            f"/admin/failure-incidents/{incident_id}/decision", headers=admin_headers,
+            json={"decision": "choose_A"},
+        )
+        assert decision.status_code == 200
+        assert decision.json()["proposal"]["candidate_state"] == "diagnosis_only"
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn, conn.transaction():
+                proposal = await conn.fetchval(
+                    "SELECT proposal_id FROM failure_incidents WHERE id=$1", uuid.UUID(incident_id)
+                )
+                if proposal:
+                    await conn.execute("DELETE FROM improvement_proposals WHERE id=$1", proposal)
+                await conn.execute("DELETE FROM failure_incidents WHERE id=$1", uuid.UUID(incident_id))
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id))
+        client.portal.call(cleanup)
+
+
 def test_private_okf_bundle_is_namespaced_and_excluded_by_default(tmp_path):
     from app.api.main import app
     from app.config.settings import get_settings
@@ -547,7 +616,9 @@ def test_per_user_active_run_limit_is_enforced():
             "session_id": f"limit-{uuid.uuid4()}",
         })
         assert limited.status_code == 429
-        assert "Too many active runs" in limited.json()["detail"]
+        assert "Too many active runs" in limited.json()["detail"]["message"]
+        assert limited.json()["detail"]["stage"] == "admission"
+        assert limited.json()["detail"]["incident_id"]
 
 
 def test_worker_executes_dependency_steps_and_recovers_expired_lease():

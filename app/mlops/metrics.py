@@ -41,6 +41,21 @@ improvement_notifications = Gauge(
     "agent_improvement_notifications", "Improvement notifications by channel and state",
     ["channel", "status"],
 )
+failure_incidents = Counter(
+    "agent_failure_incidents_total",
+    "Durable failures captured for administrator analysis",
+    ["stage", "category"],
+)
+failure_review_queue = Gauge(
+    "agent_failure_review_queue",
+    "Failure incidents awaiting a human decision",
+    ["stage", "risk"],
+)
+failure_notifications = Gauge(
+    "agent_failure_notifications",
+    "Failure intelligence notifications by channel and state",
+    ["channel", "status"],
+)
 embedding_duration = Histogram(
     "agent_embedding_duration_seconds", "Ollama embedding latency", ["operation", "status"]
 )

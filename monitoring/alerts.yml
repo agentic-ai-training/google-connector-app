@@ -51,6 +51,21 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "A governed improvement notification failed"}
+      - alert: FailureReviewBacklog
+        expr: sum(agent_failure_review_queue) > 20
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "The granular failure review inbox is growing"}
+      - alert: PreExecutionFailureSpike
+        expr: sum(rate(agent_failure_incidents_total{stage=~"intake|classification|planning|validation|admission|api"}[15m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Requests are failing before durable execution"}
+      - alert: FailureNotificationFailed
+        expr: agent_failure_notifications{status="failed"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "A failure-intelligence notification was not delivered"}
       - alert: OllamaEmbeddingUnavailable
         expr: agent_ollama_model_loaded == 0
         for: 5m

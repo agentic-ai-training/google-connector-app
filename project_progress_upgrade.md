@@ -383,6 +383,52 @@ Guardrail: disconnect/restart tests prove the worker continues and writes are no
 
 Guardrail: a diagnosis-only proposal cannot create or activate a canary; an informational run completes at 100% with zero model/tool calls.
 
+## Sprint 27 — Guarded conversation routing and complete failure intelligence
+
+### Epic 27.1 — Bounded intent gateway
+
+- [x] Classify every accepted request as `workspace_action`, `workspace_guidance`, `product_information`, `scope_chat`, `ambiguous`, or `out_of_scope` before planning.
+- [x] Keep chat limited to this agent and Google Workspace: greetings, clarification, product identity/capabilities, and service guidance answer locally; unrelated general chat is redirected without Google tools, user-content RAG, or global-chat claims.
+- [x] Derive capability/guidance text from the trusted tool registry and human-approved OKF capability sources rather than an unbounded conversational prompt.
+- [x] Record the intent, confidence basis, detected services, ambiguity, and chosen flow in the durable run and plan events.
+
+### Epic 27.2 — Context-sensitive multi-service planning
+
+- [x] Treat people/senders who emailed the user as Gmail extraction, not an unconditional Contacts request.
+- [x] Treat a newly created Sheet URL as its Drive link; do not schedule a redundant Drive lookup.
+- [x] Fuse Calendar scheduling with Meet conferencing into one Calendar event when requested; retain standalone Meet-space creation only for explicit instant-space requests.
+- [x] Build a data-dependency DAG: reads -> artifact creation/verification -> independent deliveries, with safe concurrency and action-bound approval.
+- [x] Ask for Chat space, duration, timezone, uniqueness, or other materially missing inputs before external writes.
+
+### Epic 27.3 — Failure capture at every stage
+
+- [x] Persist pre-execution/admission failures as intake incidents and terminal execution/verification failures as run-linked incidents; backfill any terminal run missed during transient telemetry failure.
+- [x] Convert invalid plans into durable structured failures instead of uncaught HTTP 500 responses.
+- [x] Redact request excerpts and evidence; store bounded request-shape metadata, failure component/stage, normalized fingerprint, root cause, contributing factors, completion, versions, and evidence links.
+- [x] Make incident recording best-effort and non-recursive so telemetry failure cannot conceal or replace the original failure.
+
+### Epic 27.4 — Per-failure analysis and governed aggregation
+
+- [x] Analyze every failure occurrence and place it in the protected portal with exactly two plain-language improvement options, a recommended option with rationale, risk, acceptance tests, and automation eligibility.
+- [x] Cluster related incidents by stage/component/service/operation/error template rather than the broad error category alone; preserve every occurrence while avoiding duplicate proposal spam.
+- [x] Allow an administrator to choose option A or B, acknowledge, or ignore an incident. Choosing an option creates or updates a diagnosis proposal; it does not create a fake implementation candidate.
+- [x] Permit rejected/expired clusters to receive later evidence through a new timestamped revision instead of silently dropping same-day failures.
+- [x] Support `manual` and future `auto_draft` analysis modes behind an audited feature flag with an exact confirmation phrase. Human approval remains mandatory for candidates, canaries, trusted OKF, and publication.
+
+### Epic 27.5 — Portal, Grafana, DBeaver, and notifications
+
+- [x] Add a failure inbox with request stage, breaking point, sanitized explanation, occurrence count, two options, recommendation, and review actions.
+- [x] Emit immediate internal admin/Grafana notification ledger entries for every incident; external email/GitHub remain separately configured and explicitly confirmed.
+- [x] Add bounded-cardinality metrics, alerts, Grafana panels, and read-only Neon/DBeaver reporting views for failure stages, fingerprints, unreviewed incidents, pre-run failures, and notification delivery.
+
+### Epic 27.6 — Regression and rollout safety
+
+- [x] Add the reported Gmail -> Sheet -> Chat + Calendar/Meet request, bare `what?`, Workspace guidance, out-of-scope chat, unknown operations, granular fingerprints, and pre-run persistence to unit/integration/golden/replay suites.
+- [x] Verify no Google side effects occur during classification, guidance, failed planning, analysis, or proposal drafting.
+- [~] Preserve rollback through the existing deployment path; local migration round-trip, Docker, API/worker, Prometheus, Grafana, PostgreSQL, and frontend gates pass. GitHub CI and Railway/Vercel/Neon/Grafana Cloud production rollout follow the draft PR.
+
+Guardrail: every accepted request has a durable outcome or a separately durable intake incident; every failure occurrence is reviewable, but no diagnosis can approve or deploy itself.
+
 ## 5. Required implementation reports
 
 At meaningful checkpoints report:

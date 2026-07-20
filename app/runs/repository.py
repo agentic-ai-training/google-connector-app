@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from app.config.settings import get_settings
 from app.runs.planner import action_hash, build_plan, validate_plan
 from app.mlops.metrics import approval_requests, run_transitions
+from app.improvements.failure_intelligence import record_failure_incident
 
 
 class RunLimitExceeded(RuntimeError):
@@ -37,7 +38,60 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None):
     plan, policy = build_plan(message)
     plan_errors = validate_plan(plan)
     if plan_errors:
-        raise ValueError("Invalid execution plan: " + "; ".join(plan_errors))
+        error = "Invalid execution plan: " + "; ".join(plan_errors)
+        key = idempotency_key or str(uuid.uuid4())
+        retention = datetime.now(timezone.utc) + timedelta(
+            days=settings.workflow_retention_days
+        )
+        async with pool.acquire() as conn, conn.transaction():
+            existing = await conn.fetchrow(
+                "SELECT * FROM agent_runs WHERE user_id=$1 AND idempotency_key=$2",
+                user_id, key,
+            )
+            if existing:
+                return dict(existing), False
+            run = await conn.fetchrow(
+                """INSERT INTO agent_runs
+                   (session_id,user_id,request,objective,status,current_phase,plan,
+                    risk_level,requires_approval,approval_bypassed,idempotency_key,
+                    chunker_version,okf_version,deployment_version,retention_until,
+                    clarification_questions,intent_kind,intent_evidence,
+                    planning_diagnostics,error_category,error_message,failed_at,
+                    technical_completion,functional_completion,user_visible_completion,
+                    side_effect_integrity)
+                   VALUES($1,$2,$3,$3,'failed','validation',$4::jsonb,$5,FALSE,$6,$7,
+                          $8,$9,$10,$11,$12::jsonb,$13,$14::jsonb,$15::jsonb,
+                          'planning',$16,now(),0,0,0,100) RETURNING *""",
+                session_id, user_id, message, _json(plan.model_dump()),
+                policy["risk_level"], policy["approval_bypassed"], key,
+                "source-aware-v1", "v0.1", settings.deployment_version, retention,
+                _json(policy["required_clarifications"]), policy["intent_kind"],
+                _json(policy["intent_evidence"]), _json({"validation_errors": plan_errors}),
+                error,
+            )
+            await conn.execute(
+                """INSERT INTO agent_run_events
+                   (run_id,user_id,event_type,phase,message,payload)
+                   VALUES($1,$2,'planning_failed','validation',$3,$4::jsonb)""",
+                run["id"], user_id, error, _json({"validation_errors": plan_errors}),
+            )
+        incident = await record_failure_incident(
+            pool, occurrence_key=f"run:{run['id']}:planning", run_id=run["id"],
+            session_id=session_id, user_id=user_id, message=message,
+            intent_kind=policy["intent_kind"], stage="validation", category="planning",
+            component="typed_planner", error=error, breaking_point="Plan validation",
+            completion={"technical": 0, "functional": 0, "user_visible": 0,
+                        "side_effect_integrity": 100},
+            evidence={"validation_errors": plan_errors}, policy=policy,
+        )
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE agent_runs SET failure_fingerprint=$1 WHERE id=$2",
+                incident["failure_fingerprint"], run["id"],
+            )
+        result = dict(run)
+        result["failure_incident_id"] = incident["id"]
+        return result, True
     key = idempotency_key or str(uuid.uuid4())
     status = (
         "awaiting_clarification" if policy["required_clarifications"]
@@ -90,14 +144,15 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None):
                    (session_id,user_id,request,objective,status,current_phase,plan,
                     risk_level,requires_approval,approval_bypassed,idempotency_key,
                     chunker_version,okf_version,deployment_version,retention_until,
-                    clarification_questions)
-                   VALUES($1,$2,$3,$3,$4,'planned',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
+                    clarification_questions,intent_kind,intent_evidence)
+                   VALUES($1,$2,$3,$3,$4,'planned',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16::jsonb)
                    RETURNING *""",
                 session_id, user_id, message, status, _json(plan.model_dump()),
                 policy["risk_level"], policy["requires_approval"],
                 policy["approval_bypassed"], key, "source-aware-v1", "v0.1",
                 settings.deployment_version, retention,
-                _json(policy["required_clarifications"]),
+                _json(policy["required_clarifications"]), policy["intent_kind"],
+                _json(policy["intent_evidence"]),
             )
             run_id = run["id"]
             for sequence_no, step in enumerate(plan.steps, 1):

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -31,6 +32,8 @@ from app.runs.schemas import (
     RunDecision,
     RunResume,
 )
+from app.improvements.failure_intelligence import record_failure_incident
+from app.runs.planner import classify_request
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 sessions_router = APIRouter(prefix="/sessions", tags=["runs"])
@@ -92,7 +95,53 @@ async def start_run(body: RunCreate, request: Request):
             body.session_id, body.idempotency_key,
         )
     except RunLimitExceeded as exc:
-        raise HTTPException(429, str(exc)) from exc
+        try:
+            policy = classify_request(body.message)
+            incident = await record_failure_incident(
+                pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:admission",
+                session_id=body.session_id, user_id=request.state.user_id,
+                message=body.message, intent_kind=policy["intent_kind"],
+                stage="admission", category="rate_limit", component="run_admission",
+                error=str(exc), breaking_point="Run admission policy", policy=policy,
+            )
+        except Exception:
+            incident = None
+        detail = {"message": str(exc), "stage": "admission",
+                  "incident_id": str(incident["id"]) if incident else None}
+        raise HTTPException(429, detail) from exc
+    except (ValueError, KeyError, TypeError) as exc:
+        try:
+            policy = classify_request(body.message)
+            incident = await record_failure_incident(
+                pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:planning",
+                session_id=body.session_id, user_id=request.state.user_id,
+                message=body.message, intent_kind=policy["intent_kind"],
+                stage="planning", category="planning", component="request_planner",
+                error=str(exc), breaking_point="Request planning", policy=policy,
+            )
+        except Exception:
+            incident = None
+        raise HTTPException(422, {
+            "message": "The request could not be converted into a safe Workspace plan.",
+            "stage": "planning", "reason": str(exc),
+            "incident_id": str(incident["id"]) if incident else None,
+        }) from exc
+    except Exception as exc:
+        try:
+            policy = classify_request(body.message)
+            incident = await record_failure_incident(
+                pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:api",
+                session_id=body.session_id, user_id=request.state.user_id,
+                message=body.message, intent_kind=policy["intent_kind"], stage="api",
+                category="persistence", component="runs_api", error=str(exc),
+                breaking_point="Creating the durable run", policy=policy,
+            )
+        except Exception:
+            incident = None
+        raise HTTPException(500, {
+            "message": "The request could not be durably accepted.", "stage": "api",
+            "incident_id": str(incident["id"]) if incident else None,
+        }) from exc
     return {
         "run_id": str(run["id"]), "status": run["status"],
         "created": created, "requires_approval": run["requires_approval"],

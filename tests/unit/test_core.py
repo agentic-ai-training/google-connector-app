@@ -22,7 +22,7 @@ from app.db.oauth_credentials import missing_google_scopes
 import jwt
 from app.config.settings import get_settings
 from app.config.feature_flags import cohort_selected
-from app.runs.planner import build_plan, classify_request
+from app.runs.planner import build_plan, classify_request, validate_plan
 from app.okf.loader import load_bundle
 from app.okf.generator import build_catalog_draft
 from pathlib import Path
@@ -46,6 +46,9 @@ from app.improvements.analyzer import assess_canary
 from app.improvements.publisher import proposal_markdown
 from app.improvements.candidates import (
     candidate_digest, validate_candidate_files,
+)
+from app.improvements.failure_intelligence import (
+    analyze_failure, failure_fingerprint, sanitize_request_excerpt,
 )
 from app.api.middleware.metrics import _correlation_id, _route_template
 from app.mlops.tracing import _headers as otlp_headers, _logs_endpoint, _trace_endpoint
@@ -602,12 +605,73 @@ def test_multi_service_plan_is_dependency_ordered():
     ]
     assert plan.steps[0].dependencies == []
     assert plan.steps[1].dependencies == [plan.steps[0].id]
-    assert plan.steps[-1].dependencies == [plan.steps[-2].id]
+    # Chat and Calendar are independent after the verified Sheet URL exists.
+    assert plan.steps[-2].dependencies == [plan.steps[1].id]
+    assert plan.steps[-1].dependencies == [plan.steps[1].id]
+
+
+def test_guarded_workspace_conversation_routes_without_tools():
+    cases = {
+        "what?": ("scope_chat", "answer_workspace_chat"),
+        "Tell me a joke": ("out_of_scope", "answer_workspace_chat"),
+        "How do I share a Drive file?": ("workspace_guidance", "answer_workspace_chat"),
+        "what can you do and what is your name?": ("product_information", "answer_information"),
+    }
+    for message, expected in cases.items():
+        plan, policy = build_plan(message)
+        assert (policy["intent_kind"], plan.steps[0].operation) == expected
+        assert plan.rag_mode == "none"
+        assert plan.steps[0].arguments["allowed_tools"] == []
+        assert validate_plan(plan) == []
+
+
+def test_people_sheet_chat_calendar_meet_request_uses_contextual_dag():
+    plan, policy = build_plan(
+        "can you create a sheet of the names of last 20 people who did mails to me "
+        "and then create a drive link for that sheet and google chat that drive link "
+        "and a meet invite with a calender schedule of tomorrow 10 AM to person@example.com"
+    )
+    assert plan.services == ["gmail", "sheets", "chat", "calendar"]
+    steps = {step.service: step for step in plan.steps}
+    assert steps["gmail"].operation == "search"
+    assert steps["sheets"].dependencies == [steps["gmail"].id]
+    assert steps["chat"].dependencies == [steps["sheets"].id]
+    assert steps["calendar"].dependencies == [steps["sheets"].id]
+    assert steps["calendar"].arguments["workflow_hints"]["add_meet_conference"] is True
+    assert steps["sheets"].arguments["workflow_hints"]["sheet_url_is_drive_link"] is True
+    assert "contacts" not in plan.services and "drive" not in plan.services and "meet" not in plan.services
+    assert policy["required_clarifications"] == [
+        "How long should the event last?", "Which timezone should be used?",
+        "Which Google Chat space should receive the message?",
+    ]
+    assert validate_plan(plan) == []
     assert [step.operation for step in plan.steps] == [
         "search", "create_and_write", "send", "create",
     ]
     assert plan.steps[0].read_only is True
     assert plan.steps[1].read_only is False
+
+
+def test_failure_analysis_is_private_granular_and_has_exactly_two_options():
+    analysis = analyze_failure(
+        stage="validation", category="planning", component="typed_planner",
+        service="contacts", operation="execute_and_verify",
+        error="Invalid execution plan: execute_contacts uses unknown operation execute_and_verify",
+        breaking_point="Plan validation",
+    )
+    assert len(analysis["improvement_options"]) == 2
+    assert {item["id"] for item in analysis["improvement_options"]} == {"A", "B"}
+    assert analysis["recommended_option"] == "A"
+    first, cluster = failure_fingerprint(
+        "validation", "planning", "typed_planner", "Bad id abcdefghijklmnopqrstuvwxyz123"
+    )
+    second, _ = failure_fingerprint(
+        "execution", "planning", "typed_planner", "Bad id abcdefghijklmnopqrstuvwxyz123"
+    )
+    assert first != second and cluster == first[:24]
+    assert "person@example.com" not in sanitize_request_excerpt(
+        "Send mail to person@example.com using https://secret.example/path"
+    )
 
 
 def test_meet_space_routes_only_to_meet_create():

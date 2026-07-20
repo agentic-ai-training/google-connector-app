@@ -16,7 +16,9 @@
     {"type":"timeseries","title":"OAuth outcomes","gridPos":{"h":8,"w":8,"x":0,"y":32},"targets":[{"expr":"sum by (outcome) (rate(agent_oauth_outcomes_total[15m]))","legendFormat":"{{outcome}}"}]},
     {"type":"timeseries","title":"Rolling offline RAG quality","gridPos":{"h":8,"w":8,"x":8,"y":32},"targets":[{"expr":"agent_rag_quality","legendFormat":"{{metric}}"}]},
     {"type":"timeseries","title":"Embedding admission rejections","gridPos":{"h":8,"w":8,"x":16,"y":32},"targets":[{"expr":"sum by (reason) (rate(agent_embedding_admission_rejections_total[15m]))","legendFormat":"{{reason}}"}]},
-    {"type":"stat","title":"Deployed build","gridPos":{"h":5,"w":24,"x":0,"y":40},"targets":[{"expr":"agent_build_info","legendFormat":"{{version}}"}]}
+    {"type":"timeseries","title":"Failures captured by stage and category","gridPos":{"h":8,"w":12,"x":0,"y":40},"targets":[{"expr":"sum by (stage,category) (rate(agent_failure_incidents_total[15m]))","legendFormat":"{{stage}} / {{category}}"}]},
+    {"type":"timeseries","title":"Failure review and delivery queues","gridPos":{"h":8,"w":12,"x":12,"y":40},"targets":[{"expr":"sum by (stage,risk) (agent_failure_review_queue)","legendFormat":"review {{stage}} / {{risk}}"},{"expr":"sum by (channel,status) (agent_failure_notifications)","legendFormat":"notify {{channel}} / {{status}}"}]},
+    {"type":"stat","title":"Deployed build","gridPos":{"h":5,"w":24,"x":0,"y":48},"targets":[{"expr":"agent_build_info","legendFormat":"{{version}}"}]}
   ],
   "refresh":"15s",
   "schemaVersion":41,
@@ -25,5 +27,5 @@
   "time":{"from":"now-6h","to":"now"},
   "title":"Google Connector Agent Performance",
   "uid":"google-connector-agent",
-  "version":3
+  "version":4
 }

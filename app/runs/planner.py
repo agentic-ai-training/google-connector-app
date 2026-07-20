@@ -5,11 +5,12 @@ import re
 from app.runs.schemas import ExecutionPlan, PlanStep
 from app.runs.informational import (
     capability_catalog,
-    classify_informational_intent,
+    classify_workspace_intent,
+    approved_okf_capability_sources,
 )
 
 SERVICES = {
-    "gmail": ("gmail", "email", "mail"),
+    "gmail": ("gmail", "email", "emails", "mail", "mails"),
     "calendar": ("calendar", "event", "schedule", "invite", "meeting"),
     "drive": ("drive", "file", "files", "folder", "folders", "share"),
     "docs": ("doc", "docs", "document", "documents"),
@@ -159,7 +160,6 @@ def _matches(patterns: tuple[str, ...], text: str) -> bool:
 
 def classify_request(message: str) -> dict:
     text = " ".join(message.lower().split())
-    informational_intent = classify_informational_intent(message)
     services = [
         service for service, terms in SERVICES.items()
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
@@ -168,6 +168,25 @@ def classify_request(message: str) -> dict:
     # step when the user explicitly asks for a Meet space without mentioning Chat.
     if "meet" in services and "chat" in services and not re.search(r"\bchat\b", text):
         services.remove("chat")
+    if "contacts" in services and "gmail" in services and re.search(
+        r"\b(?:people|persons?|senders?)\b.{0,50}\b(?:mail|email)", text
+    ):
+        services.remove("contacts")
+    sheet_url_is_drive_link = bool(
+        "sheets" in services and "drive" in services
+        and (re.search(r"\b(?:drive )?link\b.{0,40}\b(?:sheet|spreadsheet)\b", text)
+             or re.search(r"\b(?:sheet|spreadsheet)\b.{0,40}\b(?:drive )?link\b", text)
+             or re.search(r"\b(?:its|that|the) (?:verified )?drive link\b", text))
+    )
+    if sheet_url_is_drive_link:
+        services.remove("drive")
+    calendar_adds_meet = bool(
+        "calendar" in services and "meet" in services
+        and re.search(r"\b(schedule|calendar|event|invite|tomorrow|today)\b", text)
+    )
+    if calendar_adds_meet:
+        services.remove("meet")
+    intent_kind, intent_evidence = classify_workspace_intent(message, services)
     write = _matches(WRITE_PATTERNS, text)
     high_risk = _matches(HIGH_RISK_PATTERNS, text)
     approval_bypassed = any(phrase in text for phrase in APPROVAL_OPT_OUT)
@@ -184,7 +203,7 @@ def classify_request(message: str) -> dict:
             clarifications.append("Which timezone should be used?")
     if "chat" in services and write and "space" not in text:
         clarifications.append("Which Google Chat space should receive the message?")
-    if informational_intent:
+    if intent_kind != "workspace_action":
         services = ["general"]
         write = False
         high_risk = False
@@ -198,23 +217,30 @@ def classify_request(message: str) -> dict:
         "approval_bypassed": approval_bypassed,
         "rag_mode": rag_mode,
         "required_clarifications": clarifications,
-        "informational_intent": informational_intent,
+        "intent_kind": intent_kind,
+        "intent_evidence": intent_evidence,
+        "informational_intent": intent_evidence.get("product_intent"),
+        "sheet_url_is_drive_link": sheet_url_is_drive_link,
+        "calendar_adds_meet": calendar_adds_meet,
     }
 
 
 def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
     policy = classify_request(message)
-    if policy["informational_intent"]:
-        intent = policy["informational_intent"]
+    if policy["intent_kind"] != "workspace_action":
+        intent = policy["informational_intent"] or policy["intent_kind"]
         step = PlanStep(
-            id="answer_product_information",
-            title="Answer from the trusted product capability registry",
+            id="answer_workspace_conversation",
+            title="Answer within the guarded Workspace conversation scope",
             service="general",
-            operation="answer_information",
+            operation=("answer_information" if policy["intent_kind"] == "product_information"
+                       else "answer_workspace_chat"),
             arguments={
                 "request": message,
                 "informational_intent": intent,
+                "intent_kind": policy["intent_kind"],
                 "capability_catalog": capability_catalog(OPERATION_TOOLS),
+                "okf_sources": approved_okf_capability_sources(),
                 "allowed_tools": [],
             },
             read_only=True,
@@ -229,6 +255,7 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
         )
         return ExecutionPlan(
             objective=message,
+            intent_kind=policy["intent_kind"],
             services=["general"],
             rag_mode="none",
             steps=[step],
@@ -238,7 +265,7 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
     services = policy["services"] or ["general"]
     ordered = sorted(services, key=lambda item: SERVICE_ORDER.get(item, 100))
     steps = []
-    previous = None
+    produced_data = []
     for service in ordered:
         step_id = f"execute_{service}"
         operation = infer_operation(service, message, policy["write"])
@@ -246,32 +273,46 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
         postconditions = SERVICE_POSTCONDITIONS.get(service, [
             "The response contains deterministic evidence for every claimed result"
         ])
+        dependencies = []
+        if service == "sheets":
+            dependencies = list(produced_data)
+        elif service in {"chat", "calendar"} and "execute_sheets" in produced_data:
+            dependencies = ["execute_sheets"]
+        elif policy["write"] and service != "gmail" and produced_data:
+            dependencies = [produced_data[-1]]
         steps.append(PlanStep(
             id=step_id,
             title=f"Execute and verify the {service} portion",
             service=service,
             operation=operation,
-            dependencies=([previous] if previous and policy["write"] else []),
+            dependencies=dependencies,
             arguments={"request": message, "service": service,
-                       "allowed_tools": OPERATION_TOOLS.get((service, operation), [])},
+                       "allowed_tools": OPERATION_TOOLS.get((service, operation), []),
+                       "workflow_hints": {
+                           "extract_unique_sender_names": service == "gmail" and "people" in message.lower(),
+                           "sheet_url_is_drive_link": policy["sheet_url_is_drive_link"],
+                           "add_meet_conference": service == "calendar" and policy["calendar_adds_meet"],
+                       }},
             read_only=read_only,
             risk_level=policy["risk_level"],
             requires_approval=policy["requires_approval"],
             weight=1.0,
             preconditions=["Google authorization is valid"] + (
-                [f"Dependency {previous} completed and its output is available"]
-                if previous else []
+                [f"Dependency {item} completed and its output is available"
+                 for item in dependencies]
             ),
             postconditions=postconditions,
         ))
-        previous = step_id
+        if read_only or service in {"drive", "docs", "sheets"}:
+            produced_data.append(step_id)
     success_criteria = [
         criterion for step in steps for criterion in step.postconditions
     ] + ["Partial results and the first failed step are reported accurately"]
     plan = ExecutionPlan(
         objective=message,
+        intent_kind=policy["intent_kind"],
         required_clarifications=policy["required_clarifications"],
-        services=services,
+        services=ordered,
         rag_mode=policy["rag_mode"],
         steps=steps,
         success_criteria=success_criteria,

@@ -4,6 +4,8 @@ import json
 from contextlib import suppress
 from datetime import date
 
+from app.improvements.failure_intelligence import record_failure_incident
+
 
 FAILURE_RECOMMENDATIONS = {
     "rate_limit": "Add quota-aware deferral and reserve the quality model for complex execution.",
@@ -65,6 +67,42 @@ def _proposal_diff(category: str, recommendation: str) -> str:
 
 
 async def analyze_recent_failures(pool) -> int:
+    """Backfill any missed terminal run once; live failures are recorded immediately."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT r.* FROM agent_runs r
+               WHERE r.status IN ('failed','partial')
+                 AND r.completed_at >= now()-interval '7 days'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM failure_incidents i WHERE i.run_id=r.id)
+               ORDER BY r.completed_at LIMIT 200"""
+        )
+    created = 0
+    for row in rows:
+        run = dict(row)
+        incident = run.get("incident_summary") or {}
+        try:
+            await record_failure_incident(
+                pool, occurrence_key=f"run:{run['id']}:backfill", run_id=run["id"],
+                session_id=run["session_id"], user_id=run["user_id"],
+                message=run["request"], intent_kind=run.get("intent_kind") or "workspace_action",
+                stage="execution", category=run.get("error_category") or "execution",
+                component="durable_worker", error=run.get("error_message") or "unknown failure",
+                breaking_point=incident.get("breaking_point"),
+                completion={"technical": run.get("technical_completion", 0),
+                            "functional": run.get("functional_completion", 0),
+                            "user_visible": run.get("user_visible_completion", 0),
+                            "side_effect_integrity": run.get("side_effect_integrity", 100)},
+                evidence={"source": "terminal_run_backfill"}, policy=run.get("plan") or {},
+            )
+            created += 1
+        except Exception:
+            # The next analysis pass retries; one malformed historical row cannot block others.
+            continue
+    return created
+
+
+async def analyze_recent_failure_categories_legacy(pool) -> int:
     """Draft sanitized proposals; never change trusted runtime policy or OKF."""
     async with pool.acquire() as conn:
         groups = await conn.fetch(

@@ -96,10 +96,25 @@
       "type":"table","title":"Improvement notification delivery","gridPos":{"h":10,"w":12,"x":12,"y":90},
       "datasource":{"type":"postgres","uid":"postgres-reporting"},
       "targets":[{"format":"table","rawSql":"SELECT proposal_key,proposal_status,channel,event_type,status,external_reference,error_message,created_at,sent_at FROM reporting.improvement_notifications ORDER BY created_at DESC LIMIT 200","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Granular failure intelligence inbox","gridPos":{"h":12,"w":16,"x":0,"y":100},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT incident_id,run_id,session_id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,intent_kind,stage,category,component,service,operation,title,breaking_point,recommended_option,risk_level,analysis_status,created_at FROM reporting.failure_intelligence WHERE created_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY created_at DESC LIMIT 250","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Failure clusters and review backlog","gridPos":{"h":12,"w":8,"x":16,"y":100},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT cluster_key,stage,category,component,service,operation,occurrences,awaiting_review,first_seen,last_seen FROM reporting.failure_cluster_summary ORDER BY last_seen DESC LIMIT 100","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Failure notification delivery","gridPos":{"h":10,"w":24,"x":0,"y":112},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT incident_id,cluster_key,title,analysis_status,channel,event_type,status,external_reference,error_message,created_at,sent_at FROM reporting.failure_notifications ORDER BY created_at DESC LIMIT 250","refId":"A"}]
     }
   ],
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":3
+  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":4
 }

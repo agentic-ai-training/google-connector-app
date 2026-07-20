@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import socket
 import time
 from contextlib import suppress
@@ -9,10 +10,13 @@ from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
 from app.runs.repository import append_event
-from app.runs.informational import informational_answer
+from app.runs.informational import informational_answer, workspace_chat_answer
+from app.improvements.failure_intelligence import record_failure_incident
 from app.runs.verifier import verify_executions
 from app.mlops.metrics import run_duration, run_failures, run_transitions
 from app.evaluation.collector import record_run_evaluation
+
+logger = logging.getLogger(__name__)
 
 
 def classify_error(exc: Exception) -> str:
@@ -171,12 +175,18 @@ async def _execute_step(app, pool, run, step, dependencies):
                        phase="execution", message=step["title"])
     step_started = time.perf_counter()
     input_data = step.get("input_data") or {}
-    if step.get("operation") == "answer_information":
-        output = informational_answer(
-            run["request"],
-            input_data["informational_intent"],
-            input_data["capability_catalog"],
-        )
+    if step.get("operation") in {"answer_information", "answer_workspace_chat"}:
+        if step.get("operation") == "answer_information":
+            output = informational_answer(
+                run["request"], input_data["informational_intent"],
+                input_data["capability_catalog"],
+            )
+        else:
+            output = workspace_chat_answer(
+                run["request"], input_data["intent_kind"],
+                input_data["capability_catalog"],
+                input_data.get("okf_sources", []),
+            )
         elapsed_ms = int((time.perf_counter() - step_started) * 1000)
         evidence = "Trusted product-information postconditions passed"
         async with pool.acquire() as conn:
@@ -264,7 +274,7 @@ async def execute_run(app, pool, run):
     try:
         plan_steps = (run.get("plan") or {}).get("steps", [])
         informational_only = bool(plan_steps) and all(
-            step.get("operation") == "answer_information"
+            step.get("operation") in {"answer_information", "answer_workspace_chat"}
             for step in plan_steps
         )
         if not informational_only:
@@ -415,6 +425,30 @@ async def execute_run(app, pool, run):
             pool, run_id, user_id, f"run_{terminal_status}", phase=terminal_status,
             message=str(exc), payload={"category": category},
         )
+        failed_step = next((step for step in steps if step["status"] == "failed"), None)
+        try:
+            failure_record = await record_failure_incident(
+                pool, occurrence_key=f"run:{run_id}:terminal", run_id=run_id,
+                session_id=run["session_id"], user_id=user_id,
+                message=run["request"], intent_kind=run.get("intent_kind") or "workspace_action",
+                stage=("verification" if category == "verification" else "execution"),
+                category=category, component="durable_worker", error=str(exc),
+                service=failed_step["service"] if failed_step else None,
+                operation=failed_step["operation"] if failed_step else None,
+                breaking_point=(failed_step["title"] if failed_step else incident.get("breaking_point")),
+                completion=completion,
+                evidence={"run_event": f"run_{terminal_status}",
+                          "step_key": failed_step["step_key"] if failed_step else None},
+                policy=run.get("plan") or {},
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE agent_runs SET failure_fingerprint=$1 WHERE id=$2",
+                    failure_record["failure_fingerprint"], run_id,
+                )
+        except Exception:
+            # Failure intelligence is best effort and must never replace the run outcome.
+            logger.exception("Unable to persist failure intelligence for run %s", run_id)
         await record_run_evaluation(pool, run_id)
         run_transitions.labels(terminal_status).inc()
         run_failures.labels(category).inc()

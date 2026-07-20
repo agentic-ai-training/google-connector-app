@@ -21,6 +21,7 @@ from app.improvements.publisher import publish_github_draft, send_proposal_email
 from app.improvements.candidates import (
     candidate_digest, file_digest, validate_candidate_files,
 )
+from app.improvements.failure_intelligence import create_or_update_proposal
 router=APIRouter(prefix="/admin")
 class ExperimentIn(BaseModel):
     name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
@@ -37,6 +38,10 @@ class PromptIn(BaseModel):
 class FeatureFlagIn(BaseModel):
     enabled: bool
     config: dict = Field(default_factory=dict)
+    confirmation: str | None = None
+class FailureIncidentDecisionIn(BaseModel):
+    decision: str
+    note: str | None = Field(default=None, max_length=4000)
 
 
 @router.get("/runs")
@@ -96,6 +101,13 @@ async def feature_flags():
 async def update_feature_flag(name: str, body: FeatureFlagIn, request: Request):
     if name == "live_rl" and body.enabled:
         raise HTTPException(409, "Live RL is safety-locked; only offline evaluation is allowed")
+    if name == "failure_improvement_automation":
+        mode = body.config.get("mode", "manual")
+        if mode not in {"manual", "auto_draft"}:
+            raise HTTPException(422, "Only manual or auto_draft analysis is supported")
+        if body.enabled and mode == "auto_draft" and body.confirmation != "ENABLE FAILURE AUTO DRAFT":
+            raise HTTPException(409, "Exact auto-draft confirmation is required")
+        body.config["human_approval_required"] = True
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -107,6 +119,63 @@ async def update_feature_flag(name: str, body: FeatureFlagIn, request: Request):
             name, body.enabled, json.dumps(body.config), request.state.user_id,
         )
     return dict(row)
+
+
+@router.get("/failure-incidents")
+async def failure_incidents(status: str | None = "awaiting_review", limit: int = 100):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT i.*,
+                      (SELECT count(*) FROM failure_incidents c
+                       WHERE c.cluster_key=i.cluster_key) AS cluster_occurrences
+               FROM failure_incidents i
+               WHERE ($1::text IS NULL OR i.analysis_status=$1)
+               ORDER BY CASE i.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                        i.created_at DESC LIMIT $2""",
+            status, max(1, min(limit, 200)),
+        )
+        notifications = await conn.fetch(
+            """SELECT n.*,i.cluster_key,i.title FROM failure_incident_notifications n
+               JOIN failure_incidents i ON i.id=n.incident_id
+               ORDER BY n.created_at DESC LIMIT $1""",
+            max(1, min(limit * 4, 400)),
+        )
+    return {"incidents": [dict(row) for row in rows],
+            "notifications": [dict(row) for row in notifications]}
+
+
+@router.post("/failure-incidents/{incident_id}/decision")
+async def decide_failure_incident(
+    incident_id: str, body: FailureIncidentDecisionIn, request: Request,
+):
+    if body.decision not in {"choose_A", "choose_B", "acknowledged", "ignored"}:
+        raise HTTPException(422, "Choose option A/B, acknowledge, or ignore")
+    pool = await get_pool()
+    selected = body.decision[-1] if body.decision.startswith("choose_") else None
+    async with pool.acquire() as conn, conn.transaction():
+        incident = await conn.fetchrow(
+            "SELECT * FROM failure_incidents WHERE id=$1 FOR UPDATE", incident_id,
+        )
+        if not incident:
+            raise HTTPException(404, "Failure incident not found")
+        await conn.execute(
+            """INSERT INTO failure_incident_reviews
+               (incident_id,decision,selected_option,decided_by,decision_note)
+               VALUES($1,$2,$3,$4,$5)""",
+            incident_id, body.decision, selected, request.state.user_id, body.note,
+        )
+        if selected is None:
+            await conn.execute(
+                "UPDATE failure_incidents SET analysis_status=$1,updated_at=now() WHERE id=$2",
+                "acknowledged" if body.decision == "acknowledged" else "ignored", incident_id,
+            )
+    proposal = None
+    if selected:
+        proposal = await create_or_update_proposal(
+            pool, incident_id, selected, request.state.user_id,
+        )
+    return {"incident_id": incident_id, "decision": body.decision, "proposal": proposal}
 
 
 @router.get("/improvements")

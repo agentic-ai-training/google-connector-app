@@ -22,5 +22,9 @@
   {"id":"quota-capability","request":"What can you do with Gmail and Meet?","services":["general"],"operations":["answer_information"],"approval":false,"rag":"none"},
   {"id":"product-identity","request":"What is your name?","services":["general"],"operations":["answer_information"],"approval":false,"rag":"none"},
   {"id":"product-identity-capabilities","request":"What is your name and what can you do?","services":["general"],"operations":["answer_information"],"approval":false,"rag":"none"},
-  {"id":"precise-id","request":"Get Drive file ID abc123","services":["drive"],"operations":["get"],"approval":false,"rag":"none"}
+  {"id":"precise-id","request":"Get Drive file ID abc123","services":["drive"],"operations":["get"],"approval":false,"rag":"none"},
+  {"id":"bare-what","request":"what?","services":["general"],"operations":["answer_workspace_chat"],"approval":false,"rag":"none"},
+  {"id":"workspace-guidance","request":"How do I share a Drive file?","services":["general"],"operations":["answer_workspace_chat"],"approval":false,"rag":"none"},
+  {"id":"out-of-scope-chat","request":"Tell me a joke","services":["general"],"operations":["answer_workspace_chat"],"approval":false,"rag":"none"},
+  {"id":"sender-sheet-chat-calendar-meet","request":"Create a sheet of the names of last 20 people who did mails to me, use the sheet Drive link in Google Chat, and create a Meet invite with a Calendar schedule tomorrow at 10 AM for 30 minutes IST in the Finance Chat space to user@example.com","services":["gmail","sheets","chat","calendar"],"operations":["search","create_and_write","send","create"],"approval":true,"rag":"none","clarifications":0}
 ]

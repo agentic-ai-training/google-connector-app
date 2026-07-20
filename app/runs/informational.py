@@ -7,6 +7,9 @@ registered operations, so it is not a single brittle canned answer.
 
 import re
 from collections.abc import Mapping
+from pathlib import Path
+
+from app.okf.loader import load_bundle
 
 
 PRODUCT_NAME = "Google Workspace Agent"
@@ -65,6 +68,24 @@ _CAPABILITY_PATTERNS = (
     r"\bwhat about (?:google )?(?:meet|gmail|drive|calendar|chat|docs|sheets|tasks|contacts)\b",
 )
 
+_SCOPE_CHAT_PATTERNS = (
+    r"^(?:hi|hello|hey|thanks|thank you|ok|okay)[.!? ]*$",
+    r"^(?:what|why|how|huh)[?!. ]*$",
+    r"^(?:can you help|help me)[?!. ]*$",
+)
+_GUIDANCE_PATTERNS = (
+    r"\bhow (?:do|can|should|would) (?:i|you)\b",
+    r"\bexplain (?:how|what)\b", r"\bguide me\b", r"\bwhat is\b",
+)
+_ACTION_PATTERN = (
+    r"\b(search|find|list|show|get|read|send|reply|create|make|build|write|append|"
+    r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check)\b"
+)
+_WORKSPACE_TERMS = tuple(SERVICE_LABELS) + (
+    "email", "mail", "spreadsheet", "document", "meeting", "event",
+    "google workspace", "workspace",
+)
+
 
 def classify_informational_intent(message: str) -> str | None:
     """Return identity/capabilities/combined for product-information questions."""
@@ -80,6 +101,30 @@ def classify_informational_intent(message: str) -> str | None:
     return None
 
 
+def classify_workspace_intent(message: str, detected_services: list[str]) -> tuple[str, dict]:
+    """Route bounded Workspace conversation without offering global chat."""
+    text = " ".join(message.casefold().split())
+    product = classify_informational_intent(message)
+    evidence = {"product_intent": product, "services": detected_services}
+    def routed(kind: str, basis: str, confidence: str = "high") -> tuple[str, dict]:
+        return kind, {**evidence, "basis": basis, "confidence": confidence,
+                      "ambiguous": kind == "ambiguous"}
+    if product:
+        return routed("product_information", "trusted product-information pattern")
+    if any(re.search(pattern, text) for pattern in _SCOPE_CHAT_PATTERNS):
+        return routed("scope_chat", "bounded conversational pattern")
+    workspace_context = bool(detected_services) or any(term in text for term in _WORKSPACE_TERMS)
+    action = bool(re.search(_ACTION_PATTERN, text))
+    guidance = any(re.search(pattern, text) for pattern in _GUIDANCE_PATTERNS)
+    if workspace_context and guidance:
+        return routed("workspace_guidance", "Workspace entity plus guidance wording")
+    if workspace_context and action:
+        return routed("workspace_action", "Workspace entity plus actionable operation")
+    if workspace_context:
+        return routed("ambiguous", "Workspace entity without a supported action", "medium")
+    return routed("out_of_scope", "no Workspace entity or product intent")
+
+
 def capability_catalog(operation_tools: Mapping[tuple[str, str], list[str]]) -> dict[str, list[str]]:
     """Derive user-visible operations from the same registry used by the planner."""
     catalog: dict[str, list[str]] = {}
@@ -88,6 +133,16 @@ def capability_catalog(operation_tools: Mapping[tuple[str, str], list[str]]) -> 
             continue
         catalog.setdefault(service, []).append(OPERATION_LABELS.get(operation, operation))
     return {service: sorted(set(operations)) for service, operations in catalog.items()}
+
+
+def approved_okf_capability_sources() -> list[str]:
+    """Return only human-approved capability concepts; drafts cannot guide responses."""
+    root = Path(__file__).resolve().parents[2] / "knowledge"
+    documents, errors = load_bundle(root, enforce_governance=True)
+    if errors:
+        return []
+    return [item["id"] for item in documents
+            if item["trusted"] and item["concept_type"] == "capability"]
 
 
 def informational_answer(
@@ -120,3 +175,35 @@ def informational_answer(
             "before high-risk external writes unless you explicitly waive it."
         )
     return " ".join(parts)
+
+
+def workspace_chat_answer(
+    message: str, intent: str, catalog: Mapping[str, list[str]],
+    okf_sources: list[str] | None = None,
+) -> str:
+    """Answer locally from trusted metadata; never invoke Google, RAG, or an LLM."""
+    text = " ".join(message.casefold().split())
+    if intent == "scope_chat":
+        if re.fullmatch(r"(?:what|why|how|huh)[?!. ]*", text):
+            return ("I may be missing the Workspace action you mean. Tell me the Google "
+                    "service and outcome—for example, ‘search Gmail’ or ‘create a Calendar event’.")
+        return ("Hello. I’m the Google Workspace Agent. I can help with Workspace "
+                "operations and guidance; tell me the service and outcome you want.")
+    if intent == "workspace_guidance":
+        focused = [service for service in SERVICE_LABELS if service in text]
+        descriptions = [
+            f"{SERVICE_LABELS[s]} supports {', '.join(catalog.get(s, []))}"
+            for s in focused if catalog.get(s)
+        ]
+        prefix = (("For this agent, " + "; ".join(descriptions) + ". ")
+                  if descriptions else "I can explain supported Google Workspace operations. ")
+        return prefix + ("Ask with the resource, desired outcome, and any recipient, time, "
+                         "or destination. I will request missing details and confirmation "
+                         "for high-risk writes. Guidance is bounded by the registered tool "
+                         f"catalog and {len(okf_sources or [])} approved capability policies.")
+    if intent == "ambiguous":
+        return ("I recognized a Google Workspace topic but not a concrete supported action. "
+                "Please say which service, resource, and outcome you want.")
+    return ("I’m limited to Google Workspace operations and related guidance, not general "
+            "chat. I can help with Gmail, Drive, Docs, Sheets, Calendar/Meet, Chat, "
+            "Contacts, and Tasks.")

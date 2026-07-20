@@ -20,6 +20,10 @@ class PlanStep(BaseModel):
 
 class ExecutionPlan(BaseModel):
     objective: str
+    intent_kind: Literal[
+        "workspace_action", "workspace_guidance", "product_information",
+        "scope_chat", "ambiguous", "out_of_scope",
+    ] = "workspace_action"
     assumptions: list[str] = Field(default_factory=list)
     required_clarifications: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
