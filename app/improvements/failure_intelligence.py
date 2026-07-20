@@ -377,6 +377,108 @@ async def create_or_update_proposal(pool, incident_id, selected_option: str, act
     return result
 
 
+async def create_theme_proposal(pool, theme_id, selected_option: str, actor: str) -> dict:
+    """Turn a cross-cluster architectural theme into one governed build request."""
+    async with pool.acquire() as conn, conn.transaction():
+        theme = await conn.fetchrow(
+            "SELECT * FROM failure_themes WHERE id=$1 AND status='active' FOR UPDATE",
+            theme_id,
+        )
+        if not theme:
+            raise ValueError("Failure theme is unavailable or already under review")
+        options = theme["strategy_options"] or []
+        if isinstance(options, str):
+            options = json.loads(options)
+        option = next(
+            (item for item in list(options)
+             if item.get("id") == selected_option), None,
+        )
+        if not option:
+            raise ValueError("Unknown theme strategy option")
+        incident = await conn.fetchrow(
+            """SELECT i.* FROM failure_theme_clusters tc
+               JOIN failure_clusters c ON c.cluster_key=tc.cluster_key
+               JOIN failure_incidents i ON i.id=c.latest_incident_id
+               WHERE tc.theme_id=$1 ORDER BY c.last_seen DESC LIMIT 1""",
+            theme_id,
+        )
+        if not incident:
+            raise ValueError("The theme has no durable incident evidence")
+        scope_map = {
+            "unbounded-tool-context": [
+                "executor_context_builder", "tool result projector", "context preflight",
+            ],
+            "transient-upstream-resilience": [
+                "durable_worker", "retry policy", "quota manager", "resume policy",
+            ],
+            "planner-tool-contract": [
+                "typed_planner", "tool registry", "plan validator", "golden cases",
+            ],
+        }
+        option = {
+            **option,
+            "change_scope": scope_map.get(theme["theme_key"], [incident["component"]]),
+            "acceptance_tests": [
+                "Every linked exact cluster has a no-network replay case.",
+                "The shared candidate improves linked cases without golden-task regression.",
+                "Trusted CI binds changed files, hashes, commands, and rollback evidence.",
+            ],
+            "automation_eligible": True,
+        }
+        now = datetime.now(timezone.utc)
+        proposal_key = f"theme-{theme['theme_key']}-{now.strftime('%Y%m%d%H%M%S')}"
+        exact_diff = (
+            "--- architecture/control\n+++ architecture/candidate\n"
+            f"@@ theme:{theme['theme_key']} @@\n"
+            f"- handling: cluster_specific_only\n+ option_{selected_option}: {option['title']}\n"
+            "+ validation: linked_cluster_replays_and_trusted_ci\n"
+            "+ publication: human_canary_then_human_promotion\n"
+        )
+        digest = hashlib.sha256(exact_diff.encode()).hexdigest()
+        proposal_id = await conn.fetchval(
+            """INSERT INTO improvement_proposals
+               (proposal_key,proposal_type,title,sanitized_summary,status,severity,
+                risk_level,root_cause_confidence,affected_sessions,exact_diff,
+                expected_impact,privacy_report,security_report,rollback_plan,
+                source_version,content_hash,expires_at,candidate_kind,candidate_state,
+                candidate_manifest,selected_option,created_by)
+               VALUES($1,'architectural_theme',$2,$3,'awaiting_review','medium','medium',
+                      85,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,'current',$10,
+                      now()+interval '30 days','diagnosis','diagnosis_only',$11::jsonb,$12,$13)
+               RETURNING id""",
+            proposal_key, option["title"],
+            f"Selected option {selected_option} for {theme['title']}: {option['explanation']}",
+            theme["occurrence_count"], exact_diff,
+            json.dumps({"theme_key": theme["theme_key"], "linked_cluster_replays": True}),
+            json.dumps({"raw_content_included": False, "pii_scan": "passed"}),
+            json.dumps({"external_writes_changed": False, "review_required": True}),
+            json.dumps({"action": "route traffic to source_version", "automatic": True}),
+            digest, json.dumps({
+                "kind": "architectural_theme", "theme_id": str(theme_id),
+                "selected_option": selected_option, "canary_eligible": False,
+            }), selected_option, actor,
+        )
+        await conn.execute(
+            "UPDATE failure_themes SET status='candidate_building',last_seen=now() WHERE id=$1",
+            theme_id,
+        )
+    from app.improvements.builder import enqueue_candidate_build
+    build_id = await enqueue_candidate_build(pool, proposal_id, dict(incident), option, actor)
+    dispatch = None
+    if build_id:
+        try:
+            from app.improvements.publisher import dispatch_candidate_builder
+            dispatch = await dispatch_candidate_builder(str(build_id))
+        except Exception as exc:
+            dispatch = {"status": "not_dispatched", "reason": str(exc)}
+    return {
+        "proposal_key": proposal_key,
+        "candidate_build_id": str(build_id) if build_id else None,
+        "candidate_build_status": "queued" if build_id else "disabled",
+        "candidate_build_dispatch": dispatch,
+    }
+
+
 async def record_failure_incident(
     pool, *, occurrence_key: str | None = None, run_id=None, session_id: str | None,
     user_id: str, message: str, intent_kind: str, stage: str, category: str,

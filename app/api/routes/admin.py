@@ -29,7 +29,9 @@ from app.improvements.candidates import (
     candidate_digest, file_digest, validate_candidate_files,
 )
 from app.improvements.builder import store_candidate_draft
-from app.improvements.failure_intelligence import create_or_update_proposal
+from app.improvements.failure_intelligence import (
+    create_or_update_proposal, create_theme_proposal,
+)
 router=APIRouter(prefix="/admin")
 class ExperimentIn(BaseModel):
     name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
@@ -351,6 +353,21 @@ async def failure_themes(status: str | None = "active", limit: int = 100):
             status, max(1, min(limit, 200)),
         )
     return {"themes": [dict(row) for row in rows]}
+
+
+@router.post("/failure-themes/{theme_id}/decision")
+async def decide_failure_theme(
+    theme_id: str, body: FailureIncidentDecisionIn, request: Request,
+):
+    if body.decision not in {"choose_A", "choose_B"}:
+        raise HTTPException(422, "Choose architectural option A or B")
+    try:
+        proposal = await create_theme_proposal(
+            await get_pool(), theme_id, body.decision[-1], request.state.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"theme_id": theme_id, "decision": body.decision, "proposal": proposal}
 
 
 @router.put("/improvements/{proposal_key}/candidate")
