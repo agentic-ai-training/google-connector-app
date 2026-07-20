@@ -69,8 +69,10 @@ services, 17 evaluated Grafana Cloud rules, and 34 installed dashboard panels.
 - Prompt/model/routing/OKF policy winners and offline RL require at least the
   approved verified sample minimum and stable train/validation/test splits.
 - Pilot expansion requires real consenting users and elapsed production evidence.
-- DBeaver secure-storage completion requires the user's local GUI/master-password
-  action.
+- DBeaver connection definitions and production credential storage are complete: the
+  definitions are password-free, the analyst credential is in macOS Keychain, and the
+  role's reporting access/read-only/OAuth-table denial were verified. Copying that
+  secret into DBeaver's separate encrypted vault is optional convenience, not a blocker.
 - External proposal email/GitHub delivery requires a chosen recipient or scoped
   publisher token and an explicit publication confirmation.
 
@@ -96,7 +98,8 @@ the working engineering upgrade, as required.
   remain correctly evidence-gated.
 - Production, local Homebrew, and local Docker DBeaver definitions: installed. The
   production connection uses `dbeaver_analyst`, SSL, a read-only server role, and
-  `save-password: false`. Only DBeaver's local secure-vault password entry remains.
+  `save-password: false`; the credential is stored in macOS Keychain and was verified
+  against Neon without exposing it.
 - Engineering implementation, deployment, observability, documentation, tests, and
   teaching: complete and verified.
 - Longitudinal pilot expansion, policy/RAG winners, and real external proposal delivery:
