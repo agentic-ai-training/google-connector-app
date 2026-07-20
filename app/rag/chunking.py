@@ -12,6 +12,8 @@ class Chunk:
     index: int
     heading: str | None = None
     parent_id: str | None = None
+    parent_content: str | None = None
+    parent_heading: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -88,6 +90,21 @@ def _windows(text: str, policy: ChunkingPolicy) -> list[str]:
     )
 
 
+def _parent_policy(policy: ChunkingPolicy) -> ChunkingPolicy:
+    """Create a larger, non-overlapping generation-context boundary."""
+    if policy.target_tokens is not None:
+        return ChunkingPolicy(
+            name=f"{policy.name}-parent",
+            target_tokens=min(2048, max(1024, policy.target_tokens * 3)),
+            overlap_tokens=0,
+        )
+    return ChunkingPolicy(
+        name=f"{policy.name}-parent",
+        target_characters=max(5000, policy.target_characters * 3),
+        overlap_characters=0,
+    )
+
+
 def token_count(text: str) -> int:
     """Return the reproducible proxy-token count used by offline policy experiments."""
     return len(_TOKENIZER.encode(text))
@@ -111,17 +128,32 @@ def chunk_gmail(item: dict, policy: ChunkingPolicy = DEFAULT_POLICY) -> list[Chu
         f"From: {item.get('sender', '')}\n"
         f"Received: {item.get('received_at', '')}\n"
     )
-    parts = _windows(body, policy) or [item.get("snippet") or item.get("subject") or ""]
-    return [
-        Chunk(
-            content=prefix + part, index=index, parent_id=item.get("thread_id"),
-            metadata={
-                "thread_id": item.get("thread_id"), "sender": item.get("sender"),
-                "received_at": item.get("received_at"), "labels": item.get("labels", []),
-            },
-        )
-        for index, part in enumerate(parts) if part.strip()
-    ]
+    material = body or item.get("snippet") or item.get("subject") or ""
+    output = []
+    thread_id = item.get("thread_id")
+    message_id = item.get("id")
+    base_parent = str(
+        f"{thread_id}:{message_id}" if thread_id and message_id
+        else (thread_id or message_id or "message")
+    )
+    for parent_index, parent_body in enumerate(
+        _windows(material, _parent_policy(policy)) or [material]
+    ):
+        parent_id = base_parent if parent_index == 0 else f"{base_parent}:{parent_index}"
+        parent_content = prefix + parent_body
+        for part in _windows(parent_body, policy) or [parent_body]:
+            if not part.strip():
+                continue
+            output.append(Chunk(
+                content=prefix + part, index=len(output), parent_id=parent_id,
+                parent_content=parent_content, parent_heading=item.get("subject"),
+                metadata={
+                    "thread_id": item.get("thread_id"), "sender": item.get("sender"),
+                    "received_at": item.get("received_at"),
+                    "labels": item.get("labels", []), "parent_index": parent_index,
+                },
+            ))
+    return output
 
 
 def chunk_document(item: dict, policy: ChunkingPolicy = DEFAULT_POLICY) -> list[Chunk]:
@@ -129,18 +161,28 @@ def chunk_document(item: dict, policy: ChunkingPolicy = DEFAULT_POLICY) -> list[
     title = item.get("name") or item.get("title") or "Document"
     sections = re.split(r"(?m)(?=^#{1,6}\s+)", content)
     output = []
-    for section in sections:
+    for section_index, section in enumerate(sections):
         if not section.strip():
             continue
         first = section.strip().splitlines()[0]
         heading = first.lstrip("#").strip() if first.startswith("#") else title
-        for part in _windows(section, policy):
-            output.append(Chunk(
-                content=f"Title: {title}\nSection: {heading}\n{part}",
-                index=len(output), heading=heading,
-                metadata={"mime_type": item.get("mime_type"),
-                          "web_view_link": item.get("web_view_link")},
-            ))
+        for parent_index, parent_part in enumerate(
+            _windows(section, _parent_policy(policy))
+        ):
+            parent_id = f"section-{section_index}-parent-{parent_index}"
+            parent_content = f"Title: {title}\nSection: {heading}\n{parent_part}"
+            for part in _windows(parent_part, policy):
+                output.append(Chunk(
+                    content=f"Title: {title}\nSection: {heading}\n{part}",
+                    index=len(output), heading=heading, parent_id=parent_id,
+                    parent_content=parent_content, parent_heading=heading,
+                    metadata={"mime_type": item.get("mime_type"),
+                              "web_view_link": item.get("web_view_link"),
+                              "modified_time": (item.get("modified_time") or
+                                                item.get("modifiedTime")),
+                              "section_index": section_index,
+                              "parent_index": parent_index},
+                ))
     return output
 
 

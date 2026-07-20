@@ -56,16 +56,18 @@ erDiagram
   IMPROVEMENT_QUEUE ||--o{ IMPROVEMENT_NOTIFICATIONS : proposal_key
 ```
 
-Refresh the `reporting` schema after migration 010. The dedicated role can select
+Refresh the `reporting` schema after migration 011. The dedicated role can select
 `session_summary`, `step_timeline`, `failure_summary_daily`, `model_token_usage`,
 `tool_reliability`, `retrieval_quality`, `artifact_cleanup`, `improvement_queue`,
 `canary_evaluations`, `prompt_experiment_results`, `security_audit`,
 `workflow_evaluation`, `artifact_compensation`, `improvement_notifications`,
-`failure_intelligence`, `failure_cluster_summary`, and `failure_notifications`. It still
-cannot read encrypted OAuth credential rows.
+`failure_intelligence`, `failure_cluster_summary`, `failure_notifications`, and
+`rag_parent_lineage`. The last view exposes versions, hashes, and active child counts
+without parent text. The analyst still cannot read encrypted OAuth credential rows.
 
 Reverified on 2026-07-21 against the installed DBeaver definitions and actual database
-endpoints: Production Neon, local Homebrew, and local Docker each expose 17 reporting
+endpoints: Production Neon, local Homebrew, and local Docker exposed 17 reporting
 views. Neon reports `current_user=dbeaver_analyst` and
 `transaction_read_only=on`; all three migration-010 failure views are selectable; a
-direct `google_oauth_credentials` query is denied.
+direct `google_oauth_credentials` query is denied. Migration 011 adds the 18th
+`rag_parent_lineage` view; refresh the three definitions after deployment.

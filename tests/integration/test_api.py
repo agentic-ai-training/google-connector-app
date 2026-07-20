@@ -225,6 +225,88 @@ ultraviolet-private-knowledge-marker
         assert private[0]["id"] == "private/confidential.md"
 
 
+def test_hierarchical_rag_stores_and_expands_tenant_parent(monkeypatch):
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.rag.ingestion import index_tool_result
+    from app.rag.retriever import hybrid_retrieve
+
+    class FakeEmbedder:
+        async def aembed_documents(self, texts):
+            return [[0.01] * 768 for _ in texts]
+
+    async def unavailable_query(*_args, **_kwargs):
+        raise RuntimeError("dense retrieval deliberately disabled for lexical fixture")
+
+    monkeypatch.setattr(
+        "app.rag.retriever.NomicEmbedder.aembed_query", unavailable_query,
+    )
+    source_id = f"hierarchical-{uuid.uuid4()}"
+    user_id = "hierarchical@example.com"
+    content = "# Recovery\n" + "reliable worker context " * 180 + "violetparentmarker"
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            indexed = await index_tool_result(
+                "get_drive_file", {"file_id": source_id},
+                {"id": source_id, "name": "Recovery", "content": content},
+                pool, FakeEmbedder(), user_id,
+            )
+            results = await hybrid_retrieve(
+                "violetparentmarker", pool=pool, user_id=user_id,
+                filters={"source": "drive"}, top_k=3,
+            )
+            unrelated = await hybrid_retrieve(
+                "violetparentmarker", pool=pool, user_id="unrelated@example.com",
+                filters={"source": "drive"}, top_k=3,
+            )
+            unchanged = await index_tool_result(
+                "get_drive_file", {"file_id": source_id},
+                {"id": source_id, "name": "Recovery", "content": content},
+                pool, FakeEmbedder(), user_id,
+            )
+            await index_tool_result(
+                "get_drive_file", {"file_id": source_id},
+                {"id": source_id, "name": "Recovery",
+                 "content": "# Recovery\nshort violetparentmarker"},
+                pool, FakeEmbedder(), user_id,
+            )
+            async with pool.acquire() as conn:
+                parents = await conn.fetchval(
+                    """SELECT count(*) FROM rag_parent_sections
+                       WHERE user_id=$1 AND source_id=$2 AND deleted_at IS NULL""",
+                    user_id, source_id,
+                )
+                tombstones = await conn.fetchval(
+                    """SELECT count(*) FROM rag_chunks
+                       WHERE user_id=$1 AND source_id=$2 AND deleted_at IS NOT NULL""",
+                    user_id, source_id,
+                )
+                await conn.execute(
+                    "DELETE FROM rag_chunks WHERE user_id=$1 AND source_id=$2",
+                    user_id, source_id,
+                )
+                await conn.execute(
+                    "DELETE FROM rag_parent_sections WHERE user_id=$1 AND source_id=$2",
+                    user_id, source_id,
+                )
+            return indexed, parents, results, unrelated, unchanged, tombstones
+
+        indexed, parents, results, unrelated, unchanged, tombstones = client.portal.call(
+            exercise
+        )
+        assert indexed > 1
+        assert parents >= 1
+        assert results[0]["parent_expanded"] is True
+        assert "violetparentmarker" in results[0]["content"]
+        assert len(results[0]["content"]) > len(results[0]["child_content"])
+        assert results[0]["citation"]["parent_id"]
+        assert results[0]["citation"]["context_level"] == "parent"
+        assert unrelated == []
+        assert unchanged == 0
+        assert tombstones >= 1
+
+
 def test_run_survives_browser_disconnect_and_can_be_cancelled_after_reconnect():
     from app.api.main import app
     from app.db.connection import get_pool

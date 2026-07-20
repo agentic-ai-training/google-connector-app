@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from app.rag.context_packer import pack_context, sanitize_untrusted_content
+from app.rag.retriever import _recency_bonus
 from app.rag.evaluation import retrieval_metrics
 from app.mlops.ragas_eval import _context_text, _retrieved_contexts
 from scripts.run_ragas_eval import _score_payload
@@ -811,8 +812,17 @@ def test_token_chunk_policies_bound_document_payload_and_preserve_lineage():
         chunks = chunk_document({"name": "Long guide", "content": text}, policy)
         assert len(chunks) > 1
         assert [chunk.index for chunk in chunks] == list(range(len(chunks)))
+        assert all(chunk.parent_id and chunk.parent_content for chunk in chunks)
+        assert all(len(chunk.parent_content) >= len(chunk.content) for chunk in chunks)
         # Title and section provenance are deliberately repeated outside the payload window.
         assert max(token_count(chunk.content) for chunk in chunks) <= size + 20
+
+
+def test_rag_recency_is_only_a_bounded_tie_breaker():
+    recent = _recency_bonus({"source_modified_at": "2026-07-21T00:00:00+00:00"})
+    old = _recency_bonus({"source_modified_at": "2020-01-01T00:00:00+00:00"})
+    assert 0 <= old < recent <= 0.003
+    assert _recency_bonus({}) == 0
 
 
 def test_atomic_structured_records_do_not_change_with_text_policy():

@@ -66,7 +66,7 @@ The authoritative commands are the repository CI jobs, `pytest tests/`,
 The final verified evidence is recorded in the progress log and repository CI.
 It includes exact-image and host backend suites, 28 planner golden cases, four
 no-network mutation replays, migration downgrade/forward repair through revision
-010, Python/web/mobile security and build gates, healthy local and production
+011, Python/web/mobile security and build gates, healthy local and production
 services, 17 evaluated Grafana Cloud rules, and 34 installed dashboard panels.
 
 The production failure audit also found five recent terminal runs that predated the
@@ -84,6 +84,15 @@ worker failure, while a write interrupted before durable acknowledgement becomes
 `worker_reconciliation` incident and cannot be resumed blindly. Integration tests
 cover replacement-worker execution, interrupted-read recovery, retry exhaustion, the
 uncertain-write terminal state, portal incident creation, and resume rejection.
+
+The subsequent RAG lesson corrected an earlier overstatement: child chunks carried
+lineage identifiers, but larger generation parents were not durably stored or expanded.
+Migration 011 adds tenant-scoped, versioned parent sections and a content-free reporting
+lineage view. Gmail and Docs/Drive v3 chunkers now bind precise children to larger
+parents; ingestion incrementally hashes and tombstones both levels; hybrid retrieval
+matches on children, expands a deduplicated parent under the same tenant, preserves the
+matched-child citation, and applies only a bounded recency tie-breaker. Tests cover
+parent expansion and cross-tenant denial.
 
 ## Correctly unresolved conclusions
 

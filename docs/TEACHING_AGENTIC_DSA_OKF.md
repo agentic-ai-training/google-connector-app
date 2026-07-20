@@ -62,6 +62,12 @@ pgvector's HNSW index is itself a proximity graph. Hybrid retrieval combines
 vector neighbors with PostgreSQL full-text results, then fuses ranks, removes
 duplicates, preserves permissions, and packs context under a token budget.
 
+The durable hierarchy is split across `rag_chunks` and `rag_parent_sections`.
+Only small children receive embeddings and participate in precise matching. A selected
+child's `(tenant, source, source ID, parent ID, chunker version)` expands to one larger
+generation parent. The citation keeps the matched child ID, while a reporting view
+exposes lineage counts and hashes without exposing parent text.
+
 ## 6. Sliding windows, greedy packing, and dynamic programming
 
 Token-aware overlapping windows are useful only when a source has no better
