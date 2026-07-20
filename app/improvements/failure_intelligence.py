@@ -363,9 +363,17 @@ async def create_or_update_proposal(pool, incident_id, selected_option: str, act
     build_id = await enqueue_candidate_build(
         pool, proposal_id, dict(incident), option, actor,
     )
+    dispatch = None
+    if build_id:
+        try:
+            from app.improvements.publisher import dispatch_candidate_builder
+            dispatch = await dispatch_candidate_builder(str(build_id))
+        except Exception as exc:
+            dispatch = {"status": "not_dispatched", "reason": str(exc)}
     result = dict(proposal)
     result["candidate_build_id"] = str(build_id) if build_id else None
     result["candidate_build_status"] = "queued" if build_id else "disabled"
+    result["candidate_build_dispatch"] = dispatch
     return result
 
 

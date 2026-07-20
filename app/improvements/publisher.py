@@ -169,6 +169,26 @@ async def dispatch_candidate_deployment(proposal: dict) -> dict:
     return {"workflow": "candidate-deploy.yml", "status": "dispatched"}
 
 
+async def dispatch_candidate_builder(build_id: str) -> dict:
+    """Run Groq patch generation in isolated GitHub Actions on sanitized evidence."""
+    settings = get_settings()
+    if not settings.github_proposal_token:
+        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
+    repository = settings.github_proposal_repository.strip("/")
+    url = f"https://api.github.com/repos/{repository}/actions/workflows/candidate-builder.yml/dispatches"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {settings.github_proposal_token}",
+        "X-GitHub-Api-Version": "2026-03-10",
+    }
+    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+        response = await client.post(url, json={
+            "ref": "main", "inputs": {"build_id": str(build_id)},
+        })
+        response.raise_for_status()
+    return {"workflow": "candidate-builder.yml", "status": "dispatched"}
+
+
 async def promote_candidate_pr(proposal: dict) -> dict:
     """Mark the frozen draft ready and merge it after explicit human promotion."""
     settings = get_settings()

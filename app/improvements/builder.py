@@ -112,6 +112,111 @@ async def _groq_json(job: dict, sources: list[dict], role: str) -> tuple[dict, i
     return data, int((usage.prompt_tokens or 0) + (usage.completion_tokens or 0))
 
 
+async def generate_candidate_draft(job: dict) -> tuple[dict, int, list[str]]:
+    """Generate a patch from sanitized facts and a bounded checkout only."""
+    sanitized = dict(job["sanitized_input"] or {})
+    sources = _bounded_sources(
+        sanitized.get("component", ""),
+        sanitized.get("selected_option", {}).get("change_scope", []),
+    )
+    roles = ["coordinator"] if job["mode"] == "single" else [
+        "investigator_and_patch_author", "independent_safety_reviewer",
+    ]
+    candidate = None
+    tokens = 0
+    for role in roles:
+        if tokens >= job["token_budget"]:
+            raise RuntimeError("Candidate token budget exhausted before review")
+        output, used = await _groq_json(
+            job, sources if candidate is None else [{"candidate_for_review": candidate}], role,
+        )
+        tokens += used
+        if role == "independent_safety_reviewer":
+            if output.get("approved") is False:
+                raise RuntimeError(
+                    output.get("reason") or "Independent review rejected candidate"
+                )
+            candidate = output.get("revised_candidate") or candidate
+        else:
+            candidate = output
+    candidate = candidate or {}
+    candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
+    candidate.setdefault("rollback_plan", {"action": "route traffic to base version"})
+    candidate.setdefault("validation_commands", [])
+    return candidate, tokens, roles
+
+
+async def store_candidate_draft(
+    pool, build_id, candidate: dict, tokens: int, roles: list[str],
+) -> dict:
+    """Freeze a generated draft; execution and pass/fail claims remain CI-only."""
+    files = candidate.get("files") or []
+    errors = validate_candidate_files(files)
+    if errors:
+        raise ValueError("; ".join(errors))
+    async with pool.acquire() as conn, conn.transaction():
+        job = await conn.fetchrow(
+            "SELECT * FROM candidate_builds WHERE id=$1 FOR UPDATE", build_id,
+        )
+        if not job or job["status"] not in {"queued", "investigating"}:
+            raise ValueError("Candidate build is unavailable or already finalized")
+        exact_diff = candidate["exact_diff"]
+        rollback = candidate["rollback_plan"]
+        validation = {
+            "passed": False, "status": "awaiting_trusted_ci",
+            "commands": candidate.get("validation_commands") or [],
+            "builder_did_not_execute_code": True,
+        }
+        digest = candidate_digest(
+            job["base_commit"], files, validation,
+            candidate_kind="code", candidate_version=f"build-{job['id']}",
+            exact_diff=exact_diff, rollback_plan=rollback,
+        )
+        await conn.execute(
+            "DELETE FROM improvement_candidate_files WHERE proposal_id=$1",
+            job["proposal_id"],
+        )
+        for item in files:
+            preimage = (
+                (ROOT / item["path"]).read_text()
+                if (ROOT / item["path"]).is_file() else None
+            )
+            await conn.execute(
+                """INSERT INTO candidate_build_files
+                   (build_id,path,change_type,preimage_hash,result_hash,content)
+                   VALUES($1,$2,$3,$4,$5,$6)""",
+                job["id"], item["path"], item["change_type"],
+                file_digest(preimage) if preimage is not None else None,
+                file_digest(item.get("content")), item.get("content"),
+            )
+            await conn.execute(
+                """INSERT INTO improvement_candidate_files
+                   (proposal_id,path,change_type,content,content_hash)
+                   VALUES($1,$2,$3,$4,$5)""",
+                job["proposal_id"], item["path"], item["change_type"],
+                item.get("content"), file_digest(item.get("content")),
+            )
+        await conn.execute(
+            """UPDATE candidate_builds SET status='drafted',tokens_used=$1,
+               canonical_digest=$2,checkpoint=$3::jsonb,updated_at=now() WHERE id=$4""",
+            tokens, digest, json.dumps({"roles_completed": roles}), job["id"],
+        )
+        await conn.execute(
+            """UPDATE improvement_proposals SET candidate_kind='code',
+               candidate_state='implementation_draft',candidate_version=$1,
+               exact_diff=$2,rollback_plan=$3::jsonb,validation_report=$4::jsonb,
+               candidate_manifest=$5::jsonb,content_hash=$6,updated_at=now()
+               WHERE id=$7""",
+            f"build-{job['id']}", exact_diff, json.dumps(rollback),
+            json.dumps(validation), json.dumps({
+                "build_id": str(job["id"]), "mode": job["mode"],
+                "model": job["model_name"], "tool_policy": TOOL_POLICY_VERSION,
+                "canary_eligible": False,
+            }), digest, job["proposal_id"],
+        )
+    return {"build_id": str(build_id), "status": "drafted", "content_hash": digest}
+
+
 async def process_one_candidate_build(pool) -> bool:
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
@@ -127,84 +232,9 @@ async def process_one_candidate_build(pool) -> bool:
             row["id"],
         )
     job = dict(row)
-    sanitized = dict(job["sanitized_input"] or {})
-    sources = _bounded_sources(sanitized.get("component", ""),
-                               sanitized.get("selected_option", {}).get("change_scope", []))
     try:
-        roles = ["coordinator"] if job["mode"] == "single" else [
-            "investigator_and_patch_author", "independent_safety_reviewer",
-        ]
-        candidate = None
-        tokens = 0
-        for role in roles:
-            if tokens >= job["token_budget"]:
-                raise RuntimeError("Candidate token budget exhausted before review")
-            output, used = await _groq_json(job, sources if candidate is None else [
-                {"candidate_for_review": candidate}
-            ], role)
-            tokens += used
-            if role == "independent_safety_reviewer":
-                if output.get("approved") is False:
-                    raise RuntimeError(output.get("reason") or "Independent review rejected candidate")
-                candidate = output.get("revised_candidate") or candidate
-            else:
-                candidate = output
-        files = candidate.get("files") or []
-        errors = validate_candidate_files(files)
-        if errors:
-            raise RuntimeError("; ".join(errors))
-        exact_diff = candidate.get("exact_diff") or "generated files are the authoritative candidate"
-        rollback = candidate.get("rollback_plan") or {"action": "route traffic to base version"}
-        validation = {
-            "passed": False, "status": "awaiting_trusted_ci",
-            "commands": candidate.get("validation_commands") or [],
-            "builder_did_not_execute_code": True,
-        }
-        digest = candidate_digest(
-            job["base_commit"], files, validation,
-            candidate_kind="code", candidate_version=f"build-{job['id']}",
-            exact_diff=exact_diff, rollback_plan=rollback,
-        )
-        async with pool.acquire() as conn, conn.transaction():
-            await conn.execute(
-                "DELETE FROM improvement_candidate_files WHERE proposal_id=$1",
-                job["proposal_id"],
-            )
-            for item in files:
-                preimage = (ROOT / item["path"]).read_text() if (ROOT / item["path"]).is_file() else None
-                await conn.execute(
-                    """INSERT INTO candidate_build_files
-                       (build_id,path,change_type,preimage_hash,result_hash,content)
-                       VALUES($1,$2,$3,$4,$5,$6)""",
-                    job["id"], item["path"], item["change_type"],
-                    file_digest(preimage) if preimage is not None else None,
-                    file_digest(item.get("content")), item.get("content"),
-                )
-                await conn.execute(
-                    """INSERT INTO improvement_candidate_files
-                       (proposal_id,path,change_type,content,content_hash)
-                       VALUES($1,$2,$3,$4,$5)""",
-                    job["proposal_id"], item["path"], item["change_type"],
-                    item.get("content"), file_digest(item.get("content")),
-                )
-            await conn.execute(
-                """UPDATE candidate_builds SET status='drafted',tokens_used=$1,
-                   canonical_digest=$2,checkpoint=$3::jsonb,updated_at=now() WHERE id=$4""",
-                tokens, digest, json.dumps({"roles_completed": roles}), job["id"],
-            )
-            await conn.execute(
-                """UPDATE improvement_proposals SET candidate_kind='code',
-                   candidate_state='implementation_draft',candidate_version=$1,
-                   exact_diff=$2,rollback_plan=$3::jsonb,validation_report=$4::jsonb,
-                   candidate_manifest=$5::jsonb,content_hash=$6,updated_at=now()
-                   WHERE id=$7""",
-                f"build-{job['id']}", exact_diff, json.dumps(rollback),
-                json.dumps(validation), json.dumps({
-                    "build_id": str(job["id"]), "mode": job["mode"],
-                    "model": job["model_name"], "tool_policy": TOOL_POLICY_VERSION,
-                    "canary_eligible": False,
-                }), digest, job["proposal_id"],
-            )
+        candidate, tokens, roles = await generate_candidate_draft(job)
+        await store_candidate_draft(pool, job["id"], candidate, tokens, roles)
         return True
     except Exception as exc:
         logger.exception("Candidate build %s failed", job["id"])

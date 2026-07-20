@@ -222,6 +222,13 @@ async def auth_middleware(request: Request, call_next):
             request.state.user_id = "trusted-ci"
             request.state.is_admin = True
             return await call_next(request)
+    if request.url.path.startswith("/admin/candidate-builder/"):
+        supplied = request.headers.get("x-candidate-builder-token", "")
+        expected = get_settings().candidate_builder_callback_token
+        if expected and secrets.compare_digest(supplied, expected):
+            request.state.user_id = "trusted-candidate-builder"
+            request.state.is_admin = True
+            return await call_next(request)
     if (request.method == "POST"
             and request.url.path.startswith("/admin/improvements/")
             and request.url.path.endswith("/deployment-attestation")):

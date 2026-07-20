@@ -1,0 +1,26 @@
+name: Generate governed candidate draft
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Durable sanitized candidate-build identifier
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements.txt
+      - name: Generate and return a frozen draft without production credentials
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CANDIDATE_BUILDER_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
+          CANDIDATE_BUILDER_CALLBACK_TOKEN: ${{ secrets.CANDIDATE_BUILDER_CALLBACK_TOKEN }}
+          CANDIDATE_BUILD_ID: ${{ inputs.build_id }}
+        run: python scripts/run_candidate_builder.py

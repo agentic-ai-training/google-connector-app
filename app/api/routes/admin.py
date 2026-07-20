@@ -12,6 +12,7 @@ from app.runs.schemas import (
     ImprovementCandidateRegistration,
     CandidateValidationAttestation,
     CandidateDeploymentAttestation,
+    CandidateBuildDraft,
     CanaryActivationDecision,
     ImprovementDecision,
     ImprovementDeploymentEvidence,
@@ -27,6 +28,7 @@ from app.improvements.publisher import (
 from app.improvements.candidates import (
     candidate_digest, file_digest, validate_candidate_files,
 )
+from app.improvements.builder import store_candidate_draft
 from app.improvements.failure_intelligence import create_or_update_proposal
 router=APIRouter(prefix="/admin")
 class ExperimentIn(BaseModel):
@@ -62,6 +64,44 @@ async def candidate_builds(status: str | None = None, limit: int = 100):
             status, max(1, min(limit, 200)),
         )
     return {"builds": [dict(row) for row in rows]}
+
+
+@router.post("/candidate-builder/{build_id}/input")
+async def candidate_builder_input(build_id: str):
+    """Lease one sanitized build to the no-production-secrets GitHub runner."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """SELECT b.*,p.proposal_key,p.risk_level FROM candidate_builds b
+               JOIN improvement_proposals p ON p.id=b.proposal_id
+               WHERE b.id=$1 AND b.status IN ('queued','investigating') FOR UPDATE""",
+            build_id,
+        )
+        if not row:
+            raise HTTPException(409, "Candidate build is unavailable or already finalized")
+        await conn.execute(
+            "UPDATE candidate_builds SET status='investigating',updated_at=now() WHERE id=$1",
+            build_id,
+        )
+    job = dict(row)
+    return {"build": {
+        "id": str(job["id"]), "proposal_id": str(job["proposal_id"]),
+        "proposal_key": job["proposal_key"], "risk_level": job["risk_level"],
+        "mode": job["mode"], "base_commit": job["base_commit"],
+        "model_name": job["model_name"], "token_budget": job["token_budget"],
+        "sanitized_input": job["sanitized_input"],
+    }}
+
+
+@router.post("/candidate-builder/{build_id}/draft")
+async def candidate_builder_draft(build_id: str, body: CandidateBuildDraft):
+    try:
+        return await store_candidate_draft(
+            await get_pool(), build_id, body.model_dump(), body.tokens_used,
+            body.roles_completed,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/candidate-builds/{build_id}/attestation")

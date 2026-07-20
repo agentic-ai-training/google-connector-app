@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     candidate_builder_poll_seconds: float = 5.0
     candidate_ci_attestation_token: str = ""
     candidate_deploy_attestation_token: str = ""
+    candidate_builder_callback_token: str = ""
     raw_telemetry_retention_days: int = 14
     workflow_retention_days: int = 90
     aggregate_retention_days: int = 365
