@@ -6,6 +6,7 @@ import time
 import uuid
 
 from opentelemetry import trace
+from opentelemetry.context import Context, attach, detach
 from opentelemetry.propagators.textmap import Getter
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -91,12 +92,19 @@ async def metrics_middleware(request, call_next):
             trace_id = f"{context.trace_id:032x}" if context.is_valid else ""
             # Deliberately exclude query strings, bodies, identities, tokens, and
             # client addresses. Route names and correlation IDs are operational data.
-            logger.info(json.dumps({
-                "event": "http_request",
-                "request_id": request_id,
-                "trace_id": trace_id,
-                "method": request.method,
-                "path": route,
-                "status": status,
-                "duration_ms": round(duration * 1000, 2),
-            }, separators=(",", ":")))
+            # Keep correlation IDs in the JSON body, not in the OTLP LogRecord
+            # context. Grafana/Loki can otherwise promote per-request trace and
+            # span IDs to stream labels, causing unbounded label cardinality.
+            log_context = attach(Context())
+            try:
+                logger.info(json.dumps({
+                    "event": "http_request",
+                    "request_id": request_id,
+                    "trace_id": trace_id,
+                    "method": request.method,
+                    "path": route,
+                    "status": status,
+                    "duration_ms": round(duration * 1000, 2),
+                }, separators=(",", ":")))
+            finally:
+                detach(log_context)
