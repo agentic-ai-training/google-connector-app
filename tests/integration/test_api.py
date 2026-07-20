@@ -744,6 +744,9 @@ def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
             json={"decision": "approved", "proposal_hash": candidate_hash},
         )
         assert activated.status_code == 200
+        refreshed = client.get("/admin/improvements", headers=headers).json()["proposals"]
+        stored = next(item for item in refreshed if item["proposal_key"] == proposal_key)
+        assert stored["candidate_state"] == "deployed_canary"
         client.portal.call(cleanup)
 
 

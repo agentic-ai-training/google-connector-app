@@ -443,7 +443,8 @@ async def activate_canary(proposal_key: str, body: ImprovementDecision,
         if not updated:
             raise HTTPException(409, "Pending canary record not found")
         await conn.execute(
-            "UPDATE improvement_proposals SET status='canary_active',updated_at=now() WHERE id=$1",
+            """UPDATE improvement_proposals SET status='canary_active',
+               candidate_state='deployed_canary',updated_at=now() WHERE id=$1""",
             proposal["id"],
         )
     return {"proposal_key": proposal_key, "status": "canary_active"}
