@@ -124,10 +124,11 @@ approved pilot approach:
 
 ### DBeaver local GUI secret storage
 
-The connection definitions and read-only role are prepared. The final master
-password and OS secure-storage confirmation can only be completed in the user's
-DBeaver GUI. Store the Neon analyst password there; never save the owner URL or
-password in shared project files.
+This 2026-07-19 checkpoint was superseded on 2026-07-20. The three connection
+definitions remain password-free, the Neon analyst password is stored in macOS
+Keychain, and read-only reporting access plus OAuth-table denial were verified. Saving
+the password again inside DBeaver's own encrypted vault is optional; never save the
+owner URL or password in shared project files.
 
 ### Railway GitHub source metadata
 
