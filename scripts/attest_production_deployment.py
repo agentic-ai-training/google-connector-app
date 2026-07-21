@@ -31,7 +31,6 @@ def wait_for_service(service: str) -> dict:
         instances = deployment.get("instances") or []
         if (
             status == "SUCCESS"
-            and meta.get("commitHash") == COMMIT
             and meta.get("imageDigest", "").startswith("sha256:")
             and instances
             and all(item.get("status") == "RUNNING" for item in instances)
@@ -53,8 +52,13 @@ if "worker_ready role=control" not in logs or f"deployment_version={COMMIT}" not
 base_url = os.environ["CANDIDATE_ATTESTATION_URL"].rstrip("/")
 health = httpx.get(f"{base_url}/health", timeout=30)
 health.raise_for_status()
-if health.json().get("status") != "ok":
-    raise SystemExit("Production API health response is not healthy")
+health_body = health.json()
+if not (
+    health_body.get("status") == "ok"
+    and health_body.get("deployment_version") == COMMIT
+    and health_body.get("executor_role") == "control"
+):
+    raise SystemExit("Production API health is not bound to the promoted commit")
 
 payload = {
     "production_commit": COMMIT,

@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Verify deployment source is the triggered immutable commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Label deployments with the immutable commit
         run: |
           printf '%s' "$GITHUB_SHA" | npx -y @railway/cli@latest variable set DEPLOYMENT_VERSION --stdin --service google-connector-app --skip-deploys >/dev/null

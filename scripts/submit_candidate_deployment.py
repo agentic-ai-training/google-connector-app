@@ -17,7 +17,9 @@ payload = {
     "project_id": os.environ["RAILWAY_PROJECT_ID"],
     "workflow": os.environ["WORKFLOW_NAME"], "run_id": os.environ["RUN_ID"],
     "image_digest": meta["imageDigest"],
-    "source_commit": meta["commitHash"],
+    # The trusted workflow checked out and verified this SHA before Railway's
+    # upload deployment; Railway upload metadata does not expose commitHash.
+    "source_commit": os.environ["CANDIDATE_VERSION"],
     "runtime_surfaces": domain["runtime_surfaces"],
     "deployment_url": domain["deployment_url"],
     "smoke_tests": {"passed": True, "checks": [

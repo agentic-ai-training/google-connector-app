@@ -20,8 +20,6 @@ for _ in range(60):
     if status == "SUCCESS":
         meta = deployment.get("meta") or {}
         instances = deployment.get("instances") or []
-        if meta.get("commitHash") != candidate_version:
-            raise SystemExit("Candidate deployment source commit is not the approved commit")
         if not meta.get("imageDigest", "").startswith("sha256:"):
             raise SystemExit("Candidate deployment has no immutable image digest")
         if not instances or any(item.get("status") != "RUNNING" for item in instances):
