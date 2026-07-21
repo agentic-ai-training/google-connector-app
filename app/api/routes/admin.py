@@ -708,12 +708,17 @@ async def attest_candidate_deployment(
 
 @router.post("/improvements/production-attestation")
 async def attest_promoted_production(body: ProductionDeploymentAttestation):
-    """Trust a promoted candidate only after both production processes run its merge."""
+    """Trust promotion only after API, worker, and frontend run its merge."""
     settings = get_settings()
     if body.project_id != settings.railway_project_id:
         raise HTTPException(409, "Production deployment project does not match")
     if body.api_service != "google-connector-app" or body.worker_service != "google-connector-worker":
         raise HTTPException(409, "Both governed production services must be attested")
+    if (
+        body.frontend_url.rstrip("/") != settings.frontend_url.rstrip("/")
+        or body.frontend_source_commit != body.production_commit
+    ):
+        raise HTTPException(409, "Production frontend does not match the governed commit")
     if not body.verified or body.smoke_tests.get("passed") is not True:
         raise HTTPException(422, "Passing production smoke evidence is required")
     pool = await get_pool()

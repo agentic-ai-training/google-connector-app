@@ -24,27 +24,41 @@ jobs:
         run: npx -y @railway/cli@latest up --service google-connector-worker --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+  deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Deploy frontend with current Vercel CLI
+        run: >-
+          npx -y vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"
+          --build-env DEPLOYMENT_VERSION="$GITHUB_SHA"
+          --build-env CANDIDATE_FRONTEND_ROLE=control
+          --env DEPLOYMENT_VERSION="$GITHUB_SHA"
+          --env CANDIDATE_FRONTEND_ROLE=control
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  attest-production:
+    needs: [deploy-backend, deploy-web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - name: Install attestation transport only
         run: pip install 'httpx==0.28.1'
-      - name: Attest exact production API and worker deployment
+      - name: Attest exact production API, worker, and frontend deployment
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
           CANDIDATE_DEPLOY_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_DEPLOY_ATTESTATION_TOKEN }}
           PRODUCTION_COMMIT: ${{ github.sha }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          RUN_ID: ${{ github.run_id }}
-        run: python scripts/attest_production_deployment.py
-  deploy-web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Deploy frontend with current Vercel CLI
-        run: npx -y vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"
-        env:
+          PRODUCTION_FRONTEND_URL: https://google-connector-app.vercel.app
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_ID: ${{ github.run_id }}
+        run: python scripts/attest_production_deployment.py

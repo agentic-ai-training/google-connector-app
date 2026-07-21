@@ -147,6 +147,9 @@ class ProductionDeploymentAttestation(BaseModel):
     worker_service: str = Field(min_length=1, max_length=200)
     worker_deployment_id: str = Field(min_length=1, max_length=300)
     worker_image_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    frontend_url: str = Field(min_length=1, max_length=2_000)
+    frontend_deployment_id: str = Field(min_length=1, max_length=300)
+    frontend_source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     workflow: str = Field(min_length=1, max_length=300)
     run_id: str = Field(min_length=1, max_length=100)
     smoke_tests: dict[str, Any]

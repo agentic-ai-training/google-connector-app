@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import time
+from urllib.parse import urlparse
 
 import httpx
 
@@ -98,6 +99,43 @@ if not (
 ):
     raise SystemExit("Production API health is not bound to the promoted commit")
 
+frontend_url = os.environ["PRODUCTION_FRONTEND_URL"].rstrip("/")
+frontend_health_body = None
+for _ in range(60):
+    try:
+        frontend_health = httpx.get(
+            frontend_url + "/api/frontend-health", timeout=15,
+        )
+        frontend_health_body = frontend_health.json()
+        if (
+            frontend_health.is_success
+            and frontend_health_body.get("status") == "ok"
+            and frontend_health_body.get("deployment_version") == COMMIT
+            and frontend_health_body.get("executor_role") == "control"
+        ):
+            break
+    except (httpx.HTTPError, ValueError):
+        pass
+    time.sleep(10)
+else:
+    raise SystemExit("Production frontend is not bound to the promoted commit")
+
+vercel_response = httpx.get(
+    "https://api.vercel.com/v13/deployments/"
+    + str(urlparse(frontend_url).hostname),
+    headers={"Authorization": f"Bearer {os.environ['VERCEL_TOKEN']}"},
+    params={"teamId": os.environ["VERCEL_ORG_ID"]},
+    timeout=30,
+)
+vercel_response.raise_for_status()
+vercel = vercel_response.json()
+if (
+    vercel.get("projectId") != os.environ["VERCEL_PROJECT_ID"]
+    or vercel.get("target") != "production"
+    or not (vercel.get("id") or vercel.get("uid"))
+):
+    raise SystemExit("Production Vercel deployment identity is not trusted")
+
 payload = {
     "production_commit": COMMIT,
     "project_id": os.environ["RAILWAY_PROJECT_ID"],
@@ -107,12 +145,16 @@ payload = {
     "worker_service": SERVICES[1],
     "worker_deployment_id": worker["id"],
     "worker_image_digest": worker["meta"]["imageDigest"],
+    "frontend_url": frontend_url,
+    "frontend_deployment_id": str(vercel.get("id") or vercel.get("uid")),
+    "frontend_source_commit": COMMIT,
     "workflow": os.environ["WORKFLOW_NAME"],
     "run_id": os.environ["RUN_ID"],
     "smoke_tests": {"passed": True, "checks": [
-        "API and worker run the exact promoted commit",
+        "API, worker, and frontend run the exact promoted commit",
         "API and worker have immutable image digests and running instances",
         "API health passed and worker emitted version-bound readiness",
+        "frontend health and Vercel project/deployment identity passed",
     ]},
     "verified": True,
 }
