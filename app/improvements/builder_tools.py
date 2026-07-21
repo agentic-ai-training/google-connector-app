@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 import difflib
+import hashlib
 import json
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from app.improvements.candidates import (
     ALLOWED_ROOTS, FORBIDDEN_PARTS, validate_candidate_files,
@@ -55,6 +60,15 @@ class BoundedRepositoryTools:
                 "content": {"type": "string"},
             }, ["path", "change_type"]),
             _tool("inspect_candidate_diff", "Inspect the bounded in-memory candidate diff", {}, []),
+            _tool(
+                "validate_staged_candidate",
+                "Run deterministic structural and syntax validation on staged files",
+                {}, [],
+            ),
+            _tool("inspect_candidate_manifest", "Inspect staged paths, sizes, and hashes", {}, []),
+            _tool("discard_staged_candidate_file", "Discard one staged change in memory", {
+                "path": {"type": "string"},
+            }, ["path"]),
             _tool("read_staged_candidate_file", "Read a bounded staged candidate line range", {
                 "path": {"type": "string"},
                 "start_line": {"type": "integer", "minimum": 1},
@@ -75,6 +89,9 @@ class BoundedRepositoryTools:
             "read_repository_file": self.read,
             "stage_candidate_file": self.stage,
             "inspect_candidate_diff": self.diff,
+            "validate_staged_candidate": self.validate_staged,
+            "inspect_candidate_manifest": self.manifest,
+            "discard_staged_candidate_file": self.discard,
             "read_staged_candidate_file": self.read_staged,
             "design_tool_extension": self.design_tool_extension,
         }
@@ -229,6 +246,69 @@ class BoundedRepositoryTools:
             ))
         rendered = "\n".join(output)
         return {"diff": rendered[:100_000], "truncated": len(rendered) > 100_000}
+
+    def manifest(self) -> dict:
+        files = []
+        for item in sorted(self.staged.values(), key=lambda value: value["path"]):
+            content = item.get("content") or ""
+            files.append({
+                "path": item["path"],
+                "change_type": item["change_type"],
+                "bytes": len(content.encode()),
+                "sha256": hashlib.sha256(content.encode()).hexdigest(),
+            })
+        return {"files": files, "file_count": len(files)}
+
+    def discard(self, path: str) -> dict:
+        self._safe_path(path)
+        existed = path in self.staged
+        self.staged.pop(path, None)
+        return {"discarded": path, "existed": existed, "file_count": len(self.staged)}
+
+    def validate_staged(self) -> dict:
+        """Validate staged syntax without importing or executing candidate code."""
+        policy_errors = validate_candidate_files(self.staged_files())
+        errors = [{"code": "candidate_policy", "detail": value[:300]} for value in policy_errors]
+        checked = []
+        for item in sorted(self.staged.values(), key=lambda value: value["path"]):
+            path = item["path"]
+            if item["change_type"] == "delete":
+                checked.append({"path": path, "validator": "delete_policy"})
+                continue
+            content = item.get("content") or ""
+            suffix = Path(path).suffix.casefold()
+            validator = "text"
+            try:
+                if suffix == ".py":
+                    validator = "python_ast"
+                    ast.parse(content, filename=path)
+                elif suffix == ".json":
+                    validator = "json"
+                    json.loads(content)
+                elif suffix in {".yaml", ".yml"}:
+                    validator = "yaml_safe_load"
+                    yaml.safe_load(content)
+                elif suffix == ".toml":
+                    validator = "tomllib"
+                    tomllib.loads(content)
+            except (SyntaxError, ValueError, TypeError, yaml.YAMLError) as exc:
+                problem_mark = getattr(exc, "problem_mark", None)
+                errors.append({
+                    "path": path,
+                    "code": f"{validator}_invalid",
+                    "line": (
+                        getattr(exc, "lineno", None)
+                        or (getattr(problem_mark, "line", -1) + 1 if problem_mark else None)
+                    ),
+                })
+            checked.append({"path": path, "validator": validator})
+        return {
+            "valid": not errors,
+            "checked": checked,
+            "errors": errors[:50],
+            "manifest": self.manifest(),
+            "authority": "structural_only_trusted_ci_still_required",
+        }
 
     def read_staged(
         self, path: str, start_line: int = 1, end_line: int = 400,

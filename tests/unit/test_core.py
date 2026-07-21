@@ -1858,6 +1858,34 @@ def test_candidate_builder_tools_enforce_paths_calls_and_tool_authority(tmp_path
         fresh.read("../outside.txt")
 
 
+def test_candidate_builder_can_validate_hash_and_rollback_staged_files(tmp_path):
+    (tmp_path / "app").mkdir()
+    tools = BoundedRepositoryTools(tmp_path, max_calls=20)
+    tools.execute("stage_candidate_file", {
+        "path": "app/valid.py", "change_type": "create", "content": "VALUE = 1\n",
+    })
+    manifest = tools.execute("inspect_candidate_manifest", {})
+    assert manifest["file_count"] == 1
+    assert len(manifest["files"][0]["sha256"]) == 64
+    assert tools.execute("validate_staged_candidate", {}) == {
+        "valid": True,
+        "checked": [{"path": "app/valid.py", "validator": "python_ast"}],
+        "errors": [],
+        "manifest": manifest,
+        "authority": "structural_only_trusted_ci_still_required",
+    }
+    tools.execute("stage_candidate_file", {
+        "path": "app/broken.py", "change_type": "create", "content": "if:\n",
+    })
+    invalid = tools.execute("validate_staged_candidate", {})
+    assert invalid["valid"] is False
+    assert invalid["errors"][0]["path"] == "app/broken.py"
+    assert invalid["errors"][0]["code"] == "python_ast_invalid"
+    discarded = tools.execute("discard_staged_candidate_file", {"path": "app/broken.py"})
+    assert discarded == {"discarded": "app/broken.py", "existed": True, "file_count": 1}
+    assert tools.execute("validate_staged_candidate", {})["valid"] is True
+
+
 def test_okf_candidate_rejects_reserved_concepts_and_escaping_links():
     reserved, reserved_errors = _parse_candidate_document(
         "knowledge/policies/index.md", "# navigation only",
