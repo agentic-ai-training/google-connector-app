@@ -60,7 +60,7 @@ from app.tools.registry import _request_id, list_recent_gmail_senders
 from app.tools.result_projection import project_tool_result
 from app.tools.registry import registered_tool_names
 from app.evaluation.replay import replay_case
-from app.improvements.analyzer import assess_canary
+from app.improvements.analyzer import assess_canary, dispatch_retryable_candidate_builds
 from app.improvements.publisher import proposal_markdown
 from app.improvements.candidates import (
     candidate_digest, validate_candidate_files,
@@ -913,6 +913,73 @@ def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
         "message": "TimeoutError during candidate generation.",
         "retryable": True, "retry_after_seconds": None,
     }
+
+    from groq import RateLimitError
+    request = httpx.Request("POST", "https://api.groq.com/test")
+    limited = RateLimitError(
+        "private quota detail",
+        response=httpx.Response(429, request=request),
+        body={"error": {"message": (
+            "Rate limit reached on tokens per day. "
+            "Please try again in 1m2.25s. private organization value"
+        )}},
+    )
+    rate_payload = failure_payload(limited, "generation")
+    assert rate_payload == {
+        "stage": "generation", "error_type": "RateLimitError",
+        "message": "Groq model quota is exhausted; retry after the provider reset.",
+        "retryable": True, "retry_after_seconds": 63,
+    }
+    assert "organization" not in rate_payload["message"]
+
+
+def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
+    executed = []
+    dispatched = []
+
+    class Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    class Connection:
+        def transaction(self):
+            return Transaction()
+
+        async def fetch(self, query, limit):
+            assert "FOR UPDATE SKIP LOCKED" in query
+            assert limit == 2
+            return [{"id": "build-one"}]
+
+        async def execute(self, query, *args):
+            executed.append((query, args))
+
+    connection = Connection()
+
+    class Acquire:
+        async def __aenter__(self):
+            return connection
+
+        async def __aexit__(self, *_):
+            return False
+
+    class Pool:
+        def acquire(self):
+            return Acquire()
+
+    async def dispatch(build_id):
+        dispatched.append(build_id)
+
+    monkeypatch.setattr(
+        "app.improvements.publisher.dispatch_candidate_builder", dispatch,
+    )
+    result = asyncio.run(dispatch_retryable_candidate_builds(Pool()))
+    assert result == 1
+    assert dispatched == ["build-one"]
+    assert len(executed) == 1
+    assert "last_retry_dispatch" in executed[0][1][0]
 
 
 def test_candidate_builder_classifies_groq_status_without_raw_error():

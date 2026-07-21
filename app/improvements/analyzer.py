@@ -456,6 +456,63 @@ async def improvement_analysis_loop(pool, stop_event: asyncio.Event):
         await expire_stale_proposals(pool)
         await analyze_recent_failures(pool)
         await analyze_cross_cluster_themes(pool)
+        await dispatch_retryable_candidate_builds(pool)
         await evaluate_active_canaries(pool)
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=60)
+
+
+async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
+    """Re-dispatch due GitHub builders without creating duplicate candidates."""
+    async with pool.acquire() as conn, conn.transaction():
+        rows = await conn.fetch(
+            """SELECT id FROM candidate_builds
+               WHERE status='queued'
+                 AND checkpoint#>>'{last_runner_failure,retryable}'='true'
+                 AND updated_at + (
+                   LEAST(86400, GREATEST(60, COALESCE(
+                     NULLIF(checkpoint#>>'{last_runner_failure,retry_after_seconds}','')::int,
+                     1800
+                   ))) * interval '1 second'
+                 ) <= now()
+               ORDER BY updated_at,id
+               FOR UPDATE SKIP LOCKED LIMIT $1""",
+            max(1, min(int(limit), 10)),
+        )
+        build_ids = [str(row["id"]) for row in rows]
+        for build_id in build_ids:
+            await conn.execute(
+                """UPDATE candidate_builds SET updated_at=now(),
+                     checkpoint=checkpoint||$1::jsonb WHERE id=$2""",
+                json.dumps({
+                    "last_retry_dispatch": {
+                        "state": "dispatching", "contains_private_evidence": False,
+                    },
+                }), build_id,
+            )
+    if not build_ids:
+        return 0
+    from app.improvements.publisher import dispatch_candidate_builder
+    dispatched = 0
+    for build_id in build_ids:
+        try:
+            await dispatch_candidate_builder(build_id)
+            dispatched += 1
+        except Exception as exc:
+            logger.warning(
+                "Candidate retry dispatch failed build=%s error_type=%s",
+                build_id, type(exc).__name__,
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE candidate_builds SET error_message=$1,updated_at=now(),
+                         checkpoint=checkpoint||$2::jsonb WHERE id=$3 AND status='queued'""",
+                    "Candidate retry dispatch failed; the durable build remains queued.",
+                    json.dumps({
+                        "last_retry_dispatch": {
+                            "state": "failed", "error_type": type(exc).__name__,
+                            "contains_private_evidence": False,
+                        },
+                    }), build_id,
+                )
+    return dispatched

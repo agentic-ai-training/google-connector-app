@@ -199,11 +199,21 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
         if not build:
             raise HTTPException(409, "Candidate build is unavailable or already finalized")
         state = "queued" if body.retryable else "failed"
+        retry_after_seconds = body.retry_after_seconds
+        if body.retryable and retry_after_seconds is None:
+            retry_after_seconds = (
+                1_800 if "rate" in body.error_type.casefold() else 300
+            )
+        previous_failure = _json_object(build["checkpoint"]).get(
+            "last_runner_failure", {}
+        )
+        retry_count = int(previous_failure.get("retry_count") or 0) + 1
         checkpoint = {
             "last_runner_failure": {
                 "stage": body.stage, "error_type": body.error_type,
                 "retryable": body.retryable,
-                "retry_after_seconds": body.retry_after_seconds,
+                "retry_after_seconds": retry_after_seconds,
+                "retry_count": retry_count,
                 "contains_private_evidence": False,
             },
         }
@@ -217,7 +227,8 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
         payload = json.dumps({
             "build_id": build_id, "stage": body.stage,
             "error_type": body.error_type, "retryable": body.retryable,
-            "retry_after_seconds": body.retry_after_seconds,
+            "retry_after_seconds": retry_after_seconds,
+            "retry_count": retry_count,
             "contains_private_evidence": False,
         })
         await conn.execute(
@@ -230,7 +241,10 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
                  error_message=NULL,created_at=now()""",
             build["proposal_id"], payload,
         )
-    return {"build_id": build_id, "status": state, "retryable": body.retryable}
+    return {
+        "build_id": build_id, "status": state, "retryable": body.retryable,
+        "retry_after_seconds": retry_after_seconds, "retry_count": retry_count,
+    }
 
 
 @router.post("/candidate-builds/{build_id}/attestation")
