@@ -50,7 +50,7 @@ jobs:
           python scripts/run_dp_allocation_evals.py 2>&1 | tee -a candidate-tests.log
           python -m compileall -q app
           python -m flake8 app scripts tests migrations
-          bandit -q -r app scripts
+          bandit -q -r app scripts -ll
           pip-audit -r requirements.txt --progress-spinner off
           alembic downgrade 012
           alembic upgrade 013
