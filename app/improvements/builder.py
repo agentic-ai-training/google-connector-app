@@ -23,6 +23,8 @@ MODEL_POLICY_VERSION = "adaptive-roles-v1"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
+BUILDER_AUTHOR_MAX_ROUNDS = 8
+BUILDER_REVIEWER_MAX_ROUNDS = 5
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -432,12 +434,17 @@ async def _groq_tool_json(
     token_budget = effective_builder_token_budget(job)
     models_used: list[str] = []
     json_tool_protocol = False
-    for round_number in range(12):
+    max_rounds = (
+        BUILDER_REVIEWER_MAX_ROUNDS
+        if role == "independent_safety_reviewer"
+        else BUILDER_AUTHOR_MAX_ROUNDS
+    )
+    for round_number in range(max_rounds):
         if tokens >= token_budget:
             raise RuntimeError("Candidate token budget exhausted during tool reasoning")
         remaining = max(256, token_budget - tokens)
         messages = _fit_builder_history(messages)
-        force_finalize = round_number >= 10
+        force_finalize = round_number >= max_rounds - 2
         if force_finalize:
             final_messages = _json_tool_protocol_kwargs({
                 "messages": messages, "tools": [],
@@ -556,7 +563,7 @@ async def _groq_tool_json(
             )
         contract_errors = candidate_contract_errors(candidate)
         if contract_errors:
-            if round_number < 11:
+            if round_number < max_rounds - 1:
                 messages.append({
                     "role": "user",
                     "content": json.dumps({

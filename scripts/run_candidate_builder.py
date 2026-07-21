@@ -39,7 +39,9 @@ def runtime_failure_code(exc: Exception) -> str | None:
 def failure_payload(exc: Exception, stage: str) -> dict:
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
-    retryable = isinstance(exc, (RateLimitError, APITimeoutError, httpx.TransportError)) or (
+    retryable = isinstance(
+        exc, (RateLimitError, APITimeoutError, httpx.TransportError, TimeoutError)
+    ) or (
         isinstance(exc, APIStatusError) and (status == 429 or (status or 0) >= 500)
     ) or (
         isinstance(exc, httpx.HTTPStatusError) and (status == 429 or (status or 0) >= 500)
@@ -98,7 +100,9 @@ async def main() -> None:
                 response.raise_for_status()
                 job = response.json()["build"]
                 stage = "generation"
-                candidate, tokens, roles, models_used = await generate_candidate_draft(job)
+                candidate, tokens, roles, models_used = await asyncio.wait_for(
+                    generate_candidate_draft(job), timeout=540,
+                )
                 payload = {
                     "files": candidate.get("files") or [],
                     "exact_diff": candidate["exact_diff"],
