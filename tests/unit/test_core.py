@@ -83,7 +83,7 @@ from types import SimpleNamespace
 from app.improvements.network_guard import allowlisted_dns
 import socket
 from app.improvements.canary_simulator import SimulatedRun, simulate_claims, simulate_rollback
-from scripts.run_candidate_builder import failure_payload
+from scripts.run_candidate_builder import failure_payload, runtime_failure_code
 
 def test_context_packer_orders_by_score():
     text = pack_context([
@@ -297,6 +297,27 @@ def test_candidate_builder_classifies_groq_status_without_raw_error():
         "message": "Groq API returned HTTP 400 during candidate generation.",
         "retryable": False, "retry_after_seconds": None,
     }
+
+
+@pytest.mark.parametrize(("message", "code"), [
+    ("Candidate builder history exceeded its bounded request budget",
+     "history_budget_exhausted"),
+    ("Candidate token budget exhausted during tool reasoning",
+     "tool_token_budget_exhausted"),
+    ("Candidate token budget exhausted before review",
+     "review_token_budget_exhausted"),
+    ("Candidate builder exceeded its bounded reasoning/tool rounds",
+     "tool_round_limit_exhausted"),
+    ("Groq candidate output was not valid JSON", "invalid_candidate_json"),
+    ("model supplied unsafe review reason", "bounded_runtime_failure"),
+])
+def test_candidate_builder_runtime_failures_have_sanitized_codes(message, code):
+    error = RuntimeError(message)
+    assert runtime_failure_code(error) == code
+    payload = failure_payload(error, "generation")
+    assert payload["error_type"] == code
+    assert payload["message"] == f"Candidate builder stopped at guard {code}."
+    assert message not in payload["message"]
 
 
 def test_dual_worker_simulation_has_no_double_claim_and_sticky_rollback():

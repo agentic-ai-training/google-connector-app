@@ -17,6 +17,24 @@ from app.improvements.builder import generate_candidate_draft
 from app.improvements.network_guard import allowlisted_dns
 
 
+def runtime_failure_code(exc: Exception) -> str | None:
+    if not isinstance(exc, RuntimeError):
+        return None
+    message = str(exc)
+    markers = {
+        "history exceeded its bounded request budget": "history_budget_exhausted",
+        "token budget exhausted during tool reasoning": "tool_token_budget_exhausted",
+        "token budget exhausted before review": "review_token_budget_exhausted",
+        "exceeded its bounded reasoning/tool rounds": "tool_round_limit_exhausted",
+        "output was not valid JSON": "invalid_candidate_json",
+        "Independent review rejected candidate": "independent_review_rejected",
+    }
+    for marker, code in markers.items():
+        if marker.casefold() in message.casefold():
+            return code
+    return "bounded_runtime_failure"
+
+
 def failure_payload(exc: Exception, stage: str) -> dict:
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
@@ -32,16 +50,20 @@ def failure_payload(exc: Exception, stage: str) -> dict:
             retry_after = max(1, min(int(float(raw)), 86_400)) if raw else None
         except ValueError:
             retry_after = None
+    runtime_code = runtime_failure_code(exc)
+    error_type = runtime_code or type(exc).__name__
     if isinstance(exc, RateLimitError):
         message = "Groq model quota is exhausted; retry after the provider reset."
     elif isinstance(exc, APIStatusError):
         message = f"Groq API returned HTTP {status} during candidate {stage}."
     elif isinstance(exc, httpx.HTTPStatusError):
         message = f"Candidate callback returned HTTP {status} during {stage}."
+    elif runtime_code:
+        message = f"Candidate builder stopped at guard {runtime_code}."
     else:
         message = f"{type(exc).__name__} during candidate {stage}."
     return {
-        "stage": stage, "error_type": type(exc).__name__, "message": message,
+        "stage": stage, "error_type": error_type, "message": message,
         "retryable": retryable, "retry_after_seconds": retry_after,
     }
 
