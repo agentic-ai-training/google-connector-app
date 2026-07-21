@@ -2,6 +2,7 @@ import pytest
 import importlib
 import httpx
 import asyncio
+import json
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -65,8 +66,8 @@ from app.improvements.candidates import (
     candidate_digest, validate_candidate_files,
 )
 from app.improvements.builder import (
-    _candidate_completion, candidate_model_order, choose_builder_mode,
-    normalize_candidate_contract,
+    _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
+    candidate_model_order, choose_builder_mode, normalize_candidate_contract,
 )
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
@@ -169,6 +170,43 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
         assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
     finally:
         get_settings.cache_clear()
+
+
+def test_candidate_builder_projects_tool_results_and_staged_bodies(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path)
+    projected = tools.project_result(
+        "read_repository_file", {"path": "app/x.py", "content": "x" * 20_000},
+    )
+    assert projected["truncated"] is True
+    assert len(json.dumps(projected)) < 9_000
+
+    compacted = _compact_builder_tool_call({
+        "id": "call-1", "type": "function",
+        "function": {
+            "name": "stage_candidate_file",
+            "arguments": json.dumps({
+                "path": "app/x.py", "change_type": "replace", "content": "x" * 20_000,
+            }),
+        },
+    })
+    arguments = json.loads(compacted["function"]["arguments"])
+    assert "body omitted" in arguments["content"]
+    assert len(arguments["content"]) < 150
+
+
+def test_candidate_builder_compacts_cumulative_tool_history():
+    messages = [{"role": "user", "content": "objective"}]
+    for index in range(8):
+        messages.extend([
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": f"call-{index}", "type": "function",
+                "function": {"name": "read_repository_file", "arguments": "{}"},
+            }]},
+            {"role": "tool", "tool_call_id": f"call-{index}", "content": "x" * 8_000},
+        ])
+    fitted = _fit_builder_history(messages)
+    assert len(json.dumps(fitted)) <= 50_000
+    assert any("compacted" in item.get("content", "") for item in fitted)
 
 
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
