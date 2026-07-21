@@ -49,9 +49,11 @@ privacy/security results. Human gates remain separate for draft PR publication, 
 deployment, real-user canary activation, trusted OKF publication, and promotion.
 
 Worker-compatible code candidates run in a separate Railway project and claim only runs
-pinned to their immutable executor version. Prompt/config/OKF candidates use versioned
-registries. Planner/API/frontend code is intentionally ineligible for the worker-only
-target until an isolated candidate API/gateway or worker-side planning design exists.
+pinned to their immutable executor version. API/planner candidates use the same isolated
+candidate image with an HTTPS domain created only for the `api` runtime surface; the
+control API performs bounded applicability/cohort selection and proxies creation/resume
+to that exact attested version. Prompt/config/OKF candidates use versioned registries.
+Frontend candidates remain ineligible until an isolated preview and traffic router exists.
 Safety regression stops assignment, returns never-started queued runs to control, and
 scales down the candidate through the cleanup controller.
 

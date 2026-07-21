@@ -57,9 +57,10 @@ Current governed sequence:
    worker attest the exact merged commit and smoke tests.
 
 Rejected, expired, rolled-back, and failed-build policy themes return to `active` so later
-evidence can reopen them. Only attested production publication resolves a theme. Code that
-changes API, planner, or frontend surfaces is blocked from the worker-only candidate target;
-do not bypass this by claiming worker deployment evidence.
+evidence can reopen them. Only attested production publication resolves a theme. API/planner
+candidates require the isolated HTTPS candidate API plus exact health/version attestation;
+frontend candidates remain blocked until a separate preview router exists. Do not represent
+worker-only deployment evidence as proof for an API or frontend surface.
 
 The isolated candidate Railway project should remain scaled to zero until the deployment
 gate is approved. It needs no public domain. `candidate-infra-check.yml` validates access

@@ -70,5 +70,6 @@ to the API/worker image merely to preserve a particular benchmark library.
 
 Remaining defense-in-depth: GitHub-hosted generation is an ephemeral credential-minimal
 checkout, but not a network-namespace sandbox with destination-level egress enforcement.
-Planner/API/frontend candidates also remain blocked from real canary execution until an
-isolated API/gateway or worker-side planning path is implemented.
+Frontend candidates remain blocked from real canary execution until an isolated preview
+and traffic router exists. Planner/API candidates use the separately attested Railway
+candidate API and stable control-side proxy routing; they do not replace the control API.
