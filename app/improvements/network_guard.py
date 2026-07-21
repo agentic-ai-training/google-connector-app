@@ -11,7 +11,8 @@ def allowlisted_dns(hostnames: set[str]):
     original = socket.getaddrinfo
 
     def guarded(host, *args, **kwargs):
-        normalized = str(host).casefold().rstrip(".")
+        value = host.decode("ascii") if isinstance(host, bytes) else str(host)
+        normalized = value.casefold().rstrip(".")
         if normalized not in allowed:
             raise PermissionError(f"Candidate builder outbound host is forbidden: {normalized}")
         return original(host, *args, **kwargs)
