@@ -102,6 +102,7 @@ def test_candidate_builder_dns_guard_denies_unknown_hosts(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, *args, **kwargs: [(host,)])
     with allowlisted_dns({"api.groq.com"}):
         assert socket.getaddrinfo("api.groq.com") == [("api.groq.com",)]
+        assert socket.getaddrinfo(b"api.groq.com") == [(b"api.groq.com",)]
         with pytest.raises(PermissionError):
             socket.getaddrinfo("example.com")
     # The context restores whatever resolver was active at entry.
