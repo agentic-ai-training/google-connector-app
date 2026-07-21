@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     candidate_builder_model: str = "llama-3.3-70b-versatile"
     candidate_builder_fallback_models: str = "openai/gpt-oss-120b"
     candidate_builder_job_token_budget: int = 12000
-    candidate_builder_max_effective_token_budget: int = 24000
+    candidate_builder_max_effective_token_budget: int = 48000
     candidate_builder_max_output_tokens: int = 6000
     candidate_builder_poll_seconds: float = 5.0
     candidate_builder_timeout_seconds: int = 240
