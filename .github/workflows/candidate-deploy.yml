@@ -26,7 +26,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${{ inputs.candidate_version }}"
       - name: Link the isolated candidate Railway project
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
         run: >-
@@ -47,18 +47,18 @@ jobs:
           npx -y @railway/cli@latest up --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --detach --yes
           npx -y @railway/cli@latest scale --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" "${region}=1" --json >/dev/null
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
           RAILWAY_CANDIDATE_REGION: ${{ vars.RAILWAY_CANDIDATE_REGION }}
       - name: Restrict candidate networking to its required surfaces
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
           CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
         run: python scripts/configure_candidate_domain.py
       - name: Wait for candidate worker deployment
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
           CANDIDATE_VERSION: ${{ inputs.candidate_version }}
           CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}

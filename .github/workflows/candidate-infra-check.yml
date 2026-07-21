@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Verify isolated Railway project access without deploying
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
         run: |
