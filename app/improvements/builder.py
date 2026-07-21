@@ -20,7 +20,7 @@ from app.improvements.builder_tools import BoundedRepositoryTools
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v2-review-envelope"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -335,6 +335,18 @@ def candidate_contract_errors(candidate: dict) -> list[str]:
         errors.append("validation_commands_invalid")
     return list(dict.fromkeys(errors))
 
+
+def reviewer_contract_errors(review: dict) -> list[str]:
+    """Validate the review envelope without treating it as candidate files."""
+    if not isinstance(review.get("approved"), bool):
+        return ["review_approval_required"]
+    revised = review.get("revised_candidate")
+    if revised is not None and not isinstance(revised, dict):
+        return ["revised_candidate_not_object"]
+    if review["approved"] is False and not str(review.get("reason") or "").strip():
+        return ["review_rejection_reason_required"]
+    return []
+
 def choose_builder_mode(risk_level: str, change_scope: list[str]) -> str:
     return "multi_role" if risk_level in {"high", "critical"} or len(change_scope) > 3 else "single"
 
@@ -459,9 +471,13 @@ async def _groq_tool_json(
                 "content": json.dumps({
                     "finalization_required": True,
                     "instruction": (
-                        "Repository investigation is closed. Return the final JSON contract "
-                        "now using the evidence and staged files already available. Do not "
+                        "Repository investigation is closed. Return the reviewer envelope "
+                        "now with approved, reason, and optional revised_candidate. Do not "
                         "request another tool."
+                        if role == "independent_safety_reviewer" else
+                        "Repository investigation is closed. Return the final candidate JSON "
+                        "contract now using the evidence and staged files already available. "
+                        "Do not request another tool."
                     ),
                     "staged_files": candidate_review_projection({
                         "files": tools.staged_files(),
@@ -558,6 +574,26 @@ async def _groq_tool_json(
                 }, default=str),
             })
             continue
+        if role == "independent_safety_reviewer":
+            review_errors = reviewer_contract_errors(candidate)
+            if review_errors:
+                if round_number < max_rounds - 1:
+                    messages.append({
+                        "role": "user",
+                        "content": json.dumps({
+                            "review_contract_rejected": review_errors,
+                            "instruction": (
+                                "Return one corrected reviewer envelope with a boolean approved, "
+                                "a reason when rejected, and an optional complete revised_candidate."
+                            ),
+                        }),
+                    })
+                    continue
+                raise RuntimeError(
+                    "Reviewer contract failed local validation: "
+                    + ",".join(review_errors)
+                )
+            return candidate, tokens, models_used
         if tools.staged_files():
             candidate["files"] = tools.staged_files()
             candidate.setdefault("exact_diff", tools.diff()["diff"])
@@ -629,14 +665,27 @@ async def generate_candidate_draft(
                     output.get("reason") or "Independent review rejected candidate"
                 )
             candidate = output.get("revised_candidate") or candidate
-            candidate["files"] = repository_tools.staged_files()
-            candidate["exact_diff"] = repository_tools.diff()["diff"]
+            if repository_tools.staged_files():
+                candidate["files"] = repository_tools.staged_files()
+                candidate["exact_diff"] = repository_tools.diff()["diff"]
         else:
             candidate = output
+            if "independent_safety_reviewer" in roles:
+                # Direct JSON files are normalized into the same bounded in-memory
+                # staging area so the reviewer can inspect their complete content.
+                for item in candidate.get("files") or []:
+                    repository_tools.stage(
+                        item["path"], item["change_type"], item.get("content") or "",
+                    )
     candidate = normalize_candidate_contract(candidate or {})
     candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
     candidate.setdefault("rollback_plan", {"action": "route traffic to base version"})
     candidate.setdefault("validation_commands", [])
+    final_errors = candidate_contract_errors(candidate)
+    if final_errors:
+        raise RuntimeError(
+            "Candidate contract failed local validation: " + ",".join(final_errors)
+        )
     return candidate, tokens, roles, models_used
 
 

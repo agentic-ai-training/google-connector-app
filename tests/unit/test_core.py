@@ -67,11 +67,11 @@ from app.improvements.candidates import (
 )
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
-    _groq_tool_json,
+    _groq_tool_json, generate_candidate_draft,
     candidate_contract_errors, candidate_model_order, candidate_review_projection,
     choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
-    normalize_candidate_contract,
+    normalize_candidate_contract, reviewer_contract_errors,
 )
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
@@ -610,6 +610,76 @@ def test_candidate_contract_preflight_returns_only_safe_reason_codes():
     assert all("api_key=x" not in error for error in errors)
 
 
+def test_candidate_reviewer_envelope_is_not_validated_as_candidate_files(
+    monkeypatch, tmp_path,
+):
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            message = SimpleNamespace(
+                content=json.dumps({"approved": True, "reason": "bounded and safe"}),
+                tool_calls=None,
+            )
+            usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message)], usage=usage,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        review, tokens, models = asyncio.run(_groq_tool_json(
+            {
+                "model_name": "openai/gpt-oss-20b", "token_budget": 1_000,
+                "sanitized_input": {"title": "review envelope test"},
+            },
+            BoundedRepositoryTools(tmp_path), "independent_safety_reviewer",
+            {"files": [{
+                "path": "tests/candidate.py", "change_type": "create",
+                "content": "value = 1\n",
+            }]},
+        ))
+        assert review == {"approved": True, "reason": "bounded and safe"}
+        assert tokens == 5
+        assert models == ["openai/gpt-oss-20b"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_multi_role_approval_preserves_direct_author_files(monkeypatch):
+    author = {
+        "files": [{
+            "path": "tests/direct_candidate.py", "change_type": "create",
+            "content": "value = 1\n",
+        }],
+        "exact_diff": "direct candidate",
+        "rollback_plan": {"action": "remove direct candidate"},
+        "validation_commands": ["pytest -q tests/unit"],
+    }
+
+    async def fake_role(job, tools, role, prior_candidate=None):
+        if role == "independent_safety_reviewer":
+            assert prior_candidate == author
+            assert tools.staged_files() == author["files"]
+            return {"approved": True, "reason": "safe"}, 5, ["review-model"]
+        return author, 10, ["author-model"]
+
+    monkeypatch.setattr("app.improvements.builder._groq_tool_json", fake_role)
+    candidate, tokens, roles, models = asyncio.run(generate_candidate_draft({
+        "mode": "multi_role", "model_name": "openai/gpt-oss-20b",
+        "token_budget": 1_000,
+        "sanitized_input": {"component": "step_executor", "selected_option": {}},
+    }))
+    assert candidate["files"] == author["files"]
+    assert "+++ b/tests/direct_candidate.py" in candidate["exact_diff"]
+    assert tokens == 15
+    assert roles == ["investigator_and_patch_author", "independent_safety_reviewer"]
+    assert models == ["author-model", "review-model"]
+    assert reviewer_contract_errors({"approved": True}) == []
+
+
 def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp_path):
     requests = []
 
@@ -743,6 +813,8 @@ def test_candidate_builder_classifies_groq_status_without_raw_error():
     ("Groq candidate output was not valid JSON", "invalid_candidate_json"),
     ("Candidate contract failed local validation: files_required",
      "candidate_contract_invalid"),
+    ("Reviewer contract failed local validation: review_approval_required",
+     "reviewer_contract_invalid"),
     ("model supplied unsafe review reason", "bounded_runtime_failure"),
 ])
 def test_candidate_builder_runtime_failures_have_sanitized_codes(message, code):

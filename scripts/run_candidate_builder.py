@@ -28,6 +28,7 @@ def runtime_failure_code(exc: Exception) -> str | None:
         "exceeded its bounded reasoning/tool rounds": "tool_round_limit_exhausted",
         "output was not valid JSON": "invalid_candidate_json",
         "Candidate contract failed local validation": "candidate_contract_invalid",
+        "Reviewer contract failed local validation": "reviewer_contract_invalid",
         "Independent review rejected candidate": "independent_review_rejected",
     }
     for marker, code in markers.items():
