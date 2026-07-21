@@ -13,7 +13,7 @@ from groq import APIStatusError, APITimeoutError, RateLimitError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.improvements.builder import generate_candidate_draft
+from app.improvements.builder import generate_candidate_draft, groq_bad_request_code
 from app.improvements.network_guard import allowlisted_dns
 
 
@@ -59,6 +59,8 @@ def failure_payload(exc: Exception, stage: str) -> dict:
     if isinstance(exc, RateLimitError):
         message = "Groq model quota is exhausted; retry after the provider reset."
     elif isinstance(exc, APIStatusError):
+        if status == 400:
+            error_type = groq_bad_request_code(exc)
         message = f"Groq API returned HTTP {status} during candidate {stage}."
     elif isinstance(exc, httpx.HTTPStatusError):
         message = f"Candidate callback returned HTTP {status} during {stage}."

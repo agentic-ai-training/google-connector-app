@@ -52,6 +52,28 @@ def is_tool_generation_failure(exc: Exception) -> bool:
     return isinstance(error, dict) and "failed_generation" in error
 
 
+def groq_bad_request_code(exc: Exception) -> str:
+    """Classify a Groq 400 without returning prompts or generated arguments."""
+    body = getattr(exc, "body", None)
+    try:
+        value = json.dumps(body or {}, default=str).casefold()
+    except (TypeError, ValueError):
+        value = ""
+    if any(marker in value for marker in (
+        "reduce the length", "context_length", "context length", "too many tokens",
+        "maximum context", "max_tokens", "message too large",
+    )):
+        return "model_context_length"
+    if "failed_generation" in value:
+        return "tool_generation_failed"
+    if any(marker in value for marker in (
+        "response_format", "tool_choice", "parallel_tool_calls",
+        "disable_tool_validation", "unsupported", "not supported",
+    )):
+        return "model_request_schema_rejected"
+    return "model_bad_request"
+
+
 def _json_tool_protocol_kwargs(kwargs: dict) -> dict:
     """Replace provider-native tools with a locally validated JSON action protocol."""
     value = dict(kwargs)
@@ -152,7 +174,12 @@ async def _candidate_completion(
                     # Continue only within the configured builder-only allowlist.
                     last_error = exc
                     break
-                if status == 413 and not retried_oversize and request_kwargs.get("messages"):
+                bad_request_code = groq_bad_request_code(exc) if status == 400 else None
+                if (
+                    status in {400, 413} and not retried_oversize
+                    and request_kwargs.get("messages")
+                    and (status == 413 or bad_request_code == "model_context_length")
+                ):
                     retried_oversize = True
                     request_kwargs = dict(request_kwargs)
                     request_kwargs["messages"] = _fit_builder_history(
@@ -177,6 +204,12 @@ async def _candidate_completion(
                     kwargs = _json_tool_protocol_kwargs(request_kwargs)
                     request_kwargs = kwargs
                     continue
+                if status == 400:
+                    # A 400 can be model-specific (context/output limits or feature
+                    # support). Advance only through the configured builder allowlist;
+                    # never alter the models used by ordinary user workflows.
+                    last_error = exc
+                    break
                 raise
     if last_error is None:
         raise RuntimeError("Candidate model chain ended without a provider result")

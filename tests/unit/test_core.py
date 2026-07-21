@@ -71,7 +71,7 @@ from app.improvements.builder import (
     candidate_contract_errors, candidate_model_order, candidate_review_projection,
     choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
-    normalize_candidate_contract, reviewer_contract_errors,
+    normalize_candidate_contract, reviewer_contract_errors, groq_bad_request_code,
 )
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
@@ -428,6 +428,74 @@ def test_candidate_builder_retries_only_groq_failed_tool_generation(monkeypatch)
         assert requests[1]["parallel_tool_calls"] is False
         assert requests[1]["disable_tool_validation"] is True
         assert is_tool_generation_failure(RuntimeError("unrelated")) is False
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_compacts_groq_context_400_before_fallback(monkeypatch):
+    from groq import BadRequestError
+
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append((model, kwargs))
+            if len(requests) == 1:
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private prompt detail", response=response,
+                    body={"error": {"message": "Please reduce the length of the messages or completion."}},
+                )
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "openai/gpt-oss-20b")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        response, model, _ = asyncio.run(_candidate_completion(
+            client, {"model_name": "llama-3.3-70b-versatile"},
+            messages=[{"role": "user", "content": "objective"}], max_tokens=6_000,
+        ))
+        assert response.model == model == "llama-3.3-70b-versatile"
+        assert requests[1][1]["max_tokens"] == 2_048
+        assert groq_bad_request_code(BadRequestError(
+            "private", response=httpx.Response(
+                400, request=httpx.Request("POST", "https://api.groq.com/test"),
+            ), body={"error": {"message": "context_length exceeded"}},
+        )) == "model_context_length"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_advances_allowlisted_model_after_other_400(monkeypatch):
+    from groq import BadRequestError
+
+    calls = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            calls.append(model)
+            if model == "llama-3.3-70b-versatile":
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private", response=response,
+                    body={"error": {"message": "request rejected"}},
+                )
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "openai/gpt-oss-20b")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model, _ = asyncio.run(_candidate_completion(
+            client, {"model_name": "llama-3.3-70b-versatile"}, messages=[],
+        ))
+        assert model == "openai/gpt-oss-20b"
+        assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-20b"]
     finally:
         get_settings.cache_clear()
 
@@ -795,7 +863,7 @@ def test_candidate_builder_classifies_groq_status_without_raw_error():
         response=httpx.Response(400, request=request), body=None,
     )
     assert failure_payload(bad_request, "generation") == {
-        "stage": "generation", "error_type": "BadRequestError",
+        "stage": "generation", "error_type": "model_bad_request",
         "message": "Groq API returned HTTP 400 during candidate generation.",
         "retryable": False, "retry_after_seconds": None,
     }
