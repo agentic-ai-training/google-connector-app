@@ -116,6 +116,11 @@ async def _candidate_completion(
         if model == "qwen/qwen3.6-27b":
             request_kwargs["temperature"] = 0.6
             request_kwargs["reasoning_format"] = "hidden"
+        if model.startswith("openai/gpt-oss-") and request_kwargs.get("tools"):
+            # Groq rejects response_format alongside local tools for GPT-OSS.
+            # Tool turns remain provider-validated; JSON mode is restored once
+            # tools close for final candidate serialization.
+            request_kwargs.pop("response_format", None)
         retried_short_limit = False
         retried_oversize = False
         retried_tool_generation = False

@@ -237,6 +237,33 @@ def test_candidate_builder_reaches_final_20b_fallback(monkeypatch):
         get_settings.cache_clear()
 
 
+def test_candidate_builder_omits_json_mode_only_for_gpt_oss_tool_turns(monkeypatch):
+    calls = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            calls.append((model, kwargs))
+            return SimpleNamespace(model=model)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    response_format = {"type": "json_object"}
+    tools = [{"type": "function", "function": {"name": "inspect"}}]
+    response, model, _ = asyncio.run(_candidate_completion(
+        client, {"model_name": "openai/gpt-oss-20b"}, messages=[],
+        tools=tools, response_format=response_format,
+    ))
+    assert response.model == model == "openai/gpt-oss-20b"
+    assert calls[0][1]["tools"] == tools
+    assert "response_format" not in calls[0][1]
+
+    calls.clear()
+    asyncio.run(_candidate_completion(
+        client, {"model_name": "openai/gpt-oss-20b"}, messages=[],
+        response_format=response_format,
+    ))
+    assert calls[0][1]["response_format"] == response_format
+
+
 def test_candidate_builder_skips_unavailable_model_within_allowlist(monkeypatch):
     from groq import NotFoundError
 
