@@ -37,7 +37,34 @@ def service_status(service: str) -> dict:
     return {}
 
 
-def wait_for_service(service: str) -> dict:
+def worker_matches(deployment: dict) -> bool:
+    logs = subprocess.check_output([
+        "npx", "-y", "@railway/cli@latest", "logs", deployment["id"],
+        "--service", SERVICES[1], "--lines", "200", "--json",
+    ], text=True)
+    return (
+        "worker_ready role=control" in logs
+        and f"deployment_version={COMMIT}" in logs
+    )
+
+
+def api_matches(_deployment: dict) -> bool:
+    try:
+        response = httpx.get(
+            os.environ["CANDIDATE_ATTESTATION_URL"].rstrip("/") + "/health",
+            timeout=15,
+        )
+        body = response.json()
+        return (
+            response.is_success and body.get("status") == "ok"
+            and body.get("deployment_version") == COMMIT
+            and body.get("executor_role") == "control"
+        )
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def wait_for_service(service: str, version_matches) -> dict:
     for _ in range(60):
         deployment = service_status(service)
         status = deployment.get("status")
@@ -50,20 +77,15 @@ def wait_for_service(service: str) -> dict:
             and meta.get("imageDigest", "").startswith("sha256:")
             and instances
             and all(item.get("status") == "RUNNING" for item in instances)
+            and version_matches(deployment)
         ):
             return deployment
         time.sleep(10)
     raise SystemExit(f"Production {service} did not run commit {COMMIT} within ten minutes")
 
 
-api = wait_for_service(SERVICES[0])
-worker = wait_for_service(SERVICES[1])
-logs = subprocess.check_output([
-    "npx", "-y", "@railway/cli@latest", "logs", worker["id"],
-    "--service", SERVICES[1], "--lines", "200", "--json",
-], text=True)
-if "worker_ready role=control" not in logs or f"deployment_version={COMMIT}" not in logs:
-    raise SystemExit("Production worker readiness is not bound to the promoted commit")
+api = wait_for_service(SERVICES[0], api_matches)
+worker = wait_for_service(SERVICES[1], worker_matches)
 
 base_url = os.environ["CANDIDATE_ATTESTATION_URL"].rstrip("/")
 health = httpx.get(f"{base_url}/health", timeout=30)
