@@ -166,7 +166,7 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
     class Completions:
         async def create(self, *, model, **kwargs):
             calls.append((model, kwargs))
-            if model != "qwen/qwen3-32b":
+            if model != "qwen/qwen3.6-27b":
                 response = httpx.Response(
                     429, headers={"retry-after": "3600"},
                     request=httpx.Request("POST", "https://api.groq.com/test"),
@@ -176,7 +176,7 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
 
     monkeypatch.setenv(
         "CANDIDATE_BUILDER_FALLBACK_MODELS",
-        "openai/gpt-oss-120b,qwen/qwen3-32b",
+        "openai/gpt-oss-120b,qwen/qwen3.6-27b",
     )
     get_settings.cache_clear()
     try:
@@ -186,13 +186,42 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
         response, model, protocol = asyncio.run(_candidate_completion(
             client, {"model_name": "llama-3.3-70b-versatile"}, messages=[],
         ))
-        assert response.model == model == "qwen/qwen3-32b"
+        assert response.model == model == "qwen/qwen3.6-27b"
         assert protocol is False
         assert [item[0] for item in calls] == [
-            "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3-32b",
+            "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3.6-27b",
         ]
         assert calls[-1][1]["temperature"] == 0.6
         assert calls[-1][1]["reasoning_format"] == "hidden"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_skips_unavailable_model_within_allowlist(monkeypatch):
+    from groq import NotFoundError
+
+    calls = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            calls.append(model)
+            if model == "retired/model":
+                response = httpx.Response(
+                    404, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise NotFoundError("private", response=response, body=None)
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "qwen/qwen3.6-27b")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        response, model, protocol = asyncio.run(_candidate_completion(
+            client, {"model_name": "retired/model"}, messages=[],
+        ))
+        assert response.model == model == "qwen/qwen3.6-27b"
+        assert protocol is False
+        assert calls == ["retired/model", "qwen/qwen3.6-27b"]
     finally:
         get_settings.cache_clear()
 

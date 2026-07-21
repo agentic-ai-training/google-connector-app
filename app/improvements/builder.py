@@ -105,13 +105,13 @@ async def _candidate_completion(
     client: AsyncGroq, job: dict, *, json_tool_protocol: bool = False, **kwargs,
 ):
     """Use another Groq quality model only when candidate generation is limited."""
-    last_error: RateLimitError | None = None
+    last_error: APIStatusError | None = None
     protocol_mode = json_tool_protocol
     if protocol_mode:
         kwargs = _json_tool_protocol_kwargs(kwargs)
     for model in candidate_model_order(job):
         request_kwargs = dict(kwargs)
-        if model == "qwen/qwen3-32b":
+        if model == "qwen/qwen3.6-27b":
             request_kwargs["temperature"] = 0.6
             request_kwargs["reasoning_format"] = "hidden"
         retried_short_limit = False
@@ -140,6 +140,11 @@ async def _candidate_completion(
                 break
             except APIStatusError as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 404:
+                    # Model availability is organization- and lifecycle-specific.
+                    # Continue only within the configured builder-only allowlist.
+                    last_error = exc
+                    break
                 if status == 413 and not retried_oversize and request_kwargs.get("messages"):
                     retried_oversize = True
                     request_kwargs = dict(request_kwargs)
@@ -166,7 +171,8 @@ async def _candidate_completion(
                     request_kwargs = kwargs
                     continue
                 raise
-    assert last_error is not None
+    if last_error is None:
+        raise RuntimeError("Candidate model chain ended without a provider result")
     raise last_error
 
 
