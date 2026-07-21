@@ -176,7 +176,7 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
 
     monkeypatch.setenv(
         "CANDIDATE_BUILDER_FALLBACK_MODELS",
-        "openai/gpt-oss-120b,qwen/qwen3.6-27b",
+        "openai/gpt-oss-120b,qwen/qwen3.6-27b,openai/gpt-oss-20b",
     )
     get_settings.cache_clear()
     try:
@@ -189,10 +189,49 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
         assert response.model == model == "qwen/qwen3.6-27b"
         assert protocol is False
         assert [item[0] for item in calls] == [
-            "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3.6-27b",
+            "llama-3.3-70b-versatile", "openai/gpt-oss-120b",
+            "qwen/qwen3.6-27b",
         ]
         assert calls[-1][1]["temperature"] == 0.6
         assert calls[-1][1]["reasoning_format"] == "hidden"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_reaches_final_20b_fallback(monkeypatch):
+    from groq import RateLimitError
+
+    calls = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            calls.append(model)
+            if model != "openai/gpt-oss-20b":
+                response = httpx.Response(
+                    429, headers={"retry-after": "3600"},
+                    request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise RateLimitError("daily limit", response=response, body=None)
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv(
+        "CANDIDATE_BUILDER_FALLBACK_MODELS",
+        "openai/gpt-oss-120b,qwen/qwen3.6-27b,openai/gpt-oss-20b",
+    )
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=Completions()),
+        )
+        response, model, protocol = asyncio.run(_candidate_completion(
+            client, {"model_name": "llama-3.3-70b-versatile"}, messages=[],
+        ))
+        assert response.model == model == "openai/gpt-oss-20b"
+        assert protocol is False
+        assert calls == [
+            "llama-3.3-70b-versatile", "openai/gpt-oss-120b",
+            "qwen/qwen3.6-27b", "openai/gpt-oss-20b",
+        ]
     finally:
         get_settings.cache_clear()
 
