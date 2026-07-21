@@ -27,4 +27,4 @@ jobs:
         run: |
           ulimit -v 2097152
           ulimit -u 256
-          timeout --signal=TERM 8m python scripts/run_candidate_builder.py
+          timeout --signal=TERM 10m python scripts/run_candidate_builder.py

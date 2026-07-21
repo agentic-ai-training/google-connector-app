@@ -514,7 +514,7 @@ def test_candidate_builder_reserves_json_only_finalization_turns(monkeypatch, tm
         async def create(self, *, model, **kwargs):
             requests.append(kwargs)
             usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
-            if len(requests) == 11:
+            if len(requests) == 7:
                 message = SimpleNamespace(
                     content=json.dumps({
                         "exact_diff": "bounded diff",
@@ -558,11 +558,11 @@ def test_candidate_builder_reserves_json_only_finalization_turns(monkeypatch, tm
             BoundedRepositoryTools(tmp_path), "coordinator",
         ))
         assert candidate["files"][0]["path"] == "tests/finalized_candidate.py"
-        assert tokens == 22
-        assert "tools" in requests[9]
-        assert "tools" not in requests[10]
-        assert requests[10]["response_format"] == {"type": "json_object"}
-        assert "finalization_required" in requests[10]["messages"][-1]["content"]
+        assert tokens == 14
+        assert "tools" in requests[5]
+        assert "tools" not in requests[6]
+        assert requests[6]["response_format"] == {"type": "json_object"}
+        assert "finalization_required" in requests[6]["messages"][-1]["content"]
     finally:
         get_settings.cache_clear()
 
@@ -590,12 +590,12 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         async def create(self, *, model, **kwargs):
             requests.append(kwargs)
             usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
-            if len(requests) == 11:
+            if len(requests) == 7:
                 content = json.dumps({
                     "files": [], "rollback_plan": {"action": "rollback"},
                     "validation_commands": [],
                 })
-            elif len(requests) == 12:
+            elif len(requests) == 8:
                 content = json.dumps({
                     "files": [{
                         "path": "tests/contract_retry.py", "change_type": "create",
@@ -637,13 +637,13 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         ))
         assert candidate["files"][0]["path"] == "tests/contract_retry.py"
         assert candidate["exact_diff"].startswith("Frozen candidate files")
-        assert tokens == 24
+        assert tokens == 16
         assert any(
             "candidate_contract_rejected" in message["content"]
-            for message in requests[11]["messages"]
+            for message in requests[7]["messages"]
         )
-        assert "tools" not in requests[10]
-        assert "tools" not in requests[11]
+        assert "tools" not in requests[6]
+        assert "tools" not in requests[7]
     finally:
         get_settings.cache_clear()
 
@@ -670,6 +670,12 @@ def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
     assert payload == {
         "stage": "input", "error_type": "ConnectError",
         "message": "ConnectError during candidate input.",
+        "retryable": True, "retry_after_seconds": None,
+    }
+    timeout = failure_payload(TimeoutError("private timing detail"), "generation")
+    assert timeout == {
+        "stage": "generation", "error_type": "TimeoutError",
+        "message": "TimeoutError during candidate generation.",
         "retryable": True, "retry_after_seconds": None,
     }
 
