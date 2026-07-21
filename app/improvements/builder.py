@@ -99,6 +99,28 @@ def _fit_builder_history(messages: list[dict]) -> list[dict]:
     return fitted
 
 
+def candidate_review_projection(candidate: dict | None) -> dict:
+    """Describe a candidate without copying complete generated files into a prompt."""
+    value = candidate or {}
+    files = []
+    for item in value.get("files") or []:
+        content = item.get("content") or ""
+        files.append({
+            "path": item.get("path"),
+            "change_type": item.get("change_type"),
+            "content_chars": len(content),
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "preview": content[:500],
+        })
+    return {
+        "files": files,
+        "exact_diff_preview": str(value.get("exact_diff") or "")[:8_000],
+        "rollback_plan": value.get("rollback_plan"),
+        "validation_commands": value.get("validation_commands") or [],
+        "full_content_access": "use read_staged_candidate_file",
+    }
+
+
 def normalize_candidate_contract(candidate: dict) -> dict:
     """Coerce harmless model shape variance; never invent validation success."""
     value = dict(candidate or {})
@@ -202,7 +224,8 @@ async def _groq_tool_json(
         "role": "user",
         "content": _candidate_prompt(
             job,
-            ([{"candidate_for_revision": prior_candidate}] if prior_candidate else [{
+            ([{"candidate_for_revision": candidate_review_projection(prior_candidate)}]
+             if prior_candidate else [{
                 "repository": "ephemeral checkout",
                 "approved_roots": list(ALLOWED_ROOTS),
                 "read_limit_bytes": tools.max_read_bytes,
@@ -288,8 +311,8 @@ async def generate_candidate_draft(
         if tokens >= job["token_budget"]:
             raise RuntimeError("Candidate token budget exhausted before review")
         if role == "independent_safety_reviewer":
-            output, used, call_models = await _groq_json(
-                job, [{"candidate_for_review": candidate}], role,
+            output, used, call_models = await _groq_tool_json(
+                job, repository_tools, role, candidate,
             )
         else:
             output, used, call_models = await _groq_tool_json(
@@ -305,6 +328,8 @@ async def generate_candidate_draft(
                     output.get("reason") or "Independent review rejected candidate"
                 )
             candidate = output.get("revised_candidate") or candidate
+            candidate["files"] = repository_tools.staged_files()
+            candidate["exact_diff"] = repository_tools.diff()["diff"]
         else:
             candidate = output
     candidate = normalize_candidate_contract(candidate or {})

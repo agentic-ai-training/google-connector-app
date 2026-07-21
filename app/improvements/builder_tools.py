@@ -55,6 +55,11 @@ class BoundedRepositoryTools:
                 "content": {"type": "string"},
             }, ["path", "change_type"]),
             _tool("inspect_candidate_diff", "Inspect the bounded in-memory candidate diff", {}, []),
+            _tool("read_staged_candidate_file", "Read a bounded staged candidate line range", {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+            }, ["path"]),
             _tool("design_tool_extension", "Return mandatory surfaces for a new tool proposal", {
                 "name": {"type": "string"},
                 "service": {"type": "string"},
@@ -70,6 +75,7 @@ class BoundedRepositoryTools:
             "read_repository_file": self.read,
             "stage_candidate_file": self.stage,
             "inspect_candidate_diff": self.diff,
+            "read_staged_candidate_file": self.read_staged,
             "design_tool_extension": self.design_tool_extension,
         }
         if name not in handlers:
@@ -88,7 +94,9 @@ class BoundedRepositoryTools:
             matches = list(value.get("matches") or [])
             value["matches"] = matches[:30]
             value["truncated"] = bool(value.get("truncated")) or len(matches) > 30
-        elif name in {"read_repository_file", "inspect_candidate_diff"}:
+        elif name in {
+            "read_repository_file", "read_staged_candidate_file", "inspect_candidate_diff",
+        }:
             field = "content" if "content" in value else "diff"
             text = str(value.get(field) or "")
             value[field] = text[:max_chars]
@@ -221,6 +229,25 @@ class BoundedRepositoryTools:
             ))
         rendered = "\n".join(output)
         return {"diff": rendered[:100_000], "truncated": len(rendered) > 100_000}
+
+    def read_staged(
+        self, path: str, start_line: int = 1, end_line: int = 400,
+    ) -> dict:
+        self._safe_path(path)
+        if path not in self.staged or self.staged[path]["change_type"] == "delete":
+            raise ValueError(f"Staged candidate file is unavailable: {path}")
+        start = max(1, int(start_line))
+        end = min(max(start, int(end_line)), start + 799)
+        lines = (self.staged[path].get("content") or "").splitlines()
+        content = "\n".join(lines[start - 1:end])
+        size = len(content.encode())
+        self.read_bytes += size
+        if self.read_bytes > self.max_read_bytes:
+            raise BuilderToolLimitError("candidate repository read-byte limit exceeded")
+        return {
+            "path": path, "source": "staged_candidate",
+            "start_line": start, "end_line": end, "content": content,
+        }
 
     @staticmethod
     def design_tool_extension(name: str, service: str, purpose: str) -> dict:
