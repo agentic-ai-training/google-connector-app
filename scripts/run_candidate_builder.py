@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,6 +55,18 @@ def failure_payload(exc: Exception, stage: str) -> dict:
             retry_after = max(1, min(int(float(raw)), 86_400)) if raw else None
         except ValueError:
             retry_after = None
+    if isinstance(exc, RateLimitError) and retry_after is None:
+        body = getattr(exc, "body", None)
+        error = body.get("error", body) if isinstance(body, dict) else {}
+        message = str(error.get("message") or "") if isinstance(error, dict) else ""
+        match = re.search(r"Please try again in ((?:[0-9.]+(?:ms|s|m|h))+)", message, re.I)
+        if match:
+            seconds = 0.0
+            for amount, unit in re.findall(r"([0-9.]+)(ms|s|m|h)", match.group(1), re.I):
+                seconds += float(amount) * {
+                    "ms": 0.001, "s": 1, "m": 60, "h": 3600,
+                }[unit.casefold()]
+            retry_after = max(1, min(int(seconds + 0.999), 86_400))
     runtime_code = runtime_failure_code(exc)
     error_type = runtime_code or type(exc).__name__
     if isinstance(exc, RateLimitError):
