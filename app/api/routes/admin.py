@@ -131,7 +131,8 @@ async def candidate_builder_input(build_id: str):
                WHERE b.id=$1 AND (
                  b.status IN ('queued','investigating') OR (
                    b.status='failed' AND b.candidate_commit IS NULL AND
-                   b.checkpoint#>>'{last_runner_failure,error_type}'='APIStatusError'
+                   b.checkpoint#>>'{last_runner_failure,error_type}' IN
+                     ('APIStatusError','RuntimeError')
                  )
                ) FOR UPDATE""",
             build_id,
