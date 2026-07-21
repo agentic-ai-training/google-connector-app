@@ -8,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 
-from groq import AsyncGroq
+from groq import AsyncGroq, RateLimitError
 
 from app.config.settings import get_settings
 from app.improvements.candidates import (
@@ -21,6 +21,39 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
+
+
+def candidate_model_order(job: dict) -> list[str]:
+    """Return the builder-only model chain without changing runtime routing."""
+    configured = get_settings().candidate_builder_fallback_models.split(",")
+    ordered = [str(job["model_name"]), *(item.strip() for item in configured)]
+    return list(dict.fromkeys(model for model in ordered if model))
+
+
+async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
+    """Use another Groq quality model only when candidate generation is limited."""
+    last_error: RateLimitError | None = None
+    for model in candidate_model_order(job):
+        for attempt in range(2):
+            try:
+                response = await client.chat.completions.create(model=model, **kwargs)
+                return response, model
+            except RateLimitError as exc:
+                last_error = exc
+                response = getattr(exc, "response", None)
+                raw = response.headers.get("retry-after") if response is not None else None
+                try:
+                    retry_after = float(raw) if raw else 0.0
+                except ValueError:
+                    retry_after = 0.0
+                # A short window is normally TPM; wait once. Long waits are TPD and
+                # should advance immediately to the next builder-only quality model.
+                if attempt == 0 and 0 < retry_after <= 30:
+                    await asyncio.sleep(retry_after)
+                    continue
+                break
+    assert last_error is not None
+    raise last_error
 
 
 def normalize_candidate_contract(candidate: dict) -> dict:
@@ -94,11 +127,13 @@ def _candidate_prompt(job: dict, sources: list[dict], role: str) -> str:
     }, default=str)
 
 
-async def _groq_json(job: dict, sources: list[dict], role: str) -> tuple[dict, int]:
+async def _groq_json(
+    job: dict, sources: list[dict], role: str,
+) -> tuple[dict, int, list[str]]:
     settings = get_settings()
     client = AsyncGroq(api_key=settings.groq_api_key)
-    response = await client.chat.completions.create(
-        model=job["model_name"],
+    response, model = await _candidate_completion(
+        client, job,
         messages=[{"role": "user", "content": _candidate_prompt(job, sources, role)}],
         temperature=0.1,
         max_tokens=min(settings.candidate_builder_max_output_tokens, job["token_budget"]),
@@ -106,13 +141,17 @@ async def _groq_json(job: dict, sources: list[dict], role: str) -> tuple[dict, i
     )
     data = json.loads(response.choices[0].message.content)
     usage = response.usage
-    return data, int((usage.prompt_tokens or 0) + (usage.completion_tokens or 0))
+    return (
+        data,
+        int((usage.prompt_tokens or 0) + (usage.completion_tokens or 0)),
+        [model],
+    )
 
 
 async def _groq_tool_json(
     job: dict, tools: BoundedRepositoryTools, role: str,
     prior_candidate: dict | None = None,
-) -> tuple[dict, int]:
+) -> tuple[dict, int, list[str]]:
     """Run a bounded tool loop; Groq never receives a shell or network tool."""
     settings = get_settings()
     client = AsyncGroq(api_key=settings.groq_api_key)
@@ -131,15 +170,18 @@ async def _groq_tool_json(
         ),
     }]
     tokens = 0
+    models_used: list[str] = []
     for _ in range(12):
         if tokens >= job["token_budget"]:
             raise RuntimeError("Candidate token budget exhausted during tool reasoning")
         remaining = max(256, job["token_budget"] - tokens)
-        response = await client.chat.completions.create(
-            model=job["model_name"], messages=messages,
+        response, model = await _candidate_completion(
+            client, job, messages=messages,
             tools=tools.schemas(), tool_choice="auto", temperature=0.1,
             max_tokens=min(settings.candidate_builder_max_output_tokens, remaining),
         )
+        if model not in models_used:
+            models_used.append(model)
         usage = response.usage
         tokens += int((usage.prompt_tokens or 0) + (usage.completion_tokens or 0))
         message = response.choices[0].message
@@ -174,11 +216,13 @@ async def _groq_tool_json(
         if tools.staged_files():
             candidate["files"] = tools.staged_files()
             candidate.setdefault("exact_diff", tools.diff()["diff"])
-        return candidate, tokens
+        return candidate, tokens, models_used
     raise RuntimeError("Candidate builder exceeded its bounded reasoning/tool rounds")
 
 
-async def generate_candidate_draft(job: dict) -> tuple[dict, int, list[str]]:
+async def generate_candidate_draft(
+    job: dict,
+) -> tuple[dict, int, list[str], list[str]]:
     """Generate a patch from sanitized facts and a bounded checkout only."""
     sanitized = dict(job["sanitized_input"] or {})
     scope = sanitized.get("selected_option", {}).get("change_scope", [])
@@ -194,18 +238,22 @@ async def generate_candidate_draft(job: dict) -> tuple[dict, int, list[str]]:
     repository_tools = BoundedRepositoryTools(ROOT)
     candidate = None
     tokens = 0
+    models_used: list[str] = []
     for role in roles:
         if tokens >= job["token_budget"]:
             raise RuntimeError("Candidate token budget exhausted before review")
         if role == "independent_safety_reviewer":
-            output, used = await _groq_json(
+            output, used, call_models = await _groq_json(
                 job, [{"candidate_for_review": candidate}], role,
             )
         else:
-            output, used = await _groq_tool_json(
+            output, used, call_models = await _groq_tool_json(
                 job, repository_tools, role, candidate,
             )
         tokens += used
+        for model in call_models:
+            if model not in models_used:
+                models_used.append(model)
         if role == "independent_safety_reviewer":
             if output.get("approved") is False:
                 raise RuntimeError(
@@ -218,11 +266,12 @@ async def generate_candidate_draft(job: dict) -> tuple[dict, int, list[str]]:
     candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
     candidate.setdefault("rollback_plan", {"action": "route traffic to base version"})
     candidate.setdefault("validation_commands", [])
-    return candidate, tokens, roles
+    return candidate, tokens, roles, models_used
 
 
 async def store_candidate_draft(
     pool, build_id, candidate: dict, tokens: int, roles: list[str],
+    models_used: list[str] | None = None,
 ) -> dict:
     """Freeze a generated draft; execution and pass/fail claims remain CI-only."""
     files = candidate.get("files") or []
@@ -275,7 +324,10 @@ async def store_candidate_draft(
         await conn.execute(
             """UPDATE candidate_builds SET status='drafted',tokens_used=$1,
                canonical_digest=$2,checkpoint=$3::jsonb,updated_at=now() WHERE id=$4""",
-            tokens, digest, json.dumps({"roles_completed": roles}), job["id"],
+            tokens, digest, json.dumps({
+                "roles_completed": roles,
+                "models_used": models_used or [job["model_name"]],
+            }), job["id"],
         )
         await conn.execute(
             """UPDATE improvement_proposals SET candidate_kind=$1,
@@ -286,7 +338,9 @@ async def store_candidate_draft(
             candidate_kind, f"build-{job['id']}", exact_diff, json.dumps(rollback),
             json.dumps(validation), json.dumps({
                 "build_id": str(job["id"]), "mode": job["mode"],
-                "model": job["model_name"], "tool_policy": TOOL_POLICY_VERSION,
+                "model": job["model_name"],
+                "models_used": models_used or [job["model_name"]],
+                "tool_policy": TOOL_POLICY_VERSION,
                 "applicability": {
                     "services": [job["sanitized_input"].get("service")]
                     if job["sanitized_input"].get("service") else [],
@@ -320,11 +374,13 @@ async def process_one_candidate_build(pool) -> bool:
         )
     job = dict(row)
     try:
-        candidate, tokens, roles = await asyncio.wait_for(
+        candidate, tokens, roles, models_used = await asyncio.wait_for(
             generate_candidate_draft(job),
             timeout=get_settings().candidate_builder_timeout_seconds,
         )
-        await store_candidate_draft(pool, job["id"], candidate, tokens, roles)
+        await store_candidate_draft(
+            pool, job["id"], candidate, tokens, roles, models_used,
+        )
         return True
     except Exception as exc:
         logger.exception("Candidate build %s failed", job["id"])

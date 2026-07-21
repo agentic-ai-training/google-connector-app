@@ -154,6 +154,7 @@ class CandidateBuildDraft(BaseModel):
     rollback_plan: dict[str, Any]
     validation_commands: list[str] = Field(default_factory=list, max_length=50)
     roles_completed: list[str] = Field(min_length=1, max_length=5)
+    models_used: list[str] = Field(default_factory=list, max_length=5)
     tokens_used: int = Field(ge=0)
 
 
