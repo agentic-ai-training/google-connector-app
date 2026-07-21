@@ -200,6 +200,26 @@ def _fit_builder_history(
         })
         if size() <= max_chars:
             return fitted
+    for message in fitted:
+        if message.get("role") != "user":
+            continue
+        try:
+            content = json.loads(message.get("content") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        result = content.get("tool_result") if isinstance(content, dict) else None
+        if not isinstance(result, dict):
+            continue
+        message["content"] = json.dumps({
+            "tool_result": {
+                "name": result.get("name"),
+                "call_id": result.get("call_id"),
+                "compacted": True,
+                "reason": "earlier JSON protocol result removed to preserve request budget",
+            },
+        })
+        if size() <= max_chars:
+            return fitted
     if size() > max_chars:
         raise RuntimeError("Candidate builder history exceeded its bounded request budget")
     return fitted

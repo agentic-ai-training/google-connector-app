@@ -133,7 +133,8 @@ async def candidate_builder_input(build_id: str):
                    b.status='failed' AND b.candidate_commit IS NULL AND
                    (
                      b.checkpoint#>>'{last_runner_failure,error_type}' IN
-                       ('APIStatusError','RuntimeError','BadRequestError')
+                       ('APIStatusError','RuntimeError','BadRequestError',
+                        'history_budget_exhausted')
                      OR b.checkpoint#>>'{last_runner_failure,error_type}'=
                         'tool_token_budget_exhausted'
                    )

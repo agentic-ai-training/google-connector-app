@@ -227,6 +227,28 @@ def test_candidate_builder_compacts_cumulative_tool_history():
     assert any("compacted" in item.get("content", "") for item in fitted)
 
 
+def test_candidate_builder_compacts_json_protocol_results_by_semantics():
+    messages = [{"role": "user", "content": "objective"}]
+    for index in range(8):
+        messages.extend([
+            {"role": "assistant", "content": json.dumps({
+                "tool_calls": [{"function": {"name": "read_repository_file"}}],
+            })},
+            {"role": "user", "content": json.dumps({
+                "tool_result": {
+                    "name": "read_repository_file", "result": "x" * 8_000,
+                    "call_id": f"json-{index}",
+                },
+            })},
+        ])
+    fitted = _fit_builder_history(messages)
+    assert len(json.dumps(fitted)) <= 24_000
+    assert any(
+        "earlier JSON protocol result removed" in item.get("content", "")
+        for item in fitted
+    )
+
+
 def test_candidate_builder_retries_413_with_stricter_request_budget(monkeypatch):
     from groq import APIStatusError
 
