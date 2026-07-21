@@ -83,7 +83,7 @@ class BoundedRepositoryTools:
         return handlers[name](**arguments)
 
     @staticmethod
-    def project_result(name: str, result: Any, *, max_chars: int = 8_000) -> dict:
+    def project_result(name: str, result: Any, *, max_chars: int = 4_000) -> dict:
         """Project repository results before they enter provider conversation history."""
         value = dict(result) if isinstance(result, dict) else {"result": result}
         if name == "list_repository_files":

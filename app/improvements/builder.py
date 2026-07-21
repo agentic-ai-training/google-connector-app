@@ -8,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 
-from groq import AsyncGroq, RateLimitError
+from groq import APIStatusError, AsyncGroq, RateLimitError
 
 from app.config.settings import get_settings
 from app.improvements.candidates import (
@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
-BUILDER_HISTORY_MAX_CHARS = 50_000
+BUILDER_HISTORY_MAX_CHARS = 24_000
+BUILDER_413_RETRY_MAX_CHARS = 12_000
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -53,6 +54,16 @@ async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
                     await asyncio.sleep(retry_after)
                     continue
                 break
+            except APIStatusError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 413 and attempt == 0 and kwargs.get("messages"):
+                    kwargs = dict(kwargs)
+                    kwargs["messages"] = _fit_builder_history(
+                        kwargs["messages"], max_chars=BUILDER_413_RETRY_MAX_CHARS,
+                    )
+                    kwargs["max_tokens"] = min(int(kwargs.get("max_tokens") or 2048), 2048)
+                    continue
+                raise
     assert last_error is not None
     raise last_error
 
@@ -76,14 +87,16 @@ def _compact_builder_tool_call(call: dict) -> dict:
     return compacted
 
 
-def _fit_builder_history(messages: list[dict]) -> list[dict]:
+def _fit_builder_history(
+    messages: list[dict], *, max_chars: int = BUILDER_HISTORY_MAX_CHARS,
+) -> list[dict]:
     """Bound cumulative tool history while preserving tool-call/result relationships."""
     fitted = json.loads(json.dumps(messages))
 
     def size() -> int:
         return len(json.dumps(fitted, default=str))
 
-    if size() <= BUILDER_HISTORY_MAX_CHARS:
+    if size() <= max_chars:
         return fitted
     for message in fitted:
         if message.get("role") != "tool":
@@ -92,9 +105,9 @@ def _fit_builder_history(messages: list[dict]) -> list[dict]:
             "compacted": True,
             "reason": "earlier builder tool result removed to preserve request budget",
         })
-        if size() <= BUILDER_HISTORY_MAX_CHARS:
+        if size() <= max_chars:
             return fitted
-    if size() > BUILDER_HISTORY_MAX_CHARS:
+    if size() > max_chars:
         raise RuntimeError("Candidate builder history exceeded its bounded request budget")
     return fitted
 

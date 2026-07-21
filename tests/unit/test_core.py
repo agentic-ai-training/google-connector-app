@@ -206,8 +206,47 @@ def test_candidate_builder_compacts_cumulative_tool_history():
             {"role": "tool", "tool_call_id": f"call-{index}", "content": "x" * 8_000},
         ])
     fitted = _fit_builder_history(messages)
-    assert len(json.dumps(fitted)) <= 50_000
+    assert len(json.dumps(fitted)) <= 24_000
     assert any("compacted" in item.get("content", "") for item in fitted)
+
+
+def test_candidate_builder_retries_413_with_stricter_request_budget(monkeypatch):
+    from groq import APIStatusError
+
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                response = httpx.Response(
+                    413, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise APIStatusError("too large", response=response, body=None)
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        messages = [{"role": "user", "content": "objective"}]
+        for index in range(4):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{
+                    "id": f"call-{index}", "type": "function",
+                    "function": {"name": "read_repository_file", "arguments": "{}"},
+                }]},
+                {"role": "tool", "tool_call_id": f"call-{index}", "content": "x" * 5_000},
+            ])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model = asyncio.run(_candidate_completion(
+            client, {"model_name": "openai/gpt-oss-120b"},
+            messages=messages, max_tokens=6_000,
+        ))
+        assert model == "openai/gpt-oss-120b"
+        assert len(json.dumps(requests[1]["messages"])) <= 12_000
+        assert requests[1]["max_tokens"] == 2_048
+    finally:
+        get_settings.cache_clear()
 
 
 def test_candidate_reviewer_uses_manifest_and_bounded_staged_reads(tmp_path):
