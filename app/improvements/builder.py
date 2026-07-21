@@ -20,7 +20,7 @@ from app.improvements.builder_tools import BoundedRepositoryTools
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v2-review-envelope"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v3-plain-json-recovery"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -146,6 +146,7 @@ async def _candidate_completion(
         retried_short_limit = False
         retried_oversize = False
         retried_tool_generation = False
+        retried_json_generation = False
         for _ in range(4):
             try:
                 response = await client.chat.completions.create(
@@ -189,14 +190,26 @@ async def _candidate_completion(
                         int(request_kwargs.get("max_tokens") or 2048), 2048,
                     )
                     continue
-                if status == 400 and not retried_tool_generation and is_tool_generation_failure(exc):
-                    retried_tool_generation = True
-                    request_kwargs = dict(request_kwargs)
-                    request_kwargs["temperature"] = 0.0
-                    request_kwargs["parallel_tool_calls"] = False
-                    request_kwargs["disable_tool_validation"] = True
-                    continue
-                if status == 400 and is_tool_generation_failure(exc) and not protocol_mode:
+                if status == 400 and is_tool_generation_failure(exc):
+                    if protocol_mode:
+                        if not retried_json_generation:
+                            # JSON response validation can itself reject an otherwise
+                            # usable action object. Keep the JSON action instructions,
+                            # remove provider response validation, and parse locally.
+                            retried_json_generation = True
+                            request_kwargs = dict(request_kwargs)
+                            request_kwargs.pop("response_format", None)
+                            request_kwargs["temperature"] = 0.0
+                            continue
+                        last_error = exc
+                        break
+                    if not retried_tool_generation:
+                        retried_tool_generation = True
+                        request_kwargs = dict(request_kwargs)
+                        request_kwargs["temperature"] = 0.0
+                        request_kwargs["parallel_tool_calls"] = False
+                        request_kwargs["disable_tool_validation"] = True
+                        continue
                     # Some Groq models repeatedly fail while serializing a native tool
                     # call. Preserve the same local authority boundary while removing
                     # provider tool syntax from the generation path.

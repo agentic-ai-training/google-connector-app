@@ -539,6 +539,44 @@ def test_candidate_builder_falls_back_to_locally_validated_json_tool_protocol(mo
         get_settings.cache_clear()
 
 
+def test_json_protocol_retries_without_provider_response_validation(monkeypatch):
+    from groq import BadRequestError
+
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append(kwargs)
+            if len(requests) <= 3:
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private failed generation", response=response,
+                    body={"error": {"failed_generation": "private"}},
+                )
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model, protocol = asyncio.run(_candidate_completion(
+            client, {"model_name": "openai/gpt-oss-120b"},
+            messages=[{"role": "user", "content": "objective"}],
+            tools=[{"type": "function", "function": {"name": "safe_read"}}],
+            tool_choice="auto", temperature=0.1,
+        ))
+        assert model == "openai/gpt-oss-120b"
+        assert protocol is True
+        assert requests[2]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in requests[3]
+        assert "tools" not in requests[3]
+        assert requests[3]["temperature"] == 0.0
+    finally:
+        get_settings.cache_clear()
+
+
 def test_json_tool_protocol_still_executes_only_through_bounded_tools(monkeypatch, tmp_path):
     from groq import BadRequestError
 
