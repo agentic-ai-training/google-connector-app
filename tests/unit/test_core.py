@@ -67,6 +67,7 @@ from app.improvements.candidates import (
 )
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
+    _groq_tool_json,
     candidate_model_order, candidate_review_projection, choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
     normalize_candidate_contract,
@@ -179,10 +180,11 @@ def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
         client = SimpleNamespace(
             chat=SimpleNamespace(completions=Completions()),
         )
-        response, model = asyncio.run(_candidate_completion(
+        response, model, protocol = asyncio.run(_candidate_completion(
             client, {"model_name": "llama-3.3-70b-versatile"}, messages=[],
         ))
         assert response.model == model == "openai/gpt-oss-120b"
+        assert protocol is False
         assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
     finally:
         get_settings.cache_clear()
@@ -253,11 +255,12 @@ def test_candidate_builder_retries_413_with_stricter_request_budget(monkeypatch)
                 {"role": "tool", "tool_call_id": f"call-{index}", "content": "x" * 5_000},
             ])
         client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-        _, model = asyncio.run(_candidate_completion(
+        _, model, protocol = asyncio.run(_candidate_completion(
             client, {"model_name": "openai/gpt-oss-120b"},
             messages=messages, max_tokens=6_000,
         ))
         assert model == "openai/gpt-oss-120b"
+        assert protocol is False
         assert len(json.dumps(requests[1]["messages"])) <= 12_000
         assert requests[1]["max_tokens"] == 2_048
     finally:
@@ -289,16 +292,119 @@ def test_candidate_builder_retries_only_groq_failed_tool_generation(monkeypatch)
     get_settings.cache_clear()
     try:
         client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-        _, model = asyncio.run(_candidate_completion(
+        _, model, protocol = asyncio.run(_candidate_completion(
             client, {"model_name": "openai/gpt-oss-120b"},
             messages=[{"role": "user", "content": "objective"}],
             tools=[], temperature=0.1,
         ))
         assert model == "openai/gpt-oss-120b"
+        assert protocol is False
         assert requests[1]["temperature"] == 0.0
         assert requests[1]["parallel_tool_calls"] is False
         assert requests[1]["disable_tool_validation"] is True
         assert is_tool_generation_failure(RuntimeError("unrelated")) is False
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_falls_back_to_locally_validated_json_tool_protocol(monkeypatch):
+    from groq import BadRequestError
+
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append(kwargs)
+            if len(requests) <= 2:
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private failed arguments", response=response,
+                    body={"error": {"failed_generation": "private"}},
+                )
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model, protocol = asyncio.run(_candidate_completion(
+            client, {"model_name": "openai/gpt-oss-120b"},
+            messages=[{"role": "user", "content": "objective"}],
+            tools=[{"type": "function", "function": {"name": "safe_read"}}],
+            tool_choice="auto", temperature=0.1,
+        ))
+        assert model == "openai/gpt-oss-120b"
+        assert protocol is True
+        assert requests[1]["disable_tool_validation"] is True
+        assert "tools" not in requests[2]
+        assert requests[2]["response_format"] == {"type": "json_object"}
+        config = json.loads(requests[2]["messages"][0]["content"])
+        assert config["repository_action_protocol"]["one_tool_per_turn"] is True
+    finally:
+        get_settings.cache_clear()
+
+
+def test_json_tool_protocol_still_executes_only_through_bounded_tools(monkeypatch, tmp_path):
+    from groq import BadRequestError
+
+    responses = 0
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            nonlocal responses
+            responses += 1
+            if responses <= 2:
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private", response=response,
+                    body={"error": {"failed_generation": "private"}},
+                )
+            content = (
+                json.dumps({"tool_call": {
+                    "name": "stage_candidate_file",
+                    "arguments": {
+                        "path": "tests/generated_candidate.py",
+                        "change_type": "create",
+                        "content": "value = 1\n",
+                    },
+                }})
+                if responses == 3 else
+                json.dumps({
+                    "exact_diff": "generated by bounded staging",
+                    "rollback_plan": {"action": "remove generated candidate"},
+                    "validation_commands": ["pytest -q tests/unit"],
+                })
+            )
+            message = SimpleNamespace(content=content, tool_calls=None)
+            usage = SimpleNamespace(prompt_tokens=10, completion_tokens=10)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message)], usage=usage,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        candidate, tokens, models = asyncio.run(_groq_tool_json(
+            {
+                "model_name": "openai/gpt-oss-120b", "token_budget": 1_000,
+                "sanitized_input": {"title": "bounded test"},
+            },
+            BoundedRepositoryTools(tmp_path), "coordinator",
+        ))
+        assert candidate["files"] == [{
+            "path": "tests/generated_candidate.py",
+            "change_type": "create",
+            "content": "value = 1\n",
+        }]
+        assert tokens == 40
+        assert models == ["openai/gpt-oss-120b"]
     finally:
         get_settings.cache_clear()
 

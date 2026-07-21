@@ -50,9 +50,65 @@ def is_tool_generation_failure(exc: Exception) -> bool:
     return isinstance(error, dict) and "failed_generation" in error
 
 
-async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
+def _json_tool_protocol_kwargs(kwargs: dict) -> dict:
+    """Replace provider-native tools with a locally validated JSON action protocol."""
+    value = dict(kwargs)
+    schemas = value.pop("tools", [])
+    value.pop("tool_choice", None)
+    value.pop("parallel_tool_calls", None)
+    value.pop("disable_tool_validation", None)
+    converted = []
+    for message in value.get("messages") or []:
+        role = message.get("role")
+        if role == "tool":
+            converted.append({
+                "role": "user",
+                "content": json.dumps({
+                    "tool_result": {
+                        "name": message.get("name"),
+                        "call_id": message.get("tool_call_id"),
+                        "result": message.get("content"),
+                    },
+                }),
+            })
+        elif message.get("tool_calls"):
+            converted.append({
+                "role": "assistant",
+                "content": json.dumps({"tool_calls": message["tool_calls"]}),
+            })
+        else:
+            converted.append({
+                "role": role,
+                "content": message.get("content") or "",
+            })
+    converted.insert(0, {
+        "role": "system",
+        "content": json.dumps({
+            "repository_action_protocol": {
+                "instruction": (
+                    "Return one JSON object. To use a repository tool return "
+                    "{\"tool_call\":{\"name\":<allowed name>,\"arguments\":{...}}}. "
+                    "When finished return the candidate contract requested by the user."
+                ),
+                "allowed_tools": schemas,
+                "one_tool_per_turn": True,
+                "authority": "All names and arguments are validated and executed locally.",
+            },
+        }),
+    })
+    value["messages"] = _fit_builder_history(converted)
+    value["response_format"] = {"type": "json_object"}
+    return value
+
+
+async def _candidate_completion(
+    client: AsyncGroq, job: dict, *, json_tool_protocol: bool = False, **kwargs,
+):
     """Use another Groq quality model only when candidate generation is limited."""
     last_error: RateLimitError | None = None
+    protocol_mode = json_tool_protocol
+    if protocol_mode:
+        kwargs = _json_tool_protocol_kwargs(kwargs)
     for model in candidate_model_order(job):
         retried_short_limit = False
         retried_oversize = False
@@ -60,7 +116,7 @@ async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
         for _ in range(4):
             try:
                 response = await client.chat.completions.create(model=model, **kwargs)
-                return response, model
+                return response, model, protocol_mode
             except RateLimitError as exc:
                 last_error = exc
                 response = getattr(exc, "response", None)
@@ -92,6 +148,13 @@ async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
                     kwargs["temperature"] = 0.0
                     kwargs["parallel_tool_calls"] = False
                     kwargs["disable_tool_validation"] = True
+                    continue
+                if status == 400 and is_tool_generation_failure(exc) and not protocol_mode:
+                    # Some Groq models repeatedly fail while serializing a native tool
+                    # call. Preserve the same local authority boundary while removing
+                    # provider tool syntax from the generation path.
+                    protocol_mode = True
+                    kwargs = _json_tool_protocol_kwargs(kwargs)
                     continue
                 raise
     assert last_error is not None
@@ -240,7 +303,7 @@ async def _groq_json(
 ) -> tuple[dict, int, list[str]]:
     settings = get_settings()
     client = AsyncGroq(api_key=settings.groq_api_key)
-    response, model = await _candidate_completion(
+    response, model, _ = await _candidate_completion(
         client, job,
         messages=[{"role": "user", "content": _candidate_prompt(job, sources, role)}],
         temperature=0.1,
@@ -284,15 +347,17 @@ async def _groq_tool_json(
     tokens = 0
     token_budget = effective_builder_token_budget(job)
     models_used: list[str] = []
-    for _ in range(12):
+    json_tool_protocol = False
+    for round_number in range(12):
         if tokens >= token_budget:
             raise RuntimeError("Candidate token budget exhausted during tool reasoning")
         remaining = max(256, token_budget - tokens)
         messages = _fit_builder_history(messages)
-        response, model = await _candidate_completion(
+        response, model, json_tool_protocol = await _candidate_completion(
             client, job, messages=messages,
             tools=tools.schemas(), tool_choice="auto", temperature=0.1,
             max_tokens=min(settings.candidate_builder_max_output_tokens, remaining),
+            json_tool_protocol=json_tool_protocol,
         )
         if model not in models_used:
             models_used.append(model)
@@ -328,6 +393,38 @@ async def _groq_tool_json(
             candidate = json.loads(message.content or "{}")
         except json.JSONDecodeError as exc:
             raise RuntimeError("Groq candidate output was not valid JSON") from exc
+        protocol_call = candidate.get("tool_call") if json_tool_protocol else None
+        if isinstance(protocol_call, dict):
+            name = str(protocol_call.get("name") or "")
+            arguments = protocol_call.get("arguments")
+            if not isinstance(arguments, dict):
+                result = {
+                    "error": "ValueError",
+                    "detail": "JSON repository action arguments must be an object",
+                }
+            else:
+                try:
+                    result = tools.execute(name, arguments)
+                except Exception as exc:
+                    result = {"error": type(exc).__name__, "detail": str(exc)[:500]}
+            call = {
+                "id": f"json-protocol-{round_number}", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments or {})},
+            }
+            messages.append({
+                "role": "assistant",
+                "content": json.dumps({"tool_calls": [_compact_builder_tool_call(call)]}),
+            })
+            messages.append({
+                "role": "user",
+                "content": json.dumps({
+                    "tool_result": {
+                        "name": name,
+                        "result": tools.project_result(name, result),
+                    },
+                }, default=str),
+            })
+            continue
         if tools.staged_files():
             candidate["files"] = tools.staged_files()
             candidate.setdefault("exact_diff", tools.diff()["diff"])
