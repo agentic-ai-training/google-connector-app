@@ -62,7 +62,7 @@ from app.improvements.publisher import proposal_markdown
 from app.improvements.candidates import (
     candidate_digest, validate_candidate_files,
 )
-from app.improvements.builder import choose_builder_mode
+from app.improvements.builder import choose_builder_mode, normalize_candidate_contract
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
 )
@@ -107,6 +107,17 @@ def test_candidate_builder_dns_guard_denies_unknown_hosts(monkeypatch):
             socket.getaddrinfo("example.com")
     # The context restores whatever resolver was active at entry.
     assert socket.getaddrinfo is not original
+
+
+def test_candidate_builder_normalizes_typed_contract_without_claiming_success():
+    candidate = normalize_candidate_contract({
+        "rollback_plan": "Remove added files",
+        "validation_commands": "pytest tests/unit -q",
+    })
+    assert candidate["rollback_plan"] == {
+        "action": "Remove added files", "automatic": False,
+    }
+    assert candidate["validation_commands"] == ["pytest tests/unit -q"]
 
 
 def test_dual_worker_simulation_has_no_double_claim_and_sticky_rollback():

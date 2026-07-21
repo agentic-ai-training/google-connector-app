@@ -22,6 +22,24 @@ ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
 
+
+def normalize_candidate_contract(candidate: dict) -> dict:
+    """Coerce harmless model shape variance; never invent validation success."""
+    value = dict(candidate or {})
+    rollback = value.get("rollback_plan")
+    if isinstance(rollback, str):
+        value["rollback_plan"] = {"action": rollback, "automatic": False}
+    elif not isinstance(rollback, dict):
+        value["rollback_plan"] = {
+            "action": "route traffic to the frozen base version", "automatic": True,
+        }
+    commands = value.get("validation_commands")
+    if isinstance(commands, str):
+        value["validation_commands"] = [commands]
+    elif not isinstance(commands, list):
+        value["validation_commands"] = []
+    return value
+
 def choose_builder_mode(risk_level: str, change_scope: list[str]) -> str:
     return "multi_role" if risk_level in {"high", "critical"} or len(change_scope) > 3 else "single"
 
@@ -196,7 +214,7 @@ async def generate_candidate_draft(job: dict) -> tuple[dict, int, list[str]]:
             candidate = output.get("revised_candidate") or candidate
         else:
             candidate = output
-    candidate = candidate or {}
+    candidate = normalize_candidate_contract(candidate or {})
     candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
     candidate.setdefault("rollback_plan", {"action": "route traffic to base version"})
     candidate.setdefault("validation_commands", [])
