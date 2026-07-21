@@ -32,11 +32,23 @@ def candidate_model_order(job: dict) -> list[str]:
     return list(dict.fromkeys(model for model in ordered if model))
 
 
+def is_tool_generation_failure(exc: Exception) -> bool:
+    """Detect Groq's safe failure shape without retaining attempted arguments."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return False
+    error = body.get("error") if isinstance(body.get("error"), dict) else body
+    return isinstance(error, dict) and "failed_generation" in error
+
+
 async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
     """Use another Groq quality model only when candidate generation is limited."""
     last_error: RateLimitError | None = None
     for model in candidate_model_order(job):
-        for attempt in range(2):
+        retried_short_limit = False
+        retried_oversize = False
+        retried_tool_generation = False
+        for _ in range(4):
             try:
                 response = await client.chat.completions.create(model=model, **kwargs)
                 return response, model
@@ -50,18 +62,26 @@ async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
                     retry_after = 0.0
                 # A short window is normally TPM; wait once. Long waits are TPD and
                 # should advance immediately to the next builder-only quality model.
-                if attempt == 0 and 0 < retry_after <= 30:
+                if not retried_short_limit and 0 < retry_after <= 30:
+                    retried_short_limit = True
                     await asyncio.sleep(retry_after)
                     continue
                 break
             except APIStatusError as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", None)
-                if status == 413 and attempt == 0 and kwargs.get("messages"):
+                if status == 413 and not retried_oversize and kwargs.get("messages"):
+                    retried_oversize = True
                     kwargs = dict(kwargs)
                     kwargs["messages"] = _fit_builder_history(
                         kwargs["messages"], max_chars=BUILDER_413_RETRY_MAX_CHARS,
                     )
                     kwargs["max_tokens"] = min(int(kwargs.get("max_tokens") or 2048), 2048)
+                    continue
+                if status == 400 and not retried_tool_generation and is_tool_generation_failure(exc):
+                    retried_tool_generation = True
+                    kwargs = dict(kwargs)
+                    kwargs["temperature"] = 0.0
+                    kwargs["parallel_tool_calls"] = False
                     continue
                 raise
     assert last_error is not None

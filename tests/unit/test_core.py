@@ -68,7 +68,7 @@ from app.improvements.candidates import (
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
     candidate_model_order, candidate_review_projection, choose_builder_mode,
-    normalize_candidate_contract,
+    is_tool_generation_failure, normalize_candidate_contract,
 )
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
@@ -245,6 +245,44 @@ def test_candidate_builder_retries_413_with_stricter_request_budget(monkeypatch)
         assert model == "openai/gpt-oss-120b"
         assert len(json.dumps(requests[1]["messages"])) <= 12_000
         assert requests[1]["max_tokens"] == 2_048
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_retries_only_groq_failed_tool_generation(monkeypatch):
+    from groq import BadRequestError
+
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                response = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise BadRequestError(
+                    "private failed arguments", response=response,
+                    body={"error": {
+                        "type": "invalid_request_error",
+                        "failed_generation": {"attempted_arguments": "private"},
+                    }},
+                )
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model = asyncio.run(_candidate_completion(
+            client, {"model_name": "openai/gpt-oss-120b"},
+            messages=[{"role": "user", "content": "objective"}],
+            tools=[], temperature=0.1,
+        ))
+        assert model == "openai/gpt-oss-120b"
+        assert requests[1]["temperature"] == 0.0
+        assert requests[1]["parallel_tool_calls"] is False
+        assert is_tool_generation_failure(RuntimeError("unrelated")) is False
     finally:
         get_settings.cache_clear()
 
