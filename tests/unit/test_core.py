@@ -67,7 +67,8 @@ from app.improvements.candidates import (
 )
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
-    candidate_model_order, choose_builder_mode, normalize_candidate_contract,
+    candidate_model_order, candidate_review_projection, choose_builder_mode,
+    normalize_candidate_contract,
 )
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
@@ -207,6 +208,22 @@ def test_candidate_builder_compacts_cumulative_tool_history():
     fitted = _fit_builder_history(messages)
     assert len(json.dumps(fitted)) <= 50_000
     assert any("compacted" in item.get("content", "") for item in fitted)
+
+
+def test_candidate_reviewer_uses_manifest_and_bounded_staged_reads(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path)
+    tools.stage("app/generated.py", "create", "line = 1\n" * 2_000)
+    projected = candidate_review_projection({"files": tools.staged_files()})
+    assert projected["files"][0]["content_chars"] > 10_000
+    assert len(json.dumps(projected)) < 2_000
+    assert "line = 1" in projected["files"][0]["preview"]
+
+    staged = tools.execute("read_staged_candidate_file", {
+        "path": "app/generated.py", "start_line": 10, "end_line": 20,
+    })
+    assert staged["source"] == "staged_candidate"
+    assert staged["start_line"] == 10
+    assert len(staged["content"].splitlines()) == 11
 
 
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
