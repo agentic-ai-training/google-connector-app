@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v1"
+BUILDER_HISTORY_MAX_CHARS = 50_000
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -54,6 +55,48 @@ async def _candidate_completion(client: AsyncGroq, job: dict, **kwargs):
                 break
     assert last_error is not None
     raise last_error
+
+
+def _compact_builder_tool_call(call: dict) -> dict:
+    """Remove staged file bodies from history after the in-memory tool consumed them."""
+    compacted = json.loads(json.dumps(call))
+    function = compacted.get("function") or {}
+    if function.get("name") == "stage_candidate_file":
+        try:
+            arguments = json.loads(function.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        content = str(arguments.get("content") or "")
+        if content:
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            arguments["content"] = (
+                f"[staged in memory; {len(content)} chars; sha256:{digest}; body omitted]"
+            )
+            function["arguments"] = json.dumps(arguments, sort_keys=True)
+    return compacted
+
+
+def _fit_builder_history(messages: list[dict]) -> list[dict]:
+    """Bound cumulative tool history while preserving tool-call/result relationships."""
+    fitted = json.loads(json.dumps(messages))
+
+    def size() -> int:
+        return len(json.dumps(fitted, default=str))
+
+    if size() <= BUILDER_HISTORY_MAX_CHARS:
+        return fitted
+    for message in fitted:
+        if message.get("role") != "tool":
+            continue
+        message["content"] = json.dumps({
+            "compacted": True,
+            "reason": "earlier builder tool result removed to preserve request budget",
+        })
+        if size() <= BUILDER_HISTORY_MAX_CHARS:
+            return fitted
+    if size() > BUILDER_HISTORY_MAX_CHARS:
+        raise RuntimeError("Candidate builder history exceeded its bounded request budget")
+    return fitted
 
 
 def normalize_candidate_contract(candidate: dict) -> dict:
@@ -175,6 +218,7 @@ async def _groq_tool_json(
         if tokens >= job["token_budget"]:
             raise RuntimeError("Candidate token budget exhausted during tool reasoning")
         remaining = max(256, job["token_budget"] - tokens)
+        messages = _fit_builder_history(messages)
         response, model = await _candidate_completion(
             client, job, messages=messages,
             tools=tools.schemas(), tool_choice="auto", temperature=0.1,
@@ -195,7 +239,7 @@ async def _groq_tool_json(
             } for call in message.tool_calls]
             messages.append({
                 "role": "assistant", "content": message.content or "",
-                "tool_calls": calls,
+                "tool_calls": [_compact_builder_tool_call(call) for call in calls],
             })
             for call in message.tool_calls:
                 try:
@@ -203,10 +247,11 @@ async def _groq_tool_json(
                     result = tools.execute(call.function.name, arguments)
                 except Exception as exc:
                     result = {"error": type(exc).__name__, "detail": str(exc)[:500]}
+                projected = tools.project_result(call.function.name, result)
                 messages.append({
                     "role": "tool", "tool_call_id": call.id,
                     "name": call.function.name,
-                    "content": json.dumps(result, default=str)[:120_000],
+                    "content": json.dumps(projected, default=str),
                 })
             continue
         try:

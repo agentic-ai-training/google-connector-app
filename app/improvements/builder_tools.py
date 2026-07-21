@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,33 @@ class BoundedRepositoryTools:
         if name not in handlers:
             raise ValueError(f"Unknown builder tool: {name}")
         return handlers[name](**arguments)
+
+    @staticmethod
+    def project_result(name: str, result: Any, *, max_chars: int = 8_000) -> dict:
+        """Project repository results before they enter provider conversation history."""
+        value = dict(result) if isinstance(result, dict) else {"result": result}
+        if name == "list_repository_files":
+            files = list(value.get("files") or [])
+            value["files"] = files[:150]
+            value["truncated"] = bool(value.get("truncated")) or len(files) > 150
+        elif name == "search_repository":
+            matches = list(value.get("matches") or [])
+            value["matches"] = matches[:30]
+            value["truncated"] = bool(value.get("truncated")) or len(matches) > 30
+        elif name in {"read_repository_file", "inspect_candidate_diff"}:
+            field = "content" if "content" in value else "diff"
+            text = str(value.get(field) or "")
+            value[field] = text[:max_chars]
+            value["truncated"] = bool(value.get("truncated")) or len(text) > max_chars
+        rendered = json.dumps(value, default=str, sort_keys=True)
+        if len(rendered) <= max_chars:
+            return value
+        return {
+            "projected": True,
+            "tool": name,
+            "summary": rendered[:max_chars],
+            "truncated": True,
+        }
 
     def _charge(self) -> None:
         self.calls += 1
