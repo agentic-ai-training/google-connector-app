@@ -1,6 +1,7 @@
 import pytest
 import importlib
 import httpx
+import asyncio
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -63,7 +64,10 @@ from app.improvements.publisher import proposal_markdown
 from app.improvements.candidates import (
     candidate_digest, validate_candidate_files,
 )
-from app.improvements.builder import choose_builder_mode, normalize_candidate_contract
+from app.improvements.builder import (
+    _candidate_completion, candidate_model_order, choose_builder_mode,
+    normalize_candidate_contract,
+)
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
 )
@@ -120,6 +124,51 @@ def test_candidate_builder_normalizes_typed_contract_without_claiming_success():
         "action": "Remove added files", "automatic": False,
     }
     assert candidate["validation_commands"] == ["pytest tests/unit -q"]
+
+
+def test_candidate_builder_fallback_is_isolated_and_ordered(monkeypatch):
+    monkeypatch.setenv(
+        "CANDIDATE_BUILDER_FALLBACK_MODELS",
+        "openai/gpt-oss-120b,llama-3.3-70b-versatile",
+    )
+    get_settings.cache_clear()
+    try:
+        assert candidate_model_order({"model_name": "llama-3.3-70b-versatile"}) == [
+            "llama-3.3-70b-versatile", "openai/gpt-oss-120b",
+        ]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_falls_back_only_after_groq_rate_limit(monkeypatch):
+    from groq import RateLimitError
+
+    calls = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            calls.append(model)
+            if model == "llama-3.3-70b-versatile":
+                response = httpx.Response(
+                    429, headers={"retry-after": "3600"},
+                    request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise RateLimitError("daily limit", response=response, body=None)
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "openai/gpt-oss-120b")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=Completions()),
+        )
+        response, model = asyncio.run(_candidate_completion(
+            client, {"model_name": "llama-3.3-70b-versatile"}, messages=[],
+        ))
+        assert response.model == model == "openai/gpt-oss-120b"
+        assert calls == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+    finally:
+        get_settings.cache_clear()
 
 
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():

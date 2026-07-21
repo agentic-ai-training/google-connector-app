@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     groq_quality_reserve_tokens: int = 15000
     candidate_builder_enabled: bool = True
     candidate_builder_model: str = "llama-3.3-70b-versatile"
+    candidate_builder_fallback_models: str = "openai/gpt-oss-120b"
     candidate_builder_job_token_budget: int = 12000
     candidate_builder_max_output_tokens: int = 6000
     candidate_builder_poll_seconds: float = 5.0

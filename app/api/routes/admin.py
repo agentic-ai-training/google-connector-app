@@ -152,7 +152,7 @@ async def candidate_builder_draft(build_id: str, body: CandidateBuildDraft):
     try:
         return await store_candidate_draft(
             await get_pool(), build_id, body.model_dump(), body.tokens_used,
-            body.roles_completed,
+            body.roles_completed, body.models_used,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

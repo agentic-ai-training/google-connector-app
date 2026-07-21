@@ -71,13 +71,14 @@ async def main() -> None:
                 response.raise_for_status()
                 job = response.json()["build"]
                 stage = "generation"
-                candidate, tokens, roles = await generate_candidate_draft(job)
+                candidate, tokens, roles, models_used = await generate_candidate_draft(job)
                 payload = {
                     "files": candidate.get("files") or [],
                     "exact_diff": candidate["exact_diff"],
                     "rollback_plan": candidate["rollback_plan"],
                     "validation_commands": candidate.get("validation_commands") or [],
                     "roles_completed": roles,
+                    "models_used": models_used,
                     "tokens_used": tokens,
                 }
                 stage = "submission"
