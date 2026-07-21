@@ -43,6 +43,16 @@ async def main() -> None:
                 f"{base}/admin/candidate-builder/{build_id}/draft",
                 headers=headers, json=payload,
             )
+            if submitted.is_error:
+                # API validation contains repository paths/schema errors only;
+                # generated contents and private incident evidence are not logged.
+                print(
+                    json.dumps({
+                        "draft_submission_status": submitted.status_code,
+                        "validation_error": submitted.text[:4_000],
+                    }),
+                    file=sys.stderr,
+                )
             submitted.raise_for_status()
             print(json.dumps(submitted.json(), sort_keys=True))
 
