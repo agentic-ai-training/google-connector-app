@@ -8,6 +8,10 @@ on:
       reason:
         description: Sanitized retirement reason
         required: true
+      frontend_url:
+        description: Exact attested Vercel preview URL, when present
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -46,3 +50,14 @@ jobs:
           PY
           npx -y @railway/cli@latest scale --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" "${region}=0" --json
           echo "Retired ${{ inputs.proposal_key }}: ${{ inputs.reason }}"
+      - name: Retire the immutable frontend preview when present
+        if: ${{ inputs.frontend_url != '' }}
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          FRONTEND_URL: ${{ inputs.frontend_url }}
+        run: |
+          case "$FRONTEND_URL" in
+            https://*.vercel.app) ;;
+            *) echo "Refusing non-Vercel candidate URL" >&2; exit 1 ;;
+          esac
+          npx -y vercel@latest remove "$FRONTEND_URL" --yes --token="$VERCEL_TOKEN"

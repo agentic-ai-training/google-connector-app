@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from urllib.parse import urlparse
 
 
 ALLOWED_ROOTS = (
@@ -100,6 +101,22 @@ def candidate_runtime_surfaces(files: list[dict]) -> list[str]:
 
 
 def unsupported_candidate_surfaces(files: list[dict]) -> list[str]:
-    """Frontend binaries still require an isolated preview router."""
+    """Return runtime surfaces with no isolated governed deployment target."""
+    supported = {"api", "frontend", "registry", "worker"}
     return [surface for surface in candidate_runtime_surfaces(files)
-            if surface == "frontend"]
+            if surface not in supported]
+
+
+def valid_candidate_frontend_url(value: str | None) -> bool:
+    """Accept only origin-only immutable Vercel preview targets."""
+    parsed = urlparse(value or "")
+    return bool(
+        parsed.scheme == "https"
+        and parsed.hostname
+        and parsed.hostname.endswith(".vercel.app")
+        and not parsed.username
+        and not parsed.password
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+    )

@@ -30,7 +30,8 @@ from app.improvements.publisher import (
 )
 from app.improvements.candidates import (
     candidate_digest, candidate_runtime_surfaces, file_digest,
-    unsupported_candidate_surfaces, validate_candidate_files,
+    unsupported_candidate_surfaces, valid_candidate_frontend_url,
+    validate_candidate_files,
 )
 from app.improvements.builder import store_candidate_draft
 from app.okf.candidates import stage_okf_candidate_bundle
@@ -663,6 +664,27 @@ async def attest_candidate_deployment(
                 raise HTTPException(409, "API candidates require a verified HTTPS candidate URL")
         elif body.deployment_url:
             raise HTTPException(409, "Worker-only candidates must not expose a public URL")
+        if "frontend" in expected_surfaces:
+            if not (
+                valid_candidate_frontend_url(body.frontend_url)
+                and body.frontend_url.rstrip("/")
+                    != get_settings().frontend_url.rstrip("/")
+                and body.frontend_deployment_id
+                and body.frontend_source_commit == body.candidate_version
+            ):
+                raise HTTPException(
+                    409,
+                    "Frontend candidates require an immutable verified Vercel preview "
+                    "built from the approved commit",
+                )
+        elif any((
+            body.frontend_url,
+            body.frontend_deployment_id,
+            body.frontend_source_commit,
+        )):
+            raise HTTPException(
+                409, "Non-frontend candidates must not attest a frontend preview",
+            )
         evidence = {
             **body.model_dump(),
             "trusted_identity": f"github-actions:{settings.github_proposal_repository}:{body.workflow}",
@@ -763,6 +785,9 @@ async def attest_promoted_production(body: ProductionDeploymentAttestation):
         try:
             cleanup = await dispatch_candidate_cleanup(
                 proposal["proposal_key"], "promoted to attested production",
+                str((_json_object(proposal["deployment_evidence"])).get(
+                    "frontend_url"
+                ) or ""),
             )
         except Exception as exc:
             cleanup = {"status": "not_dispatched", "reason": str(exc)}
@@ -1275,6 +1300,9 @@ async def decide_promotion(proposal_key: str, body: ImprovementDecision,
         try:
             publication = await dispatch_candidate_cleanup(
                 proposal_key, f"promotion decision {body.decision}",
+                str((_json_object(proposal["deployment_evidence"])).get(
+                    "frontend_url"
+                ) or ""),
             )
         except Exception as exc:
             publication = {"status": "cleanup_not_dispatched", "reason": str(exc)}

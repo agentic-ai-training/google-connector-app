@@ -405,7 +405,8 @@ async def evaluate_active_canaries(pool) -> int:
                     canary["proposal_id"],
                 )
                 retired = await conn.fetchrow(
-                    """SELECT proposal_key,candidate_kind FROM improvement_proposals
+                    """SELECT proposal_key,candidate_kind,deployment_evidence
+                       FROM improvement_proposals
                        WHERE id=$1""",
                     canary["proposal_id"],
                 )
@@ -413,6 +414,9 @@ async def evaluate_active_canaries(pool) -> int:
                     cleanup_requests.append((
                         retired["proposal_key"],
                         "automatic measured canary rollback",
+                        str((retired["deployment_evidence"] or {}).get(
+                            "frontend_url"
+                        ) or ""),
                     ))
             await conn.execute(
                 "UPDATE improvement_proposals SET status=$1,updated_at=now() WHERE id=$2",
@@ -440,9 +444,11 @@ async def evaluate_active_canaries(pool) -> int:
             changed += 1
     if cleanup_requests:
         from app.improvements.publisher import dispatch_candidate_cleanup
-        for proposal_key, reason in cleanup_requests:
+        for proposal_key, reason, frontend_url in cleanup_requests:
             try:
-                await dispatch_candidate_cleanup(proposal_key, reason)
+                await dispatch_candidate_cleanup(
+                    proposal_key, reason, frontend_url,
+                )
             except Exception as exc:
                 logger.warning(
                     "Candidate cleanup dispatch failed proposal=%s error_type=%s",

@@ -23,6 +23,14 @@ class CandidateAPITarget:
     reason: str
 
 
+@dataclass(frozen=True)
+class CandidateFrontendTarget:
+    url: str
+    candidate_version: str
+    canary_id: str
+    reason: str
+
+
 def stable_bucket(canary_id: str, user_id: str) -> int:
     digest = hashlib.sha256(f"{canary_id}:{user_id}".encode()).digest()
     return int.from_bytes(digest[:8], "big") % 100
@@ -93,6 +101,41 @@ async def resolve_candidate_api_target(
         ):
             continue
         return CandidateAPITarget(
+            url=url, candidate_version=row["candidate_version"],
+            canary_id=str(row["id"]), reason=reason,
+        )
+    return None
+
+
+async def resolve_candidate_frontend_target(
+    conn, user_id: str,
+) -> CandidateFrontendTarget | None:
+    """Return the attested preview only for a stable active frontend cohort."""
+    rows = await conn.fetch(
+        """SELECT c.*,p.candidate_manifest,p.candidate_version,p.deployment_evidence
+           FROM improvement_canaries c
+           JOIN improvement_proposals p ON p.id=c.proposal_id
+           WHERE c.status='active' AND c.routing_enabled=TRUE
+             AND p.candidate_kind='code'
+           ORDER BY c.started_at,c.id FOR UPDATE"""
+    )
+    for row in rows:
+        manifest = row["candidate_manifest"] or {}
+        if "frontend" not in set(manifest.get("runtime_surfaces") or []):
+            continue
+        selected, reason = _cohort_selected(row, user_id)
+        if not selected:
+            continue
+        evidence = row["deployment_evidence"] or {}
+        url = str(evidence.get("frontend_url") or "").rstrip("/")
+        if (
+            evidence.get("verified") is not True
+            or evidence.get("candidate_version") != row["candidate_version"]
+            or evidence.get("frontend_source_commit") != row["candidate_version"]
+            or not url.startswith("https://")
+        ):
+            continue
+        return CandidateFrontendTarget(
             url=url, candidate_version=row["candidate_version"],
             canary_id=str(row["id"]), reason=reason,
         )

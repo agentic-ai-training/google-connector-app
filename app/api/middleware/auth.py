@@ -179,6 +179,27 @@ async def me(request: Request):
     }
 
 
+@router.get("/auth/frontend-candidate")
+async def frontend_candidate(request: Request):
+    """Return only the trusted preview assigned to this authenticated user."""
+    from app.improvements.routing import resolve_candidate_frontend_target
+
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        target = await resolve_candidate_frontend_target(
+            conn, request.state.user_id,
+        )
+    if not target:
+        return {"eligible": False}
+    return {
+        "eligible": True,
+        "url": target.url,
+        "candidate_version": target.candidate_version,
+        "canary_id": target.canary_id,
+        "reason": target.reason,
+    }
+
+
 @router.delete("/auth/google")
 async def disconnect_google(request: Request):
     await delete_google_credentials(await get_pool(), request.state.user_id)
@@ -209,6 +230,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     protected = request.url.path.startswith(
         ("/chat", "/runs", "/sessions", "/feedback", "/history", "/admin", "/auth/me",
+         "/auth/frontend-candidate",
          "/auth/account-data")
     ) or (request.url.path == "/auth/google" and request.method == "DELETE")
     if not protected:

@@ -3,8 +3,9 @@
 import {FormEvent,useEffect,useState} from "react";
 import FeedbackButtons from "@/components/FeedbackButtons";
 import {
-  API,AgentRun,beginGoogleLogin,currentUser,CurrentUser,disconnectGoogle,
-  getToken,RunArtifact,useChat,
+  API,AgentRun,beginGoogleLogin,CONTROL_FRONTEND_URL,currentUser,CurrentUser,
+  disconnectGoogle,frontendCandidate,getToken,handoffFrontend,
+  IS_CANDIDATE_FRONTEND,RunArtifact,useChat,
 } from "@/hooks/useChat";
 
 function StepMark({status}:{status:string}){
@@ -77,7 +78,7 @@ export default function Home(){
       queueMicrotask(()=>{if(active)setAuthLoading(false);});
       return()=>{active=false;};
     }
-    currentUser().then(value=>{
+    currentUser().then(async value=>{
       if(!value.google_connected){
         localStorage.removeItem("agent_token");
         throw new Error(value.missing_scopes?.length
@@ -85,6 +86,20 @@ export default function Home(){
           :"Connect your Google account to continue");
       }
       if(active)setUser(value);
+      try{
+        const candidate=await frontendCandidate();
+        if(!active)return;
+        if(candidate.eligible&&candidate.url){
+          if(new URL(candidate.url).origin!==window.location.origin){
+            handoffFrontend(candidate.url,candidate.candidate_version);
+          }
+        }else if(IS_CANDIDATE_FRONTEND&&CONTROL_FRONTEND_URL&&
+          new URL(CONTROL_FRONTEND_URL).origin!==window.location.origin){
+          handoffFrontend(CONTROL_FRONTEND_URL);
+        }
+      }catch{
+        // Candidate discovery is non-critical; the control UI remains available.
+      }
     }).catch(error=>{
       localStorage.removeItem("agent_token");
       if(active)setAuthError(error instanceof Error?error.message:"Sign-in failed");

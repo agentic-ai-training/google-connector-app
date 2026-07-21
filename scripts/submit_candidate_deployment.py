@@ -10,6 +10,8 @@ deployment = status.get("latestDeployment") or status
 meta = deployment.get("meta") or {}
 with open("candidate-domain.json", encoding="utf-8") as handle:
     domain = json.load(handle)
+with open("candidate-frontend.json", encoding="utf-8") as handle:
+    frontend = json.load(handle)
 payload = {
     "candidate_version": os.environ["CANDIDATE_VERSION"],
     "deployment_id": deployment["id"],
@@ -22,11 +24,15 @@ payload = {
     "source_commit": os.environ["CANDIDATE_VERSION"],
     "runtime_surfaces": domain["runtime_surfaces"],
     "deployment_url": domain["deployment_url"],
+    "frontend_deployment_id": frontend.get("frontend_deployment_id"),
+    "frontend_url": frontend.get("frontend_url"),
+    "frontend_source_commit": frontend.get("frontend_source_commit"),
     "smoke_tests": {"passed": True, "checks": [
         "Railway deployment reached SUCCESS with a RUNNING instance",
         "source commit and executor version are pinned",
         "candidate runtime emitted version-bound readiness",
         "API health is version-bound when an API surface is present",
+        "frontend health is version-bound when a frontend surface is present",
     ]},
     "verified": True,
 }

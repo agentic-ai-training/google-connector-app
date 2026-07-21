@@ -63,6 +63,21 @@ jobs:
           CANDIDATE_VERSION: ${{ inputs.candidate_version }}
           CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
         run: python scripts/wait_candidate_deployment.py
+      - name: Deploy immutable candidate frontend preview when required
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
+          PROPOSAL_KEY: ${{ inputs.proposal_key }}
+          CONTROL_FRONTEND_URL: https://google-connector-app.vercel.app
+        run: python scripts/deploy_candidate_frontend.py
+      - name: Verify exact candidate frontend preview when required
+        env:
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
+        run: python scripts/wait_candidate_frontend.py
       - name: Register trusted deployment evidence
         env:
           CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}

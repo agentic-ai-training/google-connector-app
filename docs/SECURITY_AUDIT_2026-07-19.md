@@ -70,6 +70,8 @@ to the API/worker image merely to preserve a particular benchmark library.
 
 Remaining defense-in-depth: GitHub-hosted generation is an ephemeral credential-minimal
 checkout, but not a network-namespace sandbox with destination-level egress enforcement.
-Frontend candidates remain blocked from real canary execution until an isolated preview
-and traffic router exists. Planner/API candidates use the separately attested Railway
-candidate API and stable control-side proxy routing; they do not replace the control API.
+Frontend candidates use an immutable, non-production Vercel preview and an authenticated,
+stable-cohort handoff. The bearer token is placed only in the URL fragment, never a query
+parameter or request URL; rollback stops routing before preview deletion. Planner/API
+candidates use the separately attested Railway candidate API and stable control-side proxy
+routing; neither surface replaces the control deployment during canary preparation.

@@ -326,6 +326,85 @@ def test_private_tool_result_store_is_encrypted_and_tenant_scoped():
         assert denied is True
 
 
+def test_frontend_candidate_handoff_is_attested_and_user_scoped():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    marker = str(uuid.uuid4())
+    proposal_key = f"frontend-canary-{marker}"
+    version = "a" * 40
+    selected_email = "frontend-selected@example.com"
+    with TestClient(app) as client:
+        selected_token = client.post(
+            "/auth/token", json={"email": selected_email},
+        ).json()["access_token"]
+        other_token = client.post(
+            "/auth/token", json={"email": "frontend-other@example.com"},
+        ).json()["access_token"]
+
+        async def seed():
+            pool = await get_pool()
+            async with pool.acquire() as conn, conn.transaction():
+                proposal_id = await conn.fetchval(
+                    """INSERT INTO improvement_proposals
+                       (proposal_key,proposal_type,title,sanitized_summary,status,
+                        source_version,candidate_version,content_hash,candidate_kind,
+                        candidate_state,candidate_manifest,deployment_evidence)
+                       VALUES($1,'policy','Frontend fixture','safe','canary_active',$2,$3,$4,
+                              'code','deployed_canary',$5::jsonb,$6::jsonb)
+                       RETURNING id""",
+                    proposal_key, "b" * 40, version, marker,
+                    json.dumps({
+                        "runtime_surfaces": ["frontend"],
+                        "applicability": {"rag_modes": ["none"]},
+                    }),
+                    json.dumps({
+                        "verified": True,
+                        "candidate_version": version,
+                        "frontend_source_commit": version,
+                        "frontend_deployment_id": "dpl_frontend_fixture",
+                        "frontend_url": "https://candidate-fixture.vercel.app",
+                        "trusted_identity": "github-actions:fixture",
+                    }),
+                )
+                await conn.execute(
+                    """INSERT INTO improvement_canaries
+                       (proposal_id,cohort,status,control_version,candidate_version,
+                        started_at,routing_enabled,traffic_percent,allowed_users,denied_users)
+                       VALUES($1,'{}','active',$2,$3,now(),TRUE,5,$4,$5)""",
+                    proposal_id, "b" * 40, version, [selected_email], [],
+                )
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM improvement_proposals WHERE proposal_key=$1",
+                    proposal_key,
+                )
+
+        client.portal.call(seed)
+        selected = client.get(
+            "/auth/frontend-candidate",
+            headers={"Authorization": f"Bearer {selected_token}"},
+        )
+        assert selected.status_code == 200
+        assert selected.json() == {
+            "eligible": True,
+            "url": "https://candidate-fixture.vercel.app",
+            "candidate_version": version,
+            "canary_id": selected.json()["canary_id"],
+            "reason": "explicit allowlist",
+        }
+        other = client.get(
+            "/auth/frontend-candidate",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert other.status_code == 200
+        assert other.json() == {"eligible": False}
+        client.portal.call(cleanup)
+
+
 def test_okf_overlay_requires_and_records_independent_human_approval():
     from app.api.main import app
     from app.db.connection import get_pool

@@ -4,6 +4,7 @@ import {useEffect,useRef,useState} from "react";
 
 export type Message={role:"user"|"assistant";content:string};
 export type CurrentUser={email:string;admin?:boolean;google_connected:boolean;missing_scopes?:string[]};
+export type FrontendCandidate={eligible:boolean;url?:string;candidate_version?:string;canary_id?:string;reason?:string};
 export type RunStep={id:string;title:string;status:string;risk_level:string;requires_approval:boolean};
 export type RunEvent={id:number;event_type:string;phase?:string;message?:string;created_at:string};
 export type RunApproval={action_hash:string;action_summary:Record<string,unknown>;expires_at:string;status:string};
@@ -19,14 +20,37 @@ export type AgentRun={
   steps:RunStep[];artifacts:RunArtifact[];recent_events?:RunEvent[];approval?:RunApproval|null;
 };
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
+export const CONTROL_FRONTEND_URL=process.env.NEXT_PUBLIC_CONTROL_FRONTEND_URL??"";
+export const IS_CANDIDATE_FRONTEND=process.env.NEXT_PUBLIC_CANDIDATE_FRONTEND==="true";
 
 export function getToken(){
   return typeof window==="undefined"?null:localStorage.getItem("agent_token");
 }
 
 export function beginGoogleLogin(){
-  const returnTo=window.location.origin;
+  const returnTo=CONTROL_FRONTEND_URL||window.location.origin;
   window.location.assign(`${API}/auth/google/login?return_to=${encodeURIComponent(returnTo)}`);
+}
+
+export async function frontendCandidate():Promise<FrontendCandidate>{
+  const token=getToken();
+  if(!token)return {eligible:false};
+  const response=await fetch(`${API}/auth/frontend-candidate`,{
+    headers:{Authorization:`Bearer ${token}`},
+  });
+  if(!response.ok)throw new Error("Unable to resolve candidate frontend");
+  return response.json();
+}
+
+export function handoffFrontend(target:string,candidateVersion?:string){
+  const token=getToken();
+  if(!token)return;
+  const destination=new URL(target);
+  destination.hash=new URLSearchParams({
+    access_token:token,
+    ...(candidateVersion?{candidate_version:candidateVersion}:{}),
+  }).toString();
+  window.location.replace(destination.toString());
 }
 
 export async function currentUser():Promise<CurrentUser>{

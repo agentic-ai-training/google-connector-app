@@ -53,9 +53,12 @@ pinned to their immutable executor version. API/planner candidates use the same 
 candidate image with an HTTPS domain created only for the `api` runtime surface; the
 control API performs bounded applicability/cohort selection and proxies creation/resume
 to that exact attested version. Prompt/config/OKF candidates use versioned registries.
-Frontend candidates remain ineligible until an isolated preview and traffic router exists.
+Frontend candidates deploy as immutable non-production Vercel previews from the frozen
+commit. Trusted CI verifies project/deployment identity and a version-bound health route;
+the authenticated control frontend then hands only stable approved-cohort users to the
+preview through a URL fragment. A preview sends expired users back through control OAuth.
 Safety regression stops assignment, returns never-started queued runs to control, and
-scales down the candidate through the cleanup controller.
+scales down the candidate and removes any attested preview through the cleanup controller.
 
 ## Result and optimization boundaries
 

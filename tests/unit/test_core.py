@@ -17,9 +17,10 @@ from scripts.run_ragas_eval import _score_payload
 from scripts.sync_grafana_dashboards import build_dashboard_payload
 from app.improvements.candidates import (
     candidate_runtime_surfaces, infer_candidate_kind,
-    unsupported_candidate_surfaces, worker_canary_incompatible_paths,
+    unsupported_candidate_surfaces, valid_candidate_frontend_url,
+    worker_canary_incompatible_paths,
 )
-from app.improvements.routing import candidate_applies
+from app.improvements.routing import candidate_applies, resolve_candidate_frontend_target
 from app.improvements.analyzer import _json_object, _number
 from app.evaluation.metrics import compare_policy_metrics, evaluate_plan
 from app.agents.router import route_model_node
@@ -96,7 +97,7 @@ def test_context_packer_orders_by_score():
     assert text.index("first") < text.index("second")
 
 
-def test_candidate_runtime_surfaces_are_explicit_and_frontend_is_blocked():
+def test_candidate_runtime_surfaces_are_explicit_and_supported():
     files = [
         {"path": "app/runs/planner.py"},
         {"path": "app/agents/supervisor.py"},
@@ -104,8 +105,40 @@ def test_candidate_runtime_surfaces_are_explicit_and_frontend_is_blocked():
         {"path": "tests/unit/test_core.py"},
     ]
     assert candidate_runtime_surfaces(files) == ["api", "frontend", "worker"]
-    assert unsupported_candidate_surfaces(files) == ["frontend"]
+    assert unsupported_candidate_surfaces(files) == []
     assert candidate_runtime_surfaces([{"path": "knowledge/README.md"}]) == ["registry"]
+    assert valid_candidate_frontend_url("https://candidate-preview.vercel.app")
+    assert not valid_candidate_frontend_url("https://candidate-preview.vercel.app/path")
+    assert not valid_candidate_frontend_url("https://vercel.app.evil.example")
+    assert not valid_candidate_frontend_url("https://user@candidate.vercel.app")
+
+
+def test_frontend_candidate_target_requires_attestation_and_stable_cohort():
+    class Connection:
+        async def fetch(self, _query):
+            return [{
+                "id": "canary-frontend",
+                "allowed_users": ["selected@example.com"],
+                "denied_users": [],
+                "traffic_percent": 5,
+                "candidate_manifest": {"runtime_surfaces": ["frontend"]},
+                "candidate_version": "a" * 40,
+                "deployment_evidence": {
+                    "verified": True,
+                    "candidate_version": "a" * 40,
+                    "frontend_source_commit": "a" * 40,
+                    "frontend_url": "https://candidate-preview.vercel.app",
+                },
+            }]
+
+    selected = asyncio.run(resolve_candidate_frontend_target(
+        Connection(), "selected@example.com",
+    ))
+    assert selected is not None
+    assert selected.url == "https://candidate-preview.vercel.app"
+    assert asyncio.run(resolve_candidate_frontend_target(
+        Connection(), "someone-else@example.com",
+    )) is None
 
 
 def test_candidate_builder_dns_guard_denies_unknown_hosts(monkeypatch):

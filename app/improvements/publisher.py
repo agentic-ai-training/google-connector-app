@@ -171,7 +171,9 @@ async def dispatch_candidate_deployment(proposal: dict) -> dict:
     return {"workflow": "candidate-deploy.yml", "status": "dispatched"}
 
 
-async def dispatch_candidate_cleanup(proposal_key: str, reason: str) -> dict:
+async def dispatch_candidate_cleanup(
+    proposal_key: str, reason: str, frontend_url: str = "",
+) -> dict:
     """Scale the isolated candidate executor down after rollback or promotion."""
     settings = get_settings()
     if not settings.github_proposal_token:
@@ -186,7 +188,11 @@ async def dispatch_candidate_cleanup(proposal_key: str, reason: str) -> dict:
     async with httpx.AsyncClient(headers=headers, timeout=30) as client:
         response = await client.post(url, json={
             "ref": "main",
-            "inputs": {"proposal_key": proposal_key, "reason": reason[:200]},
+            "inputs": {
+                "proposal_key": proposal_key,
+                "reason": reason[:200],
+                "frontend_url": frontend_url[:2_000],
+            },
         })
         response.raise_for_status()
     return {"workflow": "candidate-cleanup.yml", "status": "dispatched"}

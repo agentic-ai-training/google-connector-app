@@ -59,13 +59,15 @@ Current governed sequence:
 Rejected, expired, rolled-back, and failed-build policy themes return to `active` so later
 evidence can reopen them. Only attested production publication resolves a theme. API/planner
 candidates require the isolated HTTPS candidate API plus exact health/version attestation;
-frontend candidates remain blocked until a separate preview router exists. Do not represent
-worker-only deployment evidence as proof for an API or frontend surface.
+frontend candidates require a non-production Vercel deployment ID, unique preview URL,
+matching source commit, project ownership, metadata, and exact frontend-health attestation.
+Do not represent worker-only deployment evidence as proof for an API or frontend surface.
 
 The isolated candidate Railway project should remain scaled to zero until the deployment
 gate is approved. It needs no public domain. `candidate-infra-check.yml` validates access
 without deploying; `candidate-cleanup.yml` returns its worker region to zero after rollback,
-rejection, or promotion.
+rejection, or promotion and removes an attested Vercel preview when one exists. Routing is
+disabled before cleanup, so removal cannot strand newly assigned users.
 
 ## Tokenizer and bounded-result recovery
 

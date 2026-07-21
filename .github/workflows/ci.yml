@@ -65,8 +65,12 @@ jobs:
           docker compose config --quiet
       - name: Verify sensitive local files are not tracked or present in history
         run: |
-          ! git ls-files | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'
-          ! git log --all --name-only --pretty=format: | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'
+          if git ls-files | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'; then
+            exit 1
+          fi
+          if git log --all --name-only --pretty=format: | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'; then
+            exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest
