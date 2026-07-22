@@ -1085,6 +1085,9 @@ async def store_candidate_draft(
             tokens, digest, json.dumps({
                 "roles_completed": roles,
                 "models_used": models_used or [job["model_name"]],
+                "last_retry_dispatch": {
+                    "state": "completed", "contains_private_evidence": False,
+                },
             }), job["id"],
         )
         await conn.execute(

@@ -504,6 +504,17 @@ async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
         try:
             await dispatch_candidate_builder(build_id)
             dispatched += 1
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE candidate_builds SET checkpoint=checkpoint||$1::jsonb
+                         WHERE id=$2 AND status='queued'""",
+                    json.dumps({
+                        "last_retry_dispatch": {
+                            "state": "dispatched",
+                            "contains_private_evidence": False,
+                        },
+                    }), build_id,
+                )
         except Exception as exc:
             logger.warning(
                 "Candidate retry dispatch failed build=%s error_type=%s",
