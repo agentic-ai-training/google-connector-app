@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 
 from groq import APIStatusError, AsyncGroq, RateLimitError
 
@@ -20,14 +21,14 @@ from app.improvements.builder_tools import BoundedRepositoryTools
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v1"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v4-quota-aware-turns"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v5-durable-phases"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
 BUILDER_REVIEWER_MAX_ROUNDS = 5
 BUILDER_TOOL_TURN_MAX_TOKENS = 2_048
 BUILDER_FINAL_TURN_MAX_TOKENS = 4_096
-BUILDER_QUOTA_RETRY_MAX_TOKENS = 1_024
+BUILDER_QUOTA_RETRY_TOKEN_STEPS = (1_024, 512, 256)
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -147,7 +148,7 @@ async def _candidate_completion(
             # tools close for final candidate serialization.
             request_kwargs.pop("response_format", None)
         retried_short_limit = False
-        retried_quota_fit = False
+        quota_retry_index = 0
         retried_oversize = False
         retried_tool_generation = False
         retried_json_generation = False
@@ -172,13 +173,20 @@ async def _candidate_completion(
                     await asyncio.sleep(retry_after)
                     continue
                 current_max = int(request_kwargs.get("max_tokens") or 0)
-                if not retried_quota_fit and current_max > BUILDER_QUOTA_RETRY_MAX_TOKENS:
+                while (
+                    quota_retry_index < len(BUILDER_QUOTA_RETRY_TOKEN_STEPS)
+                    and BUILDER_QUOTA_RETRY_TOKEN_STEPS[quota_retry_index] >= current_max
+                ):
+                    quota_retry_index += 1
+                if quota_retry_index < len(BUILDER_QUOTA_RETRY_TOKEN_STEPS):
                     # Free-tier TPD accounting can reject a large requested completion
-                    # even when a small patch still fits. Retry once with compact input
-                    # and a small output reservation before advancing the allowlist.
-                    retried_quota_fit = True
+                    # even when a small patch still fits. Progressively reduce only this
+                    # builder turn before advancing the approved model allowlist.
                     request_kwargs = dict(request_kwargs)
-                    request_kwargs["max_tokens"] = BUILDER_QUOTA_RETRY_MAX_TOKENS
+                    request_kwargs["max_tokens"] = BUILDER_QUOTA_RETRY_TOKEN_STEPS[
+                        quota_retry_index
+                    ]
+                    quota_retry_index += 1
                     if request_kwargs.get("messages"):
                         request_kwargs["messages"] = _fit_builder_history(
                             request_kwargs["messages"],
@@ -699,6 +707,7 @@ async def _groq_tool_json(
 
 async def generate_candidate_draft(
     job: dict,
+    checkpoint_callback: Callable[[dict], Awaitable[None]] | None = None,
 ) -> tuple[dict, int, list[str], list[str]]:
     """Generate a patch from sanitized facts and a bounded checkout only."""
     sanitized = dict(job["sanitized_input"] or {})
@@ -713,11 +722,32 @@ async def generate_candidate_draft(
         ["independent_safety_reviewer"] if job["mode"] == "multi_role" else []
     )
     repository_tools = BoundedRepositoryTools(ROOT)
+    resume = dict(job.get("generation_checkpoint") or {})
+    checkpoint_files = list(job.get("checkpoint_files") or [])
+    if not checkpoint_files:
+        # A phase is resumable only when its validated frozen files exist too.
+        resume = {}
+    for item in checkpoint_files:
+        repository_tools.stage(
+            item["path"], item["change_type"], item.get("content") or "",
+        )
     candidate = None
-    tokens = 0
+    completed_roles = list(resume.get("roles_completed") or [])
+    if resume and checkpoint_files:
+        candidate = normalize_candidate_contract({
+            "files": repository_tools.staged_files(),
+            "exact_diff": resume.get("exact_diff") or repository_tools.diff()["diff"],
+            "rollback_plan": resume.get("rollback_plan") or {
+                "action": "route traffic to base version",
+            },
+            "validation_commands": resume.get("validation_commands") or [],
+        })
+    tokens = int(resume.get("tokens_used") or 0)
     token_budget = effective_builder_token_budget(job)
-    models_used: list[str] = []
+    models_used: list[str] = list(resume.get("models_used") or [])
     for role in roles:
+        if role in completed_roles:
+            continue
         if tokens >= token_budget:
             raise RuntimeError("Candidate token budget exhausted before review")
         if role == "independent_safety_reviewer":
@@ -750,6 +780,27 @@ async def generate_candidate_draft(
                     repository_tools.stage(
                         item["path"], item["change_type"], item.get("content") or "",
                     )
+            completed_roles.append(role)
+            if (
+                checkpoint_callback is not None
+                and "independent_safety_reviewer" in roles
+            ):
+                checkpoint_candidate = normalize_candidate_contract({
+                    **candidate,
+                    "files": repository_tools.staged_files(),
+                    "exact_diff": repository_tools.diff()["diff"],
+                })
+                await checkpoint_callback({
+                    "files": checkpoint_candidate["files"],
+                    "exact_diff": checkpoint_candidate["exact_diff"],
+                    "rollback_plan": checkpoint_candidate["rollback_plan"],
+                    "validation_commands": checkpoint_candidate.get(
+                        "validation_commands", []
+                    ),
+                    "roles_completed": completed_roles,
+                    "models_used": models_used,
+                    "tokens_used": tokens,
+                })
     candidate = normalize_candidate_contract(candidate or {})
     candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
     candidate.setdefault("rollback_plan", {"action": "route traffic to base version"})
@@ -760,6 +811,60 @@ async def generate_candidate_draft(
             "Candidate contract failed local validation: " + ",".join(final_errors)
         )
     return candidate, tokens, roles, models_used
+
+
+async def store_candidate_checkpoint(
+    pool, build_id, candidate: dict, tokens: int, roles: list[str],
+    models_used: list[str] | None = None,
+) -> dict:
+    """Persist resumable untrusted author output without granting CI authority."""
+    files = candidate.get("files") or []
+    errors = validate_candidate_files(files)
+    if errors:
+        raise ValueError("; ".join(errors))
+    async with pool.acquire() as conn, conn.transaction():
+        job = await conn.fetchrow(
+            "SELECT * FROM candidate_builds WHERE id=$1 FOR UPDATE", build_id,
+        )
+        if not job or job["status"] != "investigating":
+            raise ValueError("Candidate build is unavailable for checkpointing")
+        await conn.execute(
+            "DELETE FROM candidate_build_files WHERE build_id=$1", job["id"],
+        )
+        for item in files:
+            preimage = (
+                (ROOT / item["path"]).read_text()
+                if (ROOT / item["path"]).is_file() else None
+            )
+            await conn.execute(
+                """INSERT INTO candidate_build_files
+                   (build_id,path,change_type,preimage_hash,result_hash,content)
+                   VALUES($1,$2,$3,$4,$5,$6)""",
+                job["id"], item["path"], item["change_type"],
+                file_digest(preimage) if preimage is not None else None,
+                file_digest(item.get("content")), item.get("content"),
+            )
+        generation_checkpoint = {
+            "phase": "author_completed",
+            "roles_completed": roles,
+            "models_used": models_used or [job["model_name"]],
+            "tokens_used": int(tokens),
+            "exact_diff": candidate["exact_diff"],
+            "rollback_plan": candidate["rollback_plan"],
+            "validation_commands": candidate.get("validation_commands") or [],
+            "file_count": len(files),
+            "contains_private_evidence": False,
+        }
+        await conn.execute(
+            """UPDATE candidate_builds SET tokens_used=GREATEST(tokens_used,$1),
+               checkpoint=checkpoint||$2::jsonb,updated_at=now() WHERE id=$3""",
+            int(tokens), json.dumps({"generation_checkpoint": generation_checkpoint}),
+            job["id"],
+        )
+    return {
+        "build_id": str(build_id), "status": "investigating",
+        "phase": "author_completed", "file_count": len(files),
+    }
 
 
 async def store_candidate_draft(
@@ -793,6 +898,9 @@ async def store_candidate_draft(
         await conn.execute(
             "DELETE FROM improvement_candidate_files WHERE proposal_id=$1",
             job["proposal_id"],
+        )
+        await conn.execute(
+            "DELETE FROM candidate_build_files WHERE build_id=$1", job["id"],
         )
         for item in files:
             preimage = (

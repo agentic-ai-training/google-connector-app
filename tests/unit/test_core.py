@@ -34,6 +34,7 @@ from app.agents.errors import ModelContextLengthFailure, is_provider_context_len
 from app.api.middleware.auth import create_token
 from app.api.routes.chat import capability_answer, classify_graph_results
 from app.api.routes.feedback import _dataset_split, _sanitize_value
+from app.api.routes.admin import _candidate_retry_delay
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 import jwt
@@ -300,6 +301,44 @@ def test_candidate_builder_retries_large_quota_reservation_with_small_ceiling(mo
         assert requests[1]["max_tokens"] == 1_024
     finally:
         get_settings.cache_clear()
+
+
+def test_candidate_builder_progressively_reduces_quota_reservation(monkeypatch):
+    from groq import RateLimitError
+
+    reservations = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            reservations.append(kwargs["max_tokens"])
+            if kwargs["max_tokens"] > 256:
+                response = httpx.Response(
+                    429, headers={"retry-after": "3600"},
+                    request=httpx.Request("POST", "https://api.groq.com/test"),
+                )
+                raise RateLimitError("daily reservation limit", response=response, body=None)
+            return SimpleNamespace(model=model)
+
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+        _, model, _ = asyncio.run(_candidate_completion(
+            client, {"model_name": "llama-3.3-70b-versatile"},
+            messages=[{"role": "user", "content": "bounded patch"}],
+            max_tokens=2_048,
+        ))
+        assert model == "llama-3.3-70b-versatile"
+        assert reservations == [2_048, 1_024, 512, 256]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_quota_backoff_prevents_retry_storm():
+    assert _candidate_retry_delay("TimeoutError", 60, 20) == 60
+    assert _candidate_retry_delay("RateLimitError", 60, 1) == 1_800
+    assert _candidate_retry_delay("RateLimitError", 3_000, 3) == 3_600
+    assert _candidate_retry_delay("RateLimitError", 60, 36) == 21_600
 
 
 def test_candidate_builder_omits_json_mode_only_for_gpt_oss_tool_turns(monkeypatch):
@@ -838,17 +877,62 @@ def test_multi_role_approval_preserves_direct_author_files(monkeypatch):
         return author, 10, ["author-model"]
 
     monkeypatch.setattr("app.improvements.builder._groq_tool_json", fake_role)
+    checkpoints = []
+
+    async def checkpoint(payload):
+        checkpoints.append(payload)
+
     candidate, tokens, roles, models = asyncio.run(generate_candidate_draft({
         "mode": "multi_role", "model_name": "openai/gpt-oss-20b",
         "token_budget": 1_000,
         "sanitized_input": {"component": "step_executor", "selected_option": {}},
-    }))
+    }, checkpoint_callback=checkpoint))
     assert candidate["files"] == author["files"]
     assert "+++ b/tests/direct_candidate.py" in candidate["exact_diff"]
     assert tokens == 15
     assert roles == ["investigator_and_patch_author", "independent_safety_reviewer"]
     assert models == ["author-model", "review-model"]
+    assert checkpoints[0]["roles_completed"] == ["investigator_and_patch_author"]
+    assert checkpoints[0]["files"] == author["files"]
+    assert checkpoints[0]["tokens_used"] == 10
     assert reviewer_contract_errors({"approved": True}) == []
+
+
+def test_multi_role_candidate_resumes_from_author_checkpoint(monkeypatch):
+    files = [{
+        "path": "tests/resumed_candidate.py", "change_type": "create",
+        "content": "value = 1\n",
+    }]
+    calls = []
+
+    async def fake_role(job, tools, role, prior_candidate=None):
+        calls.append(role)
+        assert role == "independent_safety_reviewer"
+        assert prior_candidate["files"] == files
+        assert tools.staged_files() == files
+        return {"approved": True, "reason": "safe"}, 7, ["review-model"]
+
+    monkeypatch.setattr("app.improvements.builder._groq_tool_json", fake_role)
+    candidate, tokens, roles, models = asyncio.run(generate_candidate_draft({
+        "mode": "multi_role", "model_name": "openai/gpt-oss-20b",
+        "token_budget": 1_000,
+        "sanitized_input": {"component": "step_executor", "selected_option": {}},
+        "generation_checkpoint": {
+            "phase": "author_completed",
+            "roles_completed": ["investigator_and_patch_author"],
+            "models_used": ["author-model"],
+            "tokens_used": 11,
+            "exact_diff": "author diff",
+            "rollback_plan": {"action": "remove candidate"},
+            "validation_commands": ["pytest tests/unit -q"],
+        },
+        "checkpoint_files": files,
+    }))
+    assert calls == ["independent_safety_reviewer"]
+    assert candidate["files"] == files
+    assert tokens == 18
+    assert roles == ["investigator_and_patch_author", "independent_safety_reviewer"]
+    assert models == ["author-model", "review-model"]
 
 
 def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp_path):
