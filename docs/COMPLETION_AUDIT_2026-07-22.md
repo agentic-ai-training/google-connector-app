@@ -75,7 +75,7 @@ portal, and the unit/integration OKF lifecycle tests.
 The final local and trusted-CI checks cover the promised surfaces rather than a narrow
 smoke subset:
 
-- Backend: 124 unit/database-independent tests passed; 25 integration tests passed
+- Backend: 127 unit/database-independent tests passed; 26 integration tests passed
   against PostgreSQL when explicitly enabled.
 - Planner and execution: 28/28 deterministic planner cases and 4/4 no-network Google
   workflow replays passed.
@@ -119,10 +119,18 @@ Build `7aa74d5b-cf30-4efc-9517-883d0999edd4` is the real high-risk multi-role ca
 for the selected verification strategy. The original reviewer-contract defect is fixed.
 Manual retry run `29871180682` and scheduler retry run `29871442047` both reached the
 isolated generation step, where Groq returned `RateLimitError` across the approved
-builder-only model chain. The durable row is `queued`, accepted tokens are zero, and no
-candidate files, commit, deployment, canary, or external side effects exist. Its sanitized
-provider delay is honored by the automatic retry loop. This is an external capacity gate,
-not evidence of a generated or validated candidate.
+builder-only model chain. Later automatic retries exposed a phase-durability defect: an
+ephemeral runner discarded completed author work whenever review encountered a later
+quota limit, so each retry could consume newly released capacity by starting over.
+
+The repaired builder persists validated author files plus content-free phase metadata,
+resumes at independent review, progressively lowers only a rejected turn's reservation,
+and backs repeated rate-limit retries up to six hours. Partial output remains untrusted and
+cannot count as CI, deployment, canary, promotion, or OKF evidence. Before deployment of
+this repair, the durable row remains `queued`, accepted tokens are zero, and no candidate
+files, commit, deployment, canary, or external side effects exist. A governed retry after
+the repaired control deployment will determine whether current Groq capacity can complete
+the draft; capacity remains an external gate rather than evidence of a candidate.
 
 ## Intentionally open evidence and human gates
 

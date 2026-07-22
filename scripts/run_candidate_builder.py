@@ -116,8 +116,19 @@ async def main() -> None:
                 response.raise_for_status()
                 job = response.json()["build"]
                 stage = "generation"
+
+                async def checkpoint_author(payload: dict) -> None:
+                    checkpointed = await client.post(
+                        f"{base}/admin/candidate-builder/{build_id}/checkpoint",
+                        headers=headers, json=payload,
+                    )
+                    checkpointed.raise_for_status()
+
                 candidate, tokens, roles, models_used = await asyncio.wait_for(
-                    generate_candidate_draft(job), timeout=540,
+                    generate_candidate_draft(
+                        job, checkpoint_callback=checkpoint_author,
+                    ),
+                    timeout=540,
                 )
                 payload = {
                     "files": candidate.get("files") or [],

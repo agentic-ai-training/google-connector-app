@@ -13,7 +13,7 @@ from app.runs.schemas import (
     CandidateValidationAttestation,
     CandidateDeploymentAttestation,
     ProductionDeploymentAttestation,
-    CandidateBuildDraft,
+    CandidateBuildCheckpoint, CandidateBuildDraft,
     CandidateBuildFailure,
     CanaryActivationDecision,
     ImprovementDecision,
@@ -33,7 +33,7 @@ from app.improvements.candidates import (
     unsupported_candidate_surfaces, valid_candidate_frontend_url,
     validate_candidate_files,
 )
-from app.improvements.builder import store_candidate_draft
+from app.improvements.builder import store_candidate_checkpoint, store_candidate_draft
 from app.okf.candidates import stage_okf_candidate_bundle
 from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
@@ -70,6 +70,18 @@ def _json_object(value) -> dict:
             return {}
         return decoded if isinstance(decoded, dict) else {}
     return {}
+
+
+def _candidate_retry_delay(
+    error_type: str, requested_delay: int | None, retry_count: int,
+) -> int | None:
+    """Back off repeated quota failures while preserving shorter transient retries."""
+    if "rate" not in error_type.casefold():
+        return requested_delay
+    exponential_floor = min(
+        21_600, 1_800 * (2 ** min(4, max(0, retry_count - 2))),
+    )
+    return max(int(requested_delay or 0), exponential_floor)
 
 
 async def _retire_candidate_routing(
@@ -165,14 +177,36 @@ async def candidate_builder_input(build_id: str):
             "UPDATE candidate_builds SET status='investigating',updated_at=now() WHERE id=$1",
             build_id,
         )
+        checkpoint_files = await conn.fetch(
+            """SELECT path,change_type,content FROM candidate_build_files
+               WHERE build_id=$1 ORDER BY path""",
+            build_id,
+        )
     job = dict(row)
+    generation_checkpoint = _json_object(job["checkpoint"]).get(
+        "generation_checkpoint", {}
+    )
     return {"build": {
         "id": str(job["id"]), "proposal_id": str(job["proposal_id"]),
         "proposal_key": job["proposal_key"], "risk_level": job["risk_level"],
         "mode": job["mode"], "base_commit": job["base_commit"],
         "model_name": job["model_name"], "token_budget": job["token_budget"],
         "sanitized_input": job["sanitized_input"],
+        "generation_checkpoint": generation_checkpoint,
+        "checkpoint_files": [dict(item) for item in checkpoint_files],
     }}
+
+
+@router.post("/candidate-builder/{build_id}/checkpoint")
+async def candidate_builder_checkpoint(build_id: str, body: CandidateBuildCheckpoint):
+    """Persist untrusted author output so quota retries can resume at review."""
+    try:
+        return await store_candidate_checkpoint(
+            await get_pool(), build_id, body.model_dump(), body.tokens_used,
+            body.roles_completed, body.models_used,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/candidate-builder/{build_id}/draft")
@@ -209,6 +243,12 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
             "last_runner_failure", {}
         )
         retry_count = int(previous_failure.get("retry_count") or 0) + 1
+        if body.retryable:
+            # A rolling/daily quota can release only enough capacity for the next
+            # partial turn. Avoid repeatedly replaying an entire ephemeral build.
+            retry_after_seconds = _candidate_retry_delay(
+                body.error_type, retry_after_seconds, retry_count,
+            )
         checkpoint = {
             "last_runner_failure": {
                 "stage": body.stage, "error_type": body.error_type,

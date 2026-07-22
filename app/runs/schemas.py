@@ -166,6 +166,18 @@ class CandidateBuildDraft(BaseModel):
     tokens_used: int = Field(ge=0)
 
 
+class CandidateBuildCheckpoint(BaseModel):
+    """Untrusted author output that may be resumed but never attested as passing."""
+
+    files: list[ImprovementCandidateFile] = Field(min_length=1, max_length=50)
+    exact_diff: str = Field(min_length=1, max_length=500_000)
+    rollback_plan: dict[str, Any]
+    validation_commands: list[str] = Field(default_factory=list, max_length=50)
+    roles_completed: list[str] = Field(min_length=1, max_length=5)
+    models_used: list[str] = Field(default_factory=list, max_length=5)
+    tokens_used: int = Field(ge=0)
+
+
 class CandidateBuildFailure(BaseModel):
     stage: Literal["input", "generation", "submission"]
     error_type: str = Field(min_length=1, max_length=200)

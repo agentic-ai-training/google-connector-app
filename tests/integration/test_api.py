@@ -1306,6 +1306,114 @@ def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
         client.portal.call(cleanup)
 
 
+def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.improvements.builder import (
+        store_candidate_checkpoint,
+        store_candidate_draft,
+    )
+
+    marker = str(uuid.uuid4())
+    proposal_key = f"candidate-checkpoint-{marker}"
+    build_id = uuid.uuid4()
+    checkpoint_file = {
+        "path": "tests/checkpoint_candidate.py", "change_type": "create",
+        "content": "checkpoint = True\n",
+    }
+    final_file = {
+        "path": "tests/checkpoint_candidate.py", "change_type": "create",
+        "content": "checkpoint = False\nreviewed = True\n",
+    }
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            async with pool.acquire() as conn, conn.transaction():
+                proposal_id = await conn.fetchval(
+                    """INSERT INTO improvement_proposals
+                       (proposal_key,proposal_type,title,sanitized_summary,status,
+                        content_hash,candidate_kind,candidate_state)
+                       VALUES($1,'policy','Checkpoint fixture','No private content',
+                              'awaiting_review',$2,'diagnosis','diagnosis_only')
+                       RETURNING id""",
+                    proposal_key, marker,
+                )
+                await conn.execute(
+                    """INSERT INTO candidate_builds
+                       (id,proposal_id,selected_option,mode,status,base_commit,
+                        model_name,model_policy_version,tool_policy_version,
+                        token_budget,sanitized_input,created_by)
+                       VALUES($1,$2,'A','multi_role','investigating',$3,$4,$5,$6,
+                              24000,$7::jsonb,'integration-test')""",
+                    build_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
+                    "adaptive-roles-v1", "bounded-repo-tools-v5-durable-phases",
+                    json.dumps({"component": "candidate_builder"}),
+                )
+
+            checkpoint = {
+                "files": [checkpoint_file],
+                "exact_diff": "checkpoint diff",
+                "rollback_plan": {"action": "remove checkpoint fixture"},
+                "validation_commands": ["pytest tests/unit -q"],
+            }
+            saved = await store_candidate_checkpoint(
+                pool, build_id, checkpoint, 101,
+                ["investigator_and_patch_author"], ["author-model"],
+            )
+            async with pool.acquire() as conn:
+                durable = await conn.fetchrow(
+                    """SELECT b.status,b.tokens_used,b.checkpoint,f.content
+                       FROM candidate_builds b JOIN candidate_build_files f
+                         ON f.build_id=b.id WHERE b.id=$1""",
+                    build_id,
+                )
+
+            final = {
+                "files": [final_file],
+                "exact_diff": "reviewed final diff",
+                "rollback_plan": {"action": "remove reviewed fixture"},
+                "validation_commands": ["pytest tests/unit -q"],
+            }
+            drafted = await store_candidate_draft(
+                pool, build_id, final, 108,
+                ["investigator_and_patch_author", "independent_safety_reviewer"],
+                ["author-model", "review-model"],
+            )
+            async with pool.acquire() as conn:
+                frozen = await conn.fetchrow(
+                    """SELECT b.status,b.tokens_used,b.checkpoint,f.content
+                       FROM candidate_builds b JOIN candidate_build_files f
+                         ON f.build_id=b.id WHERE b.id=$1""",
+                    build_id,
+                )
+                proposal_state = await conn.fetchval(
+                    "SELECT candidate_state FROM improvement_proposals WHERE proposal_key=$1",
+                    proposal_key,
+                )
+                await conn.execute(
+                    "DELETE FROM improvement_proposals WHERE proposal_key=$1",
+                    proposal_key,
+                )
+            return saved, dict(durable), drafted, dict(frozen), proposal_state
+
+        saved, durable, drafted, frozen, proposal_state = client.portal.call(exercise)
+        assert saved["phase"] == "author_completed"
+        assert durable["status"] == "investigating"
+        assert durable["tokens_used"] == 101
+        assert durable["checkpoint"]["generation_checkpoint"]["phase"] == (
+            "author_completed"
+        )
+        assert durable["content"] == checkpoint_file["content"]
+        assert drafted["status"] == "drafted"
+        assert frozen["status"] == "drafted"
+        assert frozen["tokens_used"] == 108
+        assert frozen["content"] == final_file["content"]
+        assert frozen["checkpoint"]["roles_completed"][-1] == (
+            "independent_safety_reviewer"
+        )
+        assert proposal_state == "implementation_draft"
+
+
 def test_canary_regression_is_evaluated_and_rolled_back():
     from app.api.main import app
     from app.db.connection import get_pool
