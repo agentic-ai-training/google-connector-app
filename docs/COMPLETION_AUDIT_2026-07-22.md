@@ -146,6 +146,9 @@ deployment. Its provider-derived six-hour backoff makes it eligible at
 The protected candidate-builder table now exposes this sanitized retry count, phase,
 active role, next round, frozen-file count, dispatch state, and exact eligibility time
 without returning the persisted checkpoint conversation or sanitized build specification.
+Dispatch state is durable across its full lifecycle (`dispatching`, `dispatched`,
+`runner_leased`, `waiting_for_retry`, and final `completed`/`terminal`), so a prior
+workflow acceptance cannot remain displayed as current activity after the runner exits.
 
 ## Intentionally open evidence and human gates
 

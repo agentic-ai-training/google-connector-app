@@ -213,8 +213,13 @@ async def candidate_builder_input(build_id: str):
         if not row:
             raise HTTPException(409, "Candidate build is unavailable or already finalized")
         await conn.execute(
-            "UPDATE candidate_builds SET status='investigating',updated_at=now() WHERE id=$1",
-            build_id,
+            """UPDATE candidate_builds SET status='investigating',updated_at=now(),
+                 checkpoint=checkpoint||$2::jsonb WHERE id=$1""",
+            build_id, json.dumps({
+                "last_retry_dispatch": {
+                    "state": "runner_leased", "contains_private_evidence": False,
+                },
+            }),
         )
         checkpoint_files = await conn.fetch(
             """SELECT path,change_type,content FROM candidate_build_files
@@ -294,6 +299,10 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
                 "retryable": body.retryable,
                 "retry_after_seconds": retry_after_seconds,
                 "retry_count": retry_count,
+                "contains_private_evidence": False,
+            },
+            "last_retry_dispatch": {
+                "state": "waiting_for_retry" if body.retryable else "terminal",
                 "contains_private_evidence": False,
             },
         }

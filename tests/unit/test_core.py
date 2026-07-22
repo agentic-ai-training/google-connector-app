@@ -1259,8 +1259,11 @@ def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
     result = asyncio.run(dispatch_retryable_candidate_builds(Pool()))
     assert result == 1
     assert dispatched == ["build-one"]
-    assert len(executed) == 1
+    assert len(executed) == 2
     assert "last_retry_dispatch" in executed[0][1][0]
+    assert json.loads(executed[1][1][0])["last_retry_dispatch"]["state"] == (
+        "dispatched"
+    )
 
 
 def test_candidate_builder_classifies_groq_status_without_raw_error():

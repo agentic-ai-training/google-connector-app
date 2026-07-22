@@ -1449,6 +1449,7 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
         assert frozen["checkpoint"]["roles_completed"][-1] == (
             "independent_safety_reviewer"
         )
+        assert frozen["checkpoint"]["last_retry_dispatch"]["state"] == "completed"
         assert proposal_state == "implementation_draft"
 
 
