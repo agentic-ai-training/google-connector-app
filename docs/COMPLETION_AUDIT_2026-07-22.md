@@ -98,18 +98,19 @@ smoke subset:
   `nomic-embed-text` vector. Prometheus reports API and worker targets `up`, validates 24
   alert rules, and Grafana provisions both repository dashboards.
 
-Trusted GitHub evidence for production commit
-`ca5fc5b39f2783ee377ba17239abdada3211e3a9`:
+Latest trusted GitHub evidence for production commit
+`61f9f33e38e6d70ebdd90085b4f3265e09974a37`:
 
-- CI: <https://github.com/agentic-ai-training/google-connector-app/actions/runs/29869216872>
+- CI: <https://github.com/agentic-ai-training/google-connector-app/actions/runs/29910358058>
 - Deploy and joint attestation:
-  <https://github.com/agentic-ai-training/google-connector-app/actions/runs/29869217061>
+  <https://github.com/agentic-ai-training/google-connector-app/actions/runs/29910357875>
 - Frontend candidate isolation: PR #62, merge `b4151815`
 - Exact frontend/control attestation: PR #63, merge `ca5fc5b`
+- Turn-level candidate durability: PR #66, merge `61f9f33e`
 
 Production health at audit time:
 
-- Railway API `/health`: status `ok`, role `control`, exact deployment commit `ca5fc5b...`.
+- Railway API `/health`: status `ok`, role `control`, exact deployment commit `61f9f33e...`.
 - Vercel `/api/frontend-health`: status `ok`, role `control`, the same exact commit.
 - Neon: migration 013, 24 protected reporting views, no active canary.
 
@@ -137,6 +138,11 @@ adds bounded turn-level durability: compacted sanitized conversation, next round
 files, protocol mode, aggregate tokens/models, and tool/read counters survive an ephemeral
 runner. Invalid generated text is persisted only as a length and SHA-256. Resume cannot
 replenish any authority limit, and these records remain untrusted rather than CI evidence.
+
+The v6 implementation is deployed and CI-green at `61f9f33e`. The first pre-v6 retry left
+the build safely `queued` with zero accepted tokens, zero files, no commit, and no candidate
+deployment. Its provider-derived six-hour backoff makes it eligible at
+`2026-07-22T21:07:57+05:30`; the scheduler, not a manual quota bypass, owns that retry.
 
 ## Intentionally open evidence and human gates
 
