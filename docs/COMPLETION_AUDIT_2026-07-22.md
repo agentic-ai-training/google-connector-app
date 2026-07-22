@@ -75,7 +75,7 @@ portal, and the unit/integration OKF lifecycle tests.
 The final local and trusted-CI checks cover the promised surfaces rather than a narrow
 smoke subset:
 
-- Backend: 127 unit/database-independent tests passed; 26 integration tests passed
+- Backend: 129 unit/database-independent tests passed; 26 integration tests passed
   against PostgreSQL when explicitly enabled.
 - Planner and execution: 28/28 deterministic planner cases and 4/4 no-network Google
   workflow replays passed.
@@ -131,6 +131,12 @@ this repair, the durable row remains `queued`, accepted tokens are zero, and no 
 files, commit, deployment, canary, or external side effects exist. A governed retry after
 the repaired control deployment will determine whether current Groq capacity can complete
 the draft; capacity remains an external gate rather than evidence of a candidate.
+
+That first deployed retry exhausted quota before author completion. Tool policy v6 therefore
+adds bounded turn-level durability: compacted sanitized conversation, next round, staged
+files, protocol mode, aggregate tokens/models, and tool/read counters survive an ephemeral
+runner. Invalid generated text is persisted only as a length and SHA-256. Resume cannot
+replenish any authority limit, and these records remain untrusted rather than CI evidence.
 
 ## Intentionally open evidence and human gates
 

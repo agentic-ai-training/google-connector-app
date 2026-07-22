@@ -167,13 +167,22 @@ class CandidateBuildDraft(BaseModel):
 
 
 class CandidateBuildCheckpoint(BaseModel):
-    """Untrusted author output that may be resumed but never attested as passing."""
+    """Untrusted bounded generation state that may never attest itself as passing."""
 
-    files: list[ImprovementCandidateFile] = Field(min_length=1, max_length=50)
-    exact_diff: str = Field(min_length=1, max_length=500_000)
-    rollback_plan: dict[str, Any]
+    phase: Literal["role_in_progress", "author_completed"] = "author_completed"
+    files: list[ImprovementCandidateFile] = Field(default_factory=list, max_length=50)
+    exact_diff: str = Field(default="", max_length=500_000)
+    rollback_plan: dict[str, Any] = Field(default_factory=dict)
     validation_commands: list[str] = Field(default_factory=list, max_length=50)
-    roles_completed: list[str] = Field(min_length=1, max_length=5)
+    roles_completed: list[str] = Field(default_factory=list, max_length=5)
+    active_role: str | None = Field(default=None, max_length=100)
+    next_round: int = Field(default=0, ge=0, le=8)
+    messages: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    json_tool_protocol: bool = False
+    tool_calls: int = Field(default=0, ge=0, le=30)
+    read_bytes: int = Field(default=0, ge=0, le=120_000)
+    role_tokens_used: int = Field(default=0, ge=0)
+    role_models_used: list[str] = Field(default_factory=list, max_length=5)
     models_used: list[str] = Field(default_factory=list, max_length=5)
     tokens_used: int = Field(ge=0)
 

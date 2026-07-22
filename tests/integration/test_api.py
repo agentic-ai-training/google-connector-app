@@ -1350,7 +1350,35 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
                     json.dumps({"component": "candidate_builder"}),
                 )
 
+            progress = {
+                "phase": "role_in_progress",
+                "files": [],
+                "active_role": "investigator_and_patch_author",
+                "next_round": 1,
+                "messages": [{
+                    "role": "user", "content": "sanitized integration fixture",
+                }],
+                "json_tool_protocol": False,
+                "tool_calls": 1,
+                "read_bytes": 100,
+                "role_tokens_used": 50,
+                "role_models_used": ["author-model"],
+                "tokens_used": 50,
+            }
+            partial_saved = await store_candidate_checkpoint(
+                pool, build_id, progress, 50, [], ["author-model"],
+            )
+            async with pool.acquire() as conn:
+                partial = await conn.fetchrow(
+                    """SELECT status,tokens_used,checkpoint,
+                         (SELECT count(*) FROM candidate_build_files WHERE build_id=b.id)
+                           AS file_count
+                       FROM candidate_builds b WHERE id=$1""",
+                    build_id,
+                )
+
             checkpoint = {
+                "phase": "author_completed",
                 "files": [checkpoint_file],
                 "exact_diff": "checkpoint diff",
                 "rollback_plan": {"action": "remove checkpoint fixture"},
@@ -1394,9 +1422,19 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
                     "DELETE FROM improvement_proposals WHERE proposal_key=$1",
                     proposal_key,
                 )
-            return saved, dict(durable), drafted, dict(frozen), proposal_state
+            return (
+                partial_saved, dict(partial), saved, dict(durable), drafted,
+                dict(frozen), proposal_state,
+            )
 
-        saved, durable, drafted, frozen, proposal_state = client.portal.call(exercise)
+        (
+            partial_saved, partial, saved, durable, drafted, frozen, proposal_state,
+        ) = client.portal.call(exercise)
+        assert partial_saved["phase"] == "role_in_progress"
+        assert partial["status"] == "investigating"
+        assert partial["tokens_used"] == 50
+        assert partial["file_count"] == 0
+        assert partial["checkpoint"]["generation_checkpoint"]["next_round"] == 1
         assert saved["phase"] == "author_completed"
         assert durable["status"] == "investigating"
         assert durable["tokens_used"] == 101

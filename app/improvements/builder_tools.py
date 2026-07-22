@@ -99,6 +99,17 @@ class BoundedRepositoryTools:
             raise ValueError(f"Unknown builder tool: {name}")
         return handlers[name](**arguments)
 
+    def restore_counters(self, *, calls: int, read_bytes: int) -> None:
+        """Restore durable limits without allowing a retry to replenish authority."""
+        calls = int(calls)
+        read_bytes = int(read_bytes)
+        if not 0 <= calls <= self.max_calls:
+            raise BuilderToolLimitError("invalid candidate tool-call checkpoint")
+        if not 0 <= read_bytes <= self.max_read_bytes:
+            raise BuilderToolLimitError("invalid candidate read-byte checkpoint")
+        self.calls = calls
+        self.read_bytes = read_bytes
+
     @staticmethod
     def project_result(name: str, result: Any, *, max_chars: int = 4_000) -> dict:
         """Project repository results before they enter provider conversation history."""

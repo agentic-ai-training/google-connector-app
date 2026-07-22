@@ -744,6 +744,88 @@ def test_json_tool_protocol_still_executes_only_through_bounded_tools(monkeypatc
         get_settings.cache_clear()
 
 
+def test_candidate_tool_loop_resumes_after_durable_turn_checkpoint(monkeypatch, tmp_path):
+    calls = 0
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            nonlocal calls
+            calls += 1
+            usage = SimpleNamespace(prompt_tokens=10, completion_tokens=10)
+            if calls == 1:
+                tool_call = SimpleNamespace(
+                    id="stage-1",
+                    function=SimpleNamespace(
+                        name="stage_candidate_file",
+                        arguments=json.dumps({
+                            "path": "tests/resumable_turn.py",
+                            "change_type": "create",
+                            "content": "resumed = True\n",
+                        }),
+                    ),
+                )
+                message = SimpleNamespace(content="", tool_calls=[tool_call])
+            else:
+                message = SimpleNamespace(
+                    content=json.dumps({
+                        "rollback_plan": {"action": "remove resumable fixture"},
+                        "validation_commands": ["pytest tests/unit -q"],
+                    }),
+                    tool_calls=None,
+                )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message)], usage=usage,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    checkpoint = {}
+    first_tools = BoundedRepositoryTools(tmp_path)
+
+    async def stop_after_checkpoint(payload):
+        checkpoint.update(payload)
+        raise InterruptedError("simulated ephemeral runner interruption")
+
+    try:
+        with pytest.raises(InterruptedError):
+            asyncio.run(_groq_tool_json(
+                {
+                    "model_name": "openai/gpt-oss-20b", "token_budget": 1_000,
+                    "sanitized_input": {"title": "durable turn test"},
+                },
+                first_tools, "coordinator", progress_callback=stop_after_checkpoint,
+            ))
+        staged = first_tools.staged_files()
+        assert checkpoint["phase"] == "role_in_progress"
+        assert checkpoint["next_round"] == 1
+        assert checkpoint["tool_calls"] == 1
+        assert checkpoint["role_tokens_used"] == 20
+        assert len(json.dumps(checkpoint["messages"])) <= 24_000
+
+        resumed_tools = BoundedRepositoryTools(tmp_path)
+        for item in staged:
+            resumed_tools.stage(
+                item["path"], item["change_type"], item.get("content") or "",
+            )
+        candidate, newly_used, models = asyncio.run(_groq_tool_json(
+            {
+                "model_name": "openai/gpt-oss-20b", "token_budget": 1_000,
+                "sanitized_input": {"title": "durable turn test"},
+            },
+            resumed_tools, "coordinator", progress=checkpoint,
+        ))
+        assert calls == 2
+        assert newly_used == 20
+        assert models == ["openai/gpt-oss-20b"]
+        assert candidate["files"] == staged
+        assert resumed_tools.calls == 1
+    finally:
+        get_settings.cache_clear()
+
+
 def test_candidate_builder_reserves_json_only_finalization_turns(monkeypatch, tmp_path):
     requests = []
 
@@ -869,7 +951,7 @@ def test_multi_role_approval_preserves_direct_author_files(monkeypatch):
         "validation_commands": ["pytest -q tests/unit"],
     }
 
-    async def fake_role(job, tools, role, prior_candidate=None):
+    async def fake_role(job, tools, role, prior_candidate=None, **kwargs):
         if role == "independent_safety_reviewer":
             assert prior_candidate == author
             assert tools.staged_files() == author["files"]
@@ -905,7 +987,7 @@ def test_multi_role_candidate_resumes_from_author_checkpoint(monkeypatch):
     }]
     calls = []
 
-    async def fake_role(job, tools, role, prior_candidate=None):
+    async def fake_role(job, tools, role, prior_candidate=None, **kwargs):
         calls.append(role)
         assert role == "independent_safety_reviewer"
         assert prior_candidate["files"] == files
@@ -933,6 +1015,53 @@ def test_multi_role_candidate_resumes_from_author_checkpoint(monkeypatch):
     assert tokens == 18
     assert roles == ["investigator_and_patch_author", "independent_safety_reviewer"]
     assert models == ["author-model", "review-model"]
+
+
+def test_candidate_generation_resumes_an_in_progress_role(monkeypatch):
+    author = {
+        "files": [{
+            "path": "tests/resumed_turn_candidate.py", "change_type": "create",
+            "content": "value = 1\n",
+        }],
+        "exact_diff": "resumed turn candidate",
+        "rollback_plan": {"action": "remove resumed turn candidate"},
+        "validation_commands": ["pytest tests/unit -q"],
+    }
+    calls = []
+
+    async def fake_role(job, tools, role, prior_candidate=None, **kwargs):
+        calls.append(role)
+        progress = kwargs["progress"]
+        assert progress["phase"] == "role_in_progress"
+        assert progress["next_round"] == 2
+        assert progress["role_tokens_used"] == 20
+        assert kwargs["progress_callback"] is not None
+        return author, 5, ["author-model"]
+
+    async def checkpoint(_payload):
+        return None
+
+    monkeypatch.setattr("app.improvements.builder._groq_tool_json", fake_role)
+    candidate, tokens, roles, models = asyncio.run(generate_candidate_draft({
+        "mode": "single", "model_name": "openai/gpt-oss-20b",
+        "token_budget": 1_000,
+        "sanitized_input": {"component": "planner", "selected_option": {}},
+        "generation_checkpoint": {
+            "phase": "role_in_progress", "active_role": "coordinator",
+            "next_round": 2,
+            "messages": [{"role": "user", "content": "sanitized checkpoint"}],
+            "roles_completed": [], "models_used": ["author-model"],
+            "tokens_used": 20, "role_tokens_used": 20,
+            "role_models_used": ["author-model"],
+            "tool_calls": 1, "read_bytes": 10,
+        },
+        "checkpoint_files": [],
+    }, checkpoint_callback=checkpoint))
+    assert calls == ["coordinator"]
+    assert candidate == author
+    assert tokens == 25
+    assert roles == ["coordinator"]
+    assert models == ["author-model"]
 
 
 def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp_path):
