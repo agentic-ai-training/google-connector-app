@@ -34,7 +34,7 @@ from app.agents.errors import ModelContextLengthFailure, is_provider_context_len
 from app.api.middleware.auth import create_token
 from app.api.routes.chat import capability_answer, classify_graph_results
 from app.api.routes.feedback import _dataset_split, _sanitize_value
-from app.api.routes.admin import _candidate_retry_delay
+from app.api.routes.admin import _candidate_build_view, _candidate_retry_delay
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 import jwt
@@ -1177,6 +1177,41 @@ def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
         "retryable": True, "retry_after_seconds": 63,
     }
     assert "organization" not in rate_payload["message"]
+
+
+def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content():
+    from datetime import datetime, timedelta, timezone
+
+    updated = datetime(2026, 7, 22, 9, 37, 57, tzinfo=timezone.utc)
+    view = _candidate_build_view({
+        "id": "build", "proposal_key": "proposal", "title": "Candidate",
+        "mode": "multi_role", "status": "queued", "model_name": "quality",
+        "tokens_used": 50, "token_budget": 1_000, "error_message": "Quota wait",
+        "created_at": updated, "updated_at": updated, "file_count": 1,
+        "sanitized_input": {"must_not": "be returned"},
+        "checkpoint": {
+            "private_marker": "must not be returned",
+            "last_runner_failure": {
+                "retryable": True, "retry_count": 3,
+                "retry_after_seconds": 21_600, "stage": "generation",
+                "error_type": "RateLimitError",
+            },
+            "last_retry_dispatch": {"state": "dispatched"},
+            "generation_checkpoint": {
+                "phase": "role_in_progress", "active_role": "author",
+                "next_round": 2, "messages": [{"content": "not returned"}],
+            },
+        },
+    })
+    assert view["next_retry_at"] == updated + timedelta(seconds=21_600)
+    assert view["retry_count"] == 3
+    assert view["retry_dispatch_state"] == "dispatched"
+    assert view["generation_phase"] == "role_in_progress"
+    assert view["active_role"] == "author"
+    assert view["next_round"] == 2
+    assert "checkpoint" not in view
+    assert "sanitized_input" not in view
+    assert "messages" not in json.dumps(view, default=str)
 
 
 def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):

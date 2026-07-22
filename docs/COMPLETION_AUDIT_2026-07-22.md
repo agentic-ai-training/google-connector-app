@@ -75,7 +75,7 @@ portal, and the unit/integration OKF lifecycle tests.
 The final local and trusted-CI checks cover the promised surfaces rather than a narrow
 smoke subset:
 
-- Backend: 129 unit/database-independent tests passed; 26 integration tests passed
+- Backend: 130 unit/database-independent tests passed; 26 integration tests passed
   against PostgreSQL when explicitly enabled.
 - Planner and execution: 28/28 deterministic planner cases and 4/4 no-network Google
   workflow replays passed.
@@ -143,6 +143,9 @@ The v6 implementation is deployed and CI-green at `61f9f33e`. The first pre-v6 r
 the build safely `queued` with zero accepted tokens, zero files, no commit, and no candidate
 deployment. Its provider-derived six-hour backoff makes it eligible at
 `2026-07-22T21:07:57+05:30`; the scheduler, not a manual quota bypass, owns that retry.
+The protected candidate-builder table now exposes this sanitized retry count, phase,
+active role, next round, frozen-file count, dispatch state, and exact eligibility time
+without returning the persisted checkpoint conversation or sanitized build specification.
 
 ## Intentionally open evidence and human gates
 

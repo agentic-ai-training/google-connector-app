@@ -1,6 +1,6 @@
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -84,6 +84,42 @@ def _candidate_retry_delay(
     return max(int(requested_delay or 0), exponential_floor)
 
 
+def _candidate_build_view(row) -> dict:
+    """Return the sanitized operational state needed by the review portal."""
+    item = dict(row)
+    checkpoint = _json_object(item.get("checkpoint"))
+    failure = _json_object(checkpoint.get("last_runner_failure"))
+    generation = _json_object(checkpoint.get("generation_checkpoint"))
+    dispatch = _json_object(checkpoint.get("last_retry_dispatch"))
+    retryable = failure.get("retryable") is True
+    retry_after = failure.get("retry_after_seconds")
+    try:
+        retry_after = max(60, min(86_400, int(retry_after or 1_800)))
+    except (TypeError, ValueError):
+        retry_after = 1_800
+    next_retry_at = None
+    if item.get("status") == "queued" and retryable and item.get("updated_at"):
+        next_retry_at = item["updated_at"] + timedelta(seconds=retry_after)
+    return {
+        key: item.get(key) for key in (
+            "id", "proposal_key", "title", "mode", "status", "model_name",
+            "tokens_used", "token_budget", "error_message", "created_at",
+            "updated_at", "file_count",
+        )
+    } | {
+        "retryable": retryable,
+        "retry_count": int(failure.get("retry_count") or 0),
+        "retry_stage": failure.get("stage"),
+        "retry_error_type": failure.get("error_type"),
+        "retry_after_seconds": retry_after if retryable else None,
+        "next_retry_at": next_retry_at,
+        "retry_dispatch_state": dispatch.get("state"),
+        "generation_phase": generation.get("phase"),
+        "active_role": generation.get("active_role"),
+        "next_round": generation.get("next_round"),
+    }
+
+
 async def _retire_candidate_routing(
     conn, proposal, *, reason: str, okf_state: str,
 ) -> None:
@@ -124,13 +160,16 @@ async def candidate_builds(status: str | None = None, limit: int = 100):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """SELECT b.*,p.proposal_key,p.title FROM candidate_builds b
+            """SELECT b.*,p.proposal_key,p.title,
+                      (SELECT count(*) FROM candidate_build_files f
+                        WHERE f.build_id=b.id) AS file_count
+                 FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
                WHERE ($1::text IS NULL OR b.status=$1)
                ORDER BY b.created_at DESC LIMIT $2""",
             status, max(1, min(limit, 200)),
         )
-    return {"builds": [dict(row) for row in rows]}
+    return {"builds": [_candidate_build_view(row) for row in rows]}
 
 
 @router.post("/candidate-builder/{build_id}/input")
