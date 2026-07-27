@@ -831,3 +831,10 @@ is published only after its own trusted matrix passes.
   evidence explicitly, and a compiled-graph regression test proves all four survive.
   Future high-risk quota pauses therefore remain `rate_limit/model_router` incidents
   instead of degrading to a generic no-tool-result verification diagnosis.
+- 2026-07-28: PR #77 deployed the graph-state correction as `23e106a8`. Authenticated
+  production run `4086b5a8` then proved the complete boundary: Gmail metadata extraction
+  completed, a pre-tool Sheets quota pause retained `rate_limit/model_router`, the
+  incident was marked recoverable, and side-effect integrity remained 100%. The Grafana
+  dashboard publisher now also consumes the previously documented untracked
+  `.env.local` management credential without overriding explicit process variables;
+  publication still requires the exact confirmation phrase and never prints the token.

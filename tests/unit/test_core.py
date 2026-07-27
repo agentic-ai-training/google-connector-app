@@ -3,6 +3,7 @@ import importlib
 import httpx
 import asyncio
 import json
+import os
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -14,7 +15,10 @@ from app.rag.retriever import _recency_bonus
 from app.rag.evaluation import retrieval_metrics
 from app.mlops.ragas_eval import _context_text, _retrieved_contexts
 from scripts.run_ragas_eval import _score_payload
-from scripts.sync_grafana_dashboards import build_dashboard_payload
+from scripts.sync_grafana_dashboards import (
+    build_dashboard_payload,
+    load_local_credentials,
+)
 from app.improvements.candidates import (
     candidate_runtime_surfaces, infer_candidate_kind,
     unsupported_candidate_surfaces, valid_candidate_frontend_url,
@@ -2318,6 +2322,23 @@ async def test_agent_graph_preserves_structured_service_failure(monkeypatch):
     assert result["error_evidence"] == {
         "model": "llama-3.3-70b-versatile",
     }
+
+
+def test_grafana_sync_loads_local_credentials_without_overriding_environment(
+    monkeypatch, tmp_path,
+):
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "GRAFANA_URL=https://file.example.invalid\n"
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN=file-token\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GRAFANA_URL", "https://explicit.example.invalid")
+    monkeypatch.delenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", raising=False)
+
+    assert load_local_credentials(env_file) is True
+    assert os.environ["GRAFANA_URL"] == "https://explicit.example.invalid"
+    assert os.environ["GRAFANA_SERVICE_ACCOUNT_TOKEN"] == "file-token"
 
 
 def test_admin_claim_is_derived_from_email():

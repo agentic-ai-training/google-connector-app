@@ -9,6 +9,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from dotenv import load_dotenv
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARDS = (
@@ -16,6 +18,12 @@ DASHBOARDS = (
     ROOT / "monitoring/grafana/dashboards/session-operations.json",
 )
 CONFIRMATION = "SYNC GRAFANA DASHBOARDS"
+
+
+def load_local_credentials(path: Path | None = None) -> bool:
+    """Load an untracked local env file without replacing explicit process values."""
+    target = path or ROOT / ".env.local"
+    return load_dotenv(target, override=False)
 
 
 def build_dashboard_payload(path: Path, folder_uid: str | None = None) -> dict:
@@ -46,6 +54,7 @@ def publish(base_url: str, token: str, payload: dict) -> dict:
 
 
 def main() -> int:
+    load_local_credentials()
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true",
                         help="Publish after validation; otherwise perform a dry run")
