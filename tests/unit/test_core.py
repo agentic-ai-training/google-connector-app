@@ -1255,6 +1255,77 @@ def test_candidate_history_compacts_completed_tool_exchanges_atomically():
     assert set(summary["tool_names"]) == {"read_repository_file"}
 
 
+def test_candidate_history_compacts_json_protocol_exchanges_atomically():
+    calls = [{
+        "id": f"call-{index}",
+        "type": "function",
+        "function": {
+            "name": "read_repository_file",
+            "arguments": json.dumps({
+                "path": f"app/example_{index}.py",
+                "legacy_argument": "x" * 500,
+            }),
+        },
+    } for index in range(20)]
+    messages = [{"role": "user", "content": "trusted candidate instruction"}]
+    messages.append({
+        "role": "assistant",
+        "content": json.dumps({"tool_calls": calls}),
+    })
+    messages.extend({
+        "role": "user",
+        "content": json.dumps({
+            "tool_result": {
+                "name": "read_repository_file",
+                "call_id": call["id"],
+                "result": {"content": "y" * 2_000},
+            },
+        }),
+    } for call in calls)
+    messages.append({"role": "user", "content": "finish the candidate"})
+
+    fitted = _fit_builder_history(messages, max_chars=2_000)
+
+    assert len(json.dumps(fitted)) <= 2_000
+    assert not any(
+        "tool_calls" in (json.loads(message.get("content") or "{}") or {})
+        for message in fitted
+        if message["role"] == "assistant"
+    )
+    summary = next(
+        json.loads(message["content"]) for message in fitted
+        if "prior_tool_exchange_compacted" in message.get("content", "")
+    )
+    assert summary["tool_call_count"] == 20
+    assert set(summary["tool_names"]) == {"read_repository_file"}
+
+
+def test_candidate_history_consolidates_prior_exchange_summaries():
+    messages = [{"role": "user", "content": "trusted candidate instruction"}]
+    for _ in range(20):
+        messages.append({
+            "role": "user",
+            "content": json.dumps({
+                "prior_tool_exchange_compacted": True,
+                "tool_call_count": 20,
+                "tool_names": ["read_repository_file"],
+                "reason": "completed exchange removed to preserve request budget",
+            }),
+        })
+    messages.append({"role": "user", "content": "x" * 2_000})
+
+    fitted = _fit_builder_history(messages, max_chars=2_500)
+
+    assert len(json.dumps(fitted)) <= 2_500
+    summaries = [
+        json.loads(message["content"]) for message in fitted
+        if "prior_tool_exchanges_compacted" in message.get("content", "")
+    ]
+    assert len(summaries) == 1
+    assert summaries[0]["exchange_count"] == 20
+    assert summaries[0]["tool_call_count"] == 400
+
+
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
     error = httpx.ConnectError("private upstream detail")
     payload = failure_payload(error, "input")

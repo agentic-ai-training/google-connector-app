@@ -385,15 +385,46 @@ def _fit_builder_history(
         })
         if size() <= max_chars:
             return fitted
+    def json_protocol_calls(message: dict) -> list[dict]:
+        if message.get("role") != "assistant" or message.get("tool_calls"):
+            return []
+        try:
+            content = json.loads(message.get("content") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        calls = content.get("tool_calls") if isinstance(content, dict) else None
+        return calls if isinstance(calls, list) else []
+
+    def json_protocol_result(message: dict) -> bool:
+        if message.get("role") != "user":
+            return False
+        try:
+            content = json.loads(message.get("content") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return False
+        return (
+            isinstance(content, dict)
+            and isinstance(content.get("tool_result"), dict)
+        )
+
     index = 0
     while index < len(fitted):
         message = fitted[index]
-        calls = message.get("tool_calls") if message.get("role") == "assistant" else None
+        calls = (
+            message.get("tool_calls")
+            if message.get("role") == "assistant"
+            else None
+        ) or json_protocol_calls(message)
         if not calls:
             index += 1
             continue
         end = index + 1
-        while end < len(fitted) and fitted[end].get("role") == "tool":
+        native_exchange = bool(message.get("tool_calls"))
+        while end < len(fitted) and (
+            fitted[end].get("role") == "tool"
+            if native_exchange
+            else json_protocol_result(fitted[end])
+        ):
             end += 1
         names = [
             str((call.get("function") or {}).get("name") or "")[:100]
@@ -412,6 +443,58 @@ def _fit_builder_history(
         if size() <= max_chars:
             return fitted
         index += 1
+    # Repeated resumptions can leave several already-compacted exchanges. Merge
+    # their safe provenance so the number of resumptions cannot itself exhaust
+    # the request budget.
+    compacted_indexes = []
+    compacted_call_count = 0
+    compacted_names: set[str] = set()
+    for index, message in enumerate(fitted):
+        if message.get("role") != "user":
+            continue
+        try:
+            content = json.loads(message.get("content") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not (
+            isinstance(content, dict)
+            and content.get("prior_tool_exchange_compacted") is True
+        ):
+            continue
+        compacted_indexes.append(index)
+        compacted_call_count += int(content.get("tool_call_count") or 0)
+        compacted_names.update(
+            str(name)[:100] for name in content.get("tool_names") or []
+        )
+    if len(compacted_indexes) > 1:
+        first = compacted_indexes[0]
+        fitted[first] = {
+            "role": "user",
+            "content": json.dumps({
+                "prior_tool_exchanges_compacted": True,
+                "exchange_count": len(compacted_indexes),
+                "tool_call_count": compacted_call_count,
+                "tool_names": sorted(compacted_names)[:30],
+                "reason": "prior compacted exchanges consolidated for request budget",
+            }, sort_keys=True),
+        }
+        for index in reversed(compacted_indexes[1:]):
+            del fitted[index]
+        if size() <= max_chars:
+            return fitted
+    # Contract-invalid model outputs are normally replaced before persistence,
+    # but older checkpoints and provider protocol conversions may contain a
+    # verbose assistant-only turn. Preserve its provenance, never its body.
+    for index in range(1, max(1, len(fitted) - 1)):
+        message = fitted[index]
+        if message.get("role") != "assistant" or message.get("tool_calls"):
+            continue
+        content = str(message.get("content") or "")
+        if not content:
+            continue
+        message["content"] = _omitted_builder_output(content)
+        if size() <= max_chars:
+            return fitted
     for index in range(1, max(1, len(fitted) - 1)):
         message = fitted[index]
         if message.get("role") != "user":
