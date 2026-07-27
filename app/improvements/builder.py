@@ -385,6 +385,45 @@ def _fit_builder_history(
         })
         if size() <= max_chars:
             return fitted
+    index = 0
+    while index < len(fitted):
+        message = fitted[index]
+        calls = message.get("tool_calls") if message.get("role") == "assistant" else None
+        if not calls:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(fitted) and fitted[end].get("role") == "tool":
+            end += 1
+        names = [
+            str((call.get("function") or {}).get("name") or "")[:100]
+            for call in calls[:30]
+            if isinstance(call, dict)
+        ]
+        fitted[index:end] = [{
+            "role": "user",
+            "content": json.dumps({
+                "prior_tool_exchange_compacted": True,
+                "tool_call_count": len(calls),
+                "tool_names": names,
+                "reason": "completed exchange removed to preserve request budget",
+            }, sort_keys=True),
+        }]
+        if size() <= max_chars:
+            return fitted
+        index += 1
+    for index in range(1, max(1, len(fitted) - 1)):
+        message = fitted[index]
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        message["content"] = json.dumps({
+            "prior_user_instruction_compacted": True,
+            "chars": len(content),
+            "sha256": hashlib.sha256(content.encode()).hexdigest(),
+        }, sort_keys=True)
+        if size() <= max_chars:
+            return fitted
     if size() > max_chars:
         raise RuntimeError("Candidate builder history exceeded its bounded request budget")
     return fitted

@@ -1221,6 +1221,40 @@ def test_candidate_tool_limit_never_persists_more_than_its_authority(tmp_path):
     assert tools.calls == 2
 
 
+def test_candidate_history_compacts_completed_tool_exchanges_atomically():
+    calls = [{
+        "id": f"call-{index}",
+        "type": "function",
+        "function": {
+            "name": "read_repository_file",
+            "arguments": json.dumps({
+                "path": "app/example.py",
+                "content": "x" * 500,
+            }),
+        },
+    } for index in range(20)]
+    messages = [{"role": "user", "content": "trusted candidate instruction"}]
+    messages.append({"role": "assistant", "content": "", "tool_calls": calls})
+    messages.extend({
+        "role": "tool",
+        "tool_call_id": call["id"],
+        "name": "read_repository_file",
+        "content": json.dumps({"content": "y" * 2_000}),
+    } for call in calls)
+    messages.append({"role": "user", "content": "finish the candidate"})
+
+    fitted = _fit_builder_history(messages, max_chars=2_000)
+
+    assert len(json.dumps(fitted)) <= 2_000
+    assert all(message["role"] != "tool" for message in fitted)
+    summary = next(
+        json.loads(message["content"]) for message in fitted
+        if "prior_tool_exchange_compacted" in message.get("content", "")
+    )
+    assert summary["tool_call_count"] == 20
+    assert set(summary["tool_names"]) == {"read_repository_file"}
+
+
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
     error = httpx.ConnectError("private upstream detail")
     payload = failure_payload(error, "input")
