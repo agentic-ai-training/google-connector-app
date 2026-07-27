@@ -59,7 +59,7 @@ portal, and the unit/integration OKF lifecycle tests.
 | 29.2 cross-cluster themes | `app/improvements/analyzer.py`, migration 012 | Evidence-threshold, unrelated-cluster separation, lifecycle-release, and two-option tests | Implemented |
 | 29.3 portal/reporting clarity | `web/src/app/admin/improvements/page.tsx`, `app/api/routes/admin.py`, reporting views, metrics and alerts | Web build, API authorization tests, 24 reporting-schema views, dashboard validation | Implemented |
 | 30.1 typed safe candidate input | `app/improvements/failure_intelligence.py`, `app/improvements/builder.py` | Sanitized-input, no-private-evidence, reproducibility, and rejection tests | Implemented |
-| 30.2 adaptive Groq-only agent builder | `app/improvements/builder.py`, `app/improvements/builder_tools.py` | Single/multi-role, fallback, bounded-tool, review-envelope, validation, rollback, budget, and failure-code tests | Implemented |
+| 30.2 adaptive Groq-only agent builder | `app/improvements/builder.py`, `app/improvements/builder_tools.py` | Single/multi-role, fallback, bounded-tool, review-envelope, one bounded remediation plus mandatory re-review, validation, rollback, budget, and failure-code tests | Implemented |
 | 30.3 isolated workspace and evidence | `.github/workflows/candidate-builder.yml`, `scripts/run_candidate_builder.py`, candidate schemas | Credential-minimal runner, resource/time bounds, safe-path/secret/PII validation, frozen hashes/diff/rollback tests | Implemented; real build currently quota-waiting |
 | 30.4 trusted CI and PR handoff | candidate validation/publish workflows and `app/improvements/publisher.py` | Immutable commit/hash attestation and browser-forgery rejection tests | Implemented |
 | 31.1 stable version assignment | `app/improvements/routing.py`, `app/runs/repository.py`, `app/runs/worker.py`, migration 012 | Sticky assignment and dual-worker disjoint-claim/recovery simulation | Implemented |
@@ -170,6 +170,30 @@ The following are not missing engineering implementation:
 
 None of these gates may be bypassed by synthetic data, automatic approval, unsafe model
 fallback, or a database status edit.
+
+## 2026-07-28 production-history addendum
+
+A later read-only Neon audit corrected the dated operational paragraph above: the real
+build is no longer quota-waiting. Every retained real attempt is terminal. Several
+fileless attempts ended at `files_required`; the strongest attempts froze two files and
+then ended at `independent_review_rejected`. This proved that independent review was
+correctly fail-closed, but it also exposed a missing engineering phase: actionable
+reviewer feedback could not return to a bounded author for repair.
+
+Builder model policy `adaptive-roles-v2-review-remediation` and tool policy
+`bounded-repo-tools-v7-review-remediation` close that gap. One rejection produces
+redacted, 2,000-character-bounded feedback, one remediation-author pass, and a second
+independent review. The remediation role checkpoints before its first provider request,
+so a quota interruption can resume without losing the review context or staged files.
+A second rejection is terminal and cannot be overridden by the runner.
+
+Terminal history is never mutated into a success. A protected administrator action may
+instead create a new build under a newer policy, using only the old build's sanitized
+input and the current control deployment as its base. The source build remains terminal,
+the supersession is recorded in the new checkpoint and Admin/Grafana ledgers, and a
+concurrent active attempt or already implemented proposal blocks cloning. The new attempt
+still has zero authority to publish, execute generated code, deploy, activate canary
+traffic, promote, or publish OKF without its separate trusted and human gates.
 
 ## Audit conclusion
 

@@ -1662,6 +1662,103 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
         assert proposal_state == "implementation_draft"
 
 
+def test_terminal_candidate_can_start_audited_current_policy_attempt(monkeypatch):
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.improvements.builder import MODEL_POLICY_VERSION, TOOL_POLICY_VERSION
+    from app.improvements import publisher
+
+    async def dispatched(build_id):
+        return {"status": "dispatched", "build_id": build_id}
+
+    monkeypatch.setattr(publisher, "dispatch_candidate_builder", dispatched)
+    marker = str(uuid.uuid4())
+    proposal_key = f"candidate-new-policy-{marker}"
+    source_id = uuid.uuid4()
+    with TestClient(app) as client:
+        admin = client.post(
+            "/auth/token", json={"email": "achintyat256@gmail.com"}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {admin}"}
+
+        async def prepare():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                proposal_id = await conn.fetchval(
+                    """INSERT INTO improvement_proposals
+                       (proposal_key,proposal_type,title,sanitized_summary,status,
+                        content_hash,candidate_kind,candidate_state)
+                       VALUES($1,'policy','Policy retry fixture','No private content',
+                              'awaiting_review',$2,'diagnosis','diagnosis_only')
+                       RETURNING id""",
+                    proposal_key, marker,
+                )
+                await conn.execute(
+                    """INSERT INTO candidate_builds
+                       (id,proposal_id,selected_option,mode,status,base_commit,
+                        model_name,model_policy_version,tool_policy_version,
+                        token_budget,sanitized_input,checkpoint,created_by)
+                       VALUES($1,$2,'A','multi_role','failed',$3,$4,$5,$6,
+                              12000,$7::jsonb,$8::jsonb,'integration-test')""",
+                    source_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
+                    "adaptive-roles-v1", "bounded-repo-tools-v6-durable-turns",
+                    json.dumps({"component": "candidate_builder"}),
+                    json.dumps({"last_runner_failure": {
+                        "error_type": "independent_review_rejected",
+                    }}),
+                )
+
+        client.portal.call(prepare)
+        wrong = client.post(
+            f"/admin/candidate-builds/{source_id}/new-policy-attempt",
+            headers=headers, json={"confirmation": "retry"},
+        )
+        assert wrong.status_code == 422
+        response = client.post(
+            f"/admin/candidate-builds/{source_id}/new-policy-attempt",
+            headers=headers,
+            json={"confirmation": "RETRY WITH CURRENT BUILDER POLICY"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "queued"
+        new_id = uuid.UUID(response.json()["build_id"])
+
+        async def inspect_and_cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                source = await conn.fetchrow(
+                    "SELECT status,completed_at FROM candidate_builds WHERE id=$1",
+                    source_id,
+                )
+                new = await conn.fetchrow(
+                    """SELECT status,base_commit,model_policy_version,
+                              tool_policy_version,checkpoint
+                         FROM candidate_builds WHERE id=$1""",
+                    new_id,
+                )
+                notification = await conn.fetchval(
+                    """SELECT count(*) FROM improvement_notifications n
+                       JOIN improvement_proposals p ON p.id=n.proposal_id
+                       WHERE p.proposal_key=$1
+                         AND n.event_type LIKE
+                             'candidate_builder_new_policy_attempt_%'""",
+                    proposal_key,
+                )
+                await conn.execute(
+                    "DELETE FROM improvement_proposals WHERE proposal_key=$1",
+                    proposal_key,
+                )
+            return dict(source), dict(new), notification
+
+        source, new, notification = client.portal.call(inspect_and_cleanup)
+        assert source["status"] == "failed"
+        assert new["status"] == "queued"
+        assert new["model_policy_version"] == MODEL_POLICY_VERSION
+        assert new["tool_policy_version"] == TOOL_POLICY_VERSION
+        assert new["checkpoint"]["supersedes_build_id"] == str(source_id)
+        assert notification == 2
+
+
 def test_candidate_callback_leases_and_records_failure_without_proposal_deployment_column():
     from app.api.main import app
     from app.config.settings import get_settings
