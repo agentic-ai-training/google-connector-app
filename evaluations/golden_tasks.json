@@ -27,5 +27,8 @@
   {"id":"workspace-guidance","request":"How do I share a Drive file?","services":["general"],"operations":["answer_workspace_chat"],"approval":false,"rag":"none"},
   {"id":"out-of-scope-chat","request":"Tell me a joke","services":["general"],"operations":["answer_workspace_chat"],"approval":false,"rag":"none"},
   {"id":"sender-sheet-chat-calendar-meet","request":"Create a sheet of the names of last 20 people who did mails to me, use the sheet Drive link in Google Chat, and create a Meet invite with a Calendar schedule tomorrow at 10 AM for 30 minutes IST in the Finance Chat space to user@example.com","services":["gmail","sheets","chat","calendar"],"operations":["recent_senders","create_and_write","send","create"],"approval":true,"rag":"none","clarifications":0},
-  {"id":"gmail-promotional-sender-count","request":"How many senders sent me promotional mails today in Asia/Kolkata?","services":["gmail"],"operations":["sender_count"],"approval":false,"rag":"none","clarifications":0}
+  {"id":"gmail-promotional-sender-count","request":"How many senders sent me promotional mails today in Asia/Kolkata?","services":["gmail"],"operations":["sender_count"],"approval":false,"rag":"none","clarifications":0},
+  {"id":"workspace-draft-only","request":"Draft a polite email asking for a meeting","services":["composition"],"operations":["compose"],"approval":false,"rag":"none","max_tokens":3000},
+  {"id":"workspace-compose-send","request":"Write an application and send it by Gmail to user@example.com","services":["composition","gmail"],"operations":["compose","send"],"approval":true,"rag":"none","max_tokens":4500},
+  {"id":"workspace-compose-doc","request":"Brainstorm a roadmap and create it in Google Docs","services":["composition","docs"],"operations":["compose","create"],"approval":false,"rag":"none","max_tokens":4500}
 ]

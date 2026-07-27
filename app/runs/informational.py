@@ -79,7 +79,10 @@ _GUIDANCE_PATTERNS = (
 )
 _ACTION_PATTERN = (
     r"\b(search|find|list|show|get|read|send|reply|create|make|build|write|append|"
-    r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check|count)\b"
+    r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check|"
+    r"count|draft|compose|rewrite|revise|shorten|shorter|expand|longer|polish|"
+    r"brainstorm|outline|"
+    r"summarize|summarise)\b"
     r"|\bhow many\b"
 )
 _WORKSPACE_TERMS = tuple(SERVICE_LABELS) + (

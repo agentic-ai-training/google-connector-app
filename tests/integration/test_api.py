@@ -237,6 +237,84 @@ def test_service_only_reply_resolves_recent_same_session_ambiguity():
         client.portal.call(cleanup)
 
 
+def test_statement_analysis_and_relevance_gated_history_are_separate():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"context-composition-{uuid.uuid4()}@example.com"
+    session_id = f"context-composition-{uuid.uuid4()}"
+    run_ids = []
+    with TestClient(app) as client:
+        token = client.post(
+            "/auth/token", json={"email": user_id}
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        first = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "Draft a detailed email containing a project roadmap",
+        })
+        assert first.status_code == 202
+        run_ids.append(first.json()["run_id"])
+
+        async def complete_first():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE agent_runs SET status='completed',
+                       result='{"output":"A deliberately long roadmap"}'::jsonb,
+                       completed_at=now() WHERE id=$1""",
+                    uuid.UUID(run_ids[0]),
+                )
+        client.portal.call(complete_first)
+
+        follow_up = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "Make it shorter",
+        })
+        assert follow_up.status_code == 202
+        run_ids.append(follow_up.json()["run_id"])
+        resolved = client.get(
+            f"/runs/{run_ids[-1]}", headers=headers,
+        ).json()
+        assert resolved["request"] == "Make it shorter"
+        assert [(step["service"], step["operation"]) for step in resolved["steps"]] == [
+            ("composition", "compose"),
+        ]
+        diagnostics = resolved["planning_diagnostics"]
+        assert diagnostics["request_analysis"]["analyzed"] is True
+        assert diagnostics["conversation_context"]["prior_context_included"] is True
+        events = client.get(
+            f"/runs/{run_ids[-1]}/events", headers=headers,
+        ).json()["events"]
+        assert "request_analyzed" in {event["event_type"] for event in events}
+        assert "context_analyzed" in {event["event_type"] for event in events}
+
+        isolated = client.post("/runs", headers=headers, json={
+            "session_id": f"other-{session_id}",
+            "message": "Make it shorter",
+        })
+        assert isolated.status_code == 202
+        run_ids.append(isolated.json()["run_id"])
+        isolated_run = client.get(
+            f"/runs/{run_ids[-1]}", headers=headers,
+        ).json()
+        assert isolated_run["intent_kind"] == "out_of_scope"
+        assert (
+            isolated_run["planning_diagnostics"]["conversation_context"]
+            ["prior_context_included"]
+            is False
+        )
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=ANY($1::uuid[])",
+                    run_ids,
+                )
+        client.portal.call(cleanup)
+
+
 def test_private_okf_bundle_is_namespaced_and_excluded_by_default(tmp_path):
     from app.api.main import app
     from app.config.settings import get_settings

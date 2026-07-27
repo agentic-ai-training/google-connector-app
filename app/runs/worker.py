@@ -448,8 +448,9 @@ async def _execute_step(app, pool, run, step, dependencies):
     else:
         result = None
     dependency_text = json.dumps(dependencies, default=str)
+    planning_request = input_data.get("request") or run["request"]
     scoped_message = (
-        f"Overall request: {run['request']}\n\n"
+        f"Overall request: {planning_request}\n\n"
         f"Execute only the {step['service']} portion now. Do not repeat work from "
         f"completed dependency steps. Dependency outputs: {dependency_text}"
     )
@@ -491,6 +492,16 @@ async def _execute_step(app, pool, run, step, dependencies):
             initial, config={"configurable": {"thread_id": f"{run_id}:{step['step_key']}"}}
         )
     output = result.get("output", "")
+    if step.get("operation") == "compose" and not str(output).strip():
+        result = {
+            **result,
+            "task_complete": False,
+            "error": "The composition stage returned empty content.",
+            "error_category": "postcondition_failure",
+            "error_component": "composition_agent",
+            "error_boundary": "composition_output",
+            "error_evidence": {"output_present": False},
+        }
     executions = result.get("tool_executions", [])
     if executions:
         verification = await verify_executions_detailed(

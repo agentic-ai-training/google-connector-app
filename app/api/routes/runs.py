@@ -26,8 +26,12 @@ from app.runs.repository import (
     decide_run,
     get_run,
     list_events,
-    resolve_contextual_request,
     search_runs,
+)
+from app.runs.context import analyze_conversation_context
+from app.runs.request_analysis import (
+    RequestStatementAnalysis,
+    analyze_request_statement,
 )
 from app.runs.schemas import (
     ArtifactCleanupDecision,
@@ -61,8 +65,15 @@ def _decision_payload(decision: ReconciliationDecision) -> dict:
     return _serializable(asdict(decision))
 
 
-def _routing_plan(message: str, timezone_name: str | None = None) -> dict:
-    policy = classify_request(message, timezone_name)
+def _routing_plan(
+    message: str, timezone_name: str | None = None,
+    authority_message: str | None = None,
+    request_analysis: RequestStatementAnalysis | None = None,
+) -> dict:
+    policy = classify_request(
+        message, timezone_name, authority_message=authority_message,
+        request_analysis=request_analysis,
+    )
     services = policy.get("services") or []
     return {
         "services": services,
@@ -284,9 +295,15 @@ async def start_run(body: RunCreate, request: Request):
         pool, "pilot_cohorts", request.state.user_id
     ):
         raise HTTPException(403, "This account is not in the active pilot cohort")
-    effective_message = await resolve_contextual_request(
-        pool, request.state.user_id, body.session_id, body.message, body.timezone,
+    request_analysis = analyze_request_statement(body.message)
+    context_analysis = await analyze_conversation_context(
+        pool,
+        user_id=request.state.user_id,
+        session_id=body.session_id,
+        message=body.message,
+        request_analysis=request_analysis,
     )
+    effective_message = context_analysis.effective_message
     candidate_claims = None
     if settings.executor_role == "candidate":
         candidate_claims = _validated_candidate_assertion(request)
@@ -294,22 +311,31 @@ async def start_run(body: RunCreate, request: Request):
         async with pool.acquire() as conn, conn.transaction():
             target = await resolve_candidate_api_target(
                 conn, request.state.user_id,
-                _routing_plan(effective_message, body.timezone),
+                _routing_plan(
+                    effective_message, body.timezone, body.message,
+                    request_analysis,
+                ),
             )
         if target:
-            payload = body.model_dump(mode="json")
-            payload["message"] = effective_message
-            return await _forward_to_candidate(target, "/runs", request, payload)
+            return await _forward_to_candidate(
+                target, "/runs", request, body.model_dump(mode="json"),
+            )
     try:
         run, created = await create_run(
-            pool, request.state.user_id, effective_message,
+            pool, request.state.user_id, body.message,
             body.session_id, body.idempotency_key,
             required_executor_version=(candidate_claims or {}).get("candidate_version"),
             timezone_name=body.timezone,
+            planning_message=effective_message,
+            context_diagnostics=context_analysis.diagnostics(),
+            request_analysis=request_analysis,
         )
     except RunLimitExceeded as exc:
         try:
-            policy = classify_request(effective_message, body.timezone)
+            policy = classify_request(
+                effective_message, body.timezone, authority_message=body.message,
+                request_analysis=request_analysis,
+            )
             incident = await record_failure_incident(
                 pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:admission",
                 session_id=body.session_id, user_id=request.state.user_id,
@@ -324,7 +350,10 @@ async def start_run(body: RunCreate, request: Request):
         raise HTTPException(429, detail) from exc
     except (CandidateAssignmentMismatch, ValueError, KeyError, TypeError) as exc:
         try:
-            policy = classify_request(effective_message, body.timezone)
+            policy = classify_request(
+                effective_message, body.timezone, authority_message=body.message,
+                request_analysis=request_analysis,
+            )
             incident = await record_failure_incident(
                 pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:planning",
                 session_id=body.session_id, user_id=request.state.user_id,
