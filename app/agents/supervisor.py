@@ -15,7 +15,8 @@ from langgraph.graph import END, StateGraph
 from app.agents.router import get_llm, get_model_name, route_model_node
 from app.agents.context_budget import fit_messages_to_budget
 from app.agents.errors import (
-    ModelContextLengthFailure, ToolExecutionFailure, ToolSelectionFailure,
+    ModelContextLengthFailure, ModelQuotaFailure,
+    ToolExecutionFailure, ToolSelectionFailure,
     is_provider_context_length_error,
 )
 from app.agents.state import AgentState
@@ -465,10 +466,16 @@ def make_service_node(service: str, pool=None):
                                 fallback_model if state.get("allow_small_fallback", True) else None,
                             )
                             if not state.get("allow_small_fallback", True):
-                                raise RuntimeError(
+                                raise ModelQuotaFailure(
                                     "Quality-model quota is unavailable; this complex or "
                                     "high-risk workflow was paused instead of silently "
-                                    "downgrading to the small fallback model."
+                                    "downgrading to the small fallback model.",
+                                    boundary="quality_model_quota",
+                                    evidence={
+                                        "model": used_model,
+                                        "fallback_allowed": False,
+                                        "write_contract_active": contract is not None,
+                                    },
                                 ) from exc
                             fallback_from = used_model
                             used_model = fallback_model
@@ -495,6 +502,21 @@ def make_service_node(service: str, pool=None):
                                     status="error", fallback_from=fallback_from,
                                     error=str(fallback_exc),
                                 )
+                                fallback_error = str(fallback_exc).casefold()
+                                if any(value in fallback_error for value in (
+                                    "rate_limit", "rate limit", "429",
+                                )):
+                                    raise ModelQuotaFailure(
+                                        "All approved runtime models are currently "
+                                        "rate-limited.",
+                                        boundary="fallback_model_quota",
+                                        evidence={
+                                            "primary_model": fallback_from,
+                                            "fallback_model": used_model,
+                                            "fallback_allowed": True,
+                                            "write_contract_active": contract is not None,
+                                        },
+                                    ) from fallback_exc
                                 raise
                             llm_elapsed = int(
                                 (time.perf_counter() - fallback_started) * 1000

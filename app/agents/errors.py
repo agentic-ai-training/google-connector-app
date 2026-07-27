@@ -48,6 +48,21 @@ class ModelContextLengthFailure(ExecutionFailure):
         )
 
 
+class ModelQuotaFailure(ExecutionFailure):
+    def __init__(
+        self, message: str, *, boundary: str,
+        evidence: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            message,
+            category="rate_limit",
+            component="model_router",
+            boundary=boundary,
+            provider_code="rate_limit_exceeded",
+            evidence=evidence,
+        )
+
+
 class ToolSelectionFailure(ExecutionFailure):
     def __init__(self, message: str, *, evidence: dict[str, Any] | None = None):
         super().__init__(
