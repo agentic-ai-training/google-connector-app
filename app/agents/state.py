@@ -13,6 +13,10 @@ class AgentState(TypedDict, total=False):
     retrieved_context: str
     model_to_use: str
     error: str
+    error_category: str
+    error_component: str
+    error_boundary: str
+    error_evidence: dict
     task_complete: bool
     service: str
     services: list[str]

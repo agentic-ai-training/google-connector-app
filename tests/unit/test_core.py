@@ -25,6 +25,7 @@ from app.improvements.analyzer import _json_object, _number
 from app.evaluation.metrics import compare_policy_metrics, evaluate_plan
 from app.agents.router import route_model_node
 from app.agents.supervisor import (
+    build_agent_graph,
     make_service_node,
     recover_rejected_tool_call,
     supervisor_node,
@@ -2275,6 +2276,48 @@ async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch)
         "write_contract_active": False,
     }
     assert events == [("rate_limit_encountered", None)]
+
+
+@pytest.mark.asyncio
+async def test_agent_graph_preserves_structured_service_failure(monkeypatch):
+    async def route(state):
+        return {"model_to_use": "groq_fast"}
+
+    async def retrieve(state):
+        return {"retrieved_context": "", "operational_context": ""}
+
+    async def supervisor(state):
+        return {"service": "sheets", "services": ["sheets"]}
+
+    async def sheets(state):
+        return {
+            "error": "Quality-model quota is unavailable.",
+            "error_category": "rate_limit",
+            "error_component": "model_router",
+            "error_boundary": "quality_model_quota",
+            "error_evidence": {"model": "llama-3.3-70b-versatile"},
+            "output": "The workflow was paused.",
+            "task_complete": False,
+        }
+
+    monkeypatch.setattr("app.agents.supervisor.route_model_node", route)
+    monkeypatch.setattr("app.agents.supervisor.retrieve_context_node", retrieve)
+    monkeypatch.setattr("app.agents.supervisor.supervisor_node", supervisor)
+    monkeypatch.setattr(
+        "app.agents.supervisor.make_service_node",
+        lambda service, pool=None: sheets if service == "sheets" else sheets,
+    )
+    result = await build_agent_graph().ainvoke({
+        "message": "create a sheet",
+        "forced_service": "sheets",
+        "messages": [],
+    })
+    assert result["error_category"] == "rate_limit"
+    assert result["error_component"] == "model_router"
+    assert result["error_boundary"] == "quality_model_quota"
+    assert result["error_evidence"] == {
+        "model": "llama-3.3-70b-versatile",
+    }
 
 
 def test_admin_claim_is_derived_from_email():

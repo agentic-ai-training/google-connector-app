@@ -778,6 +778,7 @@ step output, artifact, checkpoint, event, and notification fields are sufficient
 | One missing-tool-only correction; no prose success | `app/agents/supervisor.py` | tool-free correction and second-answer tests | Implemented | None; revert supervisor policy |
 | Distinct selection, execution, and postcondition failures | errors, worker, verifier | unit verifier and service-agent tests | Implemented | None; historical `verification` remains compatible |
 | Pre-tool model quota remains distinct from verification | agent errors/supervisor, worker, incident completion | high-risk quota and zero-side-effect tests | Implemented | None; resume reconciles the exact step after quota recovery |
+| Typed service failures survive the LangGraph state boundary | `app/agents/state.py`, supervisor graph | compiled-graph structured-error propagation test | Implemented | None; state-schema declaration only |
 | Sheets exact range/value readback | `app/runs/verifier.py` | Sheet create/write/append/mismatch tests | Implemented | None; verifier rollback only |
 | Calendar time/timezone/attendee/Meet readback | verifier and Calendar registry | Calendar match/mismatch tests | Implemented | None |
 | Chat destination/text-hash/reference readback | verifier | Chat match/mismatch tests | Implemented | None |
@@ -823,3 +824,10 @@ is published only after its own trusted matrix passes.
   mislabeled as generic verification. Pre-tool quota exhaustion is now a typed,
   recoverable `rate_limit` at the model-router boundary; a write with zero tool attempts
   retains 100% side-effect integrity and does not claim that artifact review is needed.
+- 2026-07-28: Production run `abb47286` on the PR #76 deployment proved the typed
+  exception existed inside the service agent but exposed a second boundary defect:
+  LangGraph discarded undeclared structured error fields before returning the compiled
+  graph result. The graph state now declares category, component, boundary, and sanitized
+  evidence explicitly, and a compiled-graph regression test proves all four survive.
+  Future high-risk quota pauses therefore remain `rate_limit/model_router` incidents
+  instead of degrading to a generic no-tool-result verification diagnosis.
