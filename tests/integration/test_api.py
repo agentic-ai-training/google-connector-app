@@ -1522,6 +1522,91 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
         assert proposal_state == "implementation_draft"
 
 
+def test_candidate_callback_leases_and_records_failure_without_proposal_deployment_column():
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+
+    marker = str(uuid.uuid4())
+    build_id = uuid.uuid4()
+    proposal_key = f"candidate-callback-{marker}"
+    settings = get_settings()
+    original_token = settings.candidate_builder_callback_token
+    settings.candidate_builder_callback_token = "integration-candidate-callback-token"
+    headers = {"X-Candidate-Builder-Token": settings.candidate_builder_callback_token}
+    try:
+        with TestClient(app) as client:
+            async def prepare():
+                pool = await get_pool()
+                async with pool.acquire() as conn, conn.transaction():
+                    proposal_id = await conn.fetchval(
+                        """INSERT INTO improvement_proposals
+                           (proposal_key,proposal_type,title,sanitized_summary,status,
+                            content_hash,candidate_kind,candidate_state)
+                           VALUES($1,'policy','Callback fixture','No private content',
+                                  'awaiting_review',$2,'diagnosis','diagnosis_only')
+                           RETURNING id""",
+                        proposal_key, marker,
+                    )
+                    checkpoint = {
+                        "generation_checkpoint": {
+                            "phase": "role_in_progress",
+                            "active_role": "investigator_and_patch_author",
+                            "next_round": 1,
+                            "messages": [{"role": "user", "content": "safe fixture"}],
+                            "staged_file_count": 0,
+                        },
+                        "last_runner_failure": {
+                            "error_type": "RateLimitError",
+                            "runner_retryable": True,
+                        },
+                    }
+                    await conn.execute(
+                        """INSERT INTO candidate_builds
+                           (id,proposal_id,selected_option,mode,status,base_commit,
+                            model_name,model_policy_version,tool_policy_version,
+                            token_budget,sanitized_input,checkpoint,created_by)
+                           VALUES($1,$2,'A','multi_role','failed',$3,$4,$5,$6,
+                                  12000,$7::jsonb,$8::jsonb,'integration-test')""",
+                        build_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
+                        "adaptive-roles-v1", "bounded-repo-tools-v6-turn-checkpoints",
+                        json.dumps({"component": "candidate_builder"}),
+                        json.dumps(checkpoint),
+                    )
+
+            client.portal.call(prepare)
+            leased = client.post(
+                f"/admin/candidate-builder/{build_id}/input", headers=headers,
+            )
+            assert leased.status_code == 200
+            assert leased.json()["build"]["generation_checkpoint"]["next_round"] == 1
+            failed = client.post(
+                f"/admin/candidate-builder/{build_id}/failure",
+                headers=headers,
+                json={
+                    "stage": "generation",
+                    "error_type": "independent_review_rejected",
+                    "message": "Candidate stopped at a terminal policy boundary.",
+                    "retryable": False,
+                },
+            )
+            assert failed.status_code == 200
+            assert failed.json()["status"] == "failed"
+            assert failed.json()["retry_reason"] == "independent_review_rejected"
+
+            async def cleanup():
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "DELETE FROM improvement_proposals WHERE proposal_key=$1",
+                        proposal_key,
+                    )
+
+            client.portal.call(cleanup)
+    finally:
+        settings.candidate_builder_callback_token = original_token
+
+
 def test_canary_regression_is_evaluated_and_rolled_back():
     from app.api.main import app
     from app.db.connection import get_pool

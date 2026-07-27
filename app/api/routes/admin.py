@@ -229,7 +229,11 @@ async def candidate_builder_input(build_id: str):
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             """SELECT b.*,p.proposal_key,p.risk_level,
-                      p.candidate_deployment_id,
+                      (SELECT c.candidate_deployment_id
+                         FROM improvement_canaries c
+                        WHERE c.proposal_id=p.id
+                        ORDER BY c.started_at DESC NULLS LAST LIMIT 1)
+                        AS candidate_deployment_id,
                       (SELECT count(*) FROM candidate_build_files f
                        WHERE f.build_id=b.id) AS file_count
                FROM candidate_builds b
@@ -310,7 +314,12 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         build = await conn.fetchrow(
-            """SELECT b.*,p.id proposal_id,p.candidate_deployment_id,
+            """SELECT b.*,p.id proposal_id,
+                      (SELECT c.candidate_deployment_id
+                         FROM improvement_canaries c
+                        WHERE c.proposal_id=p.id
+                        ORDER BY c.started_at DESC NULLS LAST LIMIT 1)
+                        AS candidate_deployment_id,
                       (SELECT count(*) FROM candidate_build_files f
                        WHERE f.build_id=b.id) AS file_count
                FROM candidate_builds b
