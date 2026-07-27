@@ -13,15 +13,23 @@ def completion_from_steps(steps: list[dict]) -> dict:
         float(step.get("weight") or 1) for step in steps
         if step.get("status") == "completed" and bool((step.get("output_data") or {}).get("output"))
     )
-    failed_writes = sum(
-        1 for step in steps
-        if step.get("status") == "failed" and not step.get("read_only", True)
-    )
+    uncertain_writes = 0
+    for step in steps:
+        if step.get("status") != "failed" or step.get("read_only", True):
+            continue
+        if step.get("error_category") == "worker_reconciliation":
+            # A lost worker lease has no reliable response boundary. Preserve
+            # the existing fail-closed signal until explicit reconciliation.
+            uncertain_writes += 4
+            continue
+        executions = (step.get("output_data") or {}).get("tool_executions") or []
+        if executions:
+            uncertain_writes += 1
     return {
         "technical_completion": technical,
         "functional_completion": round(functional_weight / total * 100, 2),
         "user_visible_completion": round(visible_weight / total * 100, 2),
-        "side_effect_integrity": max(0.0, 100.0 - failed_writes * 25.0),
+        "side_effect_integrity": max(0.0, 100.0 - uncertain_writes * 25.0),
     }
 
 
@@ -30,6 +38,14 @@ def build_incident(steps: list[dict], error_category: str, error_message: str) -
     completed = [step["title"] for step in completed_steps]
     failed = next((step for step in steps if step.get("status") == "failed"), None)
     pending = [step["title"] for step in steps if step.get("status") == "pending"]
+    failed_write_may_exist = bool(
+        failed
+        and not failed.get("read_only", True)
+        and (
+            (failed.get("output_data") or {}).get("tool_executions")
+            or failed.get("error_category") == "worker_reconciliation"
+        )
+    )
     return {
         "completed": completed,
         "last_success": completed_steps[-1]["title"] if completed_steps else None,
@@ -39,7 +55,7 @@ def build_incident(steps: list[dict], error_category: str, error_message: str) -
         "contributing_factors": [factor for factor in (
             "Dependent steps were not executed" if pending else None,
             "A high-risk write may require artifact review"
-            if failed and not failed.get("read_only", True) else None,
+            if failed_write_may_exist else None,
         ) if factor],
         "error": error_message,
         "recoverable": error_category in {"rate_limit", "network", "worker"},

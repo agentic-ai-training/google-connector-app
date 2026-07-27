@@ -57,6 +57,7 @@ from app.rag.chunking import (
 )
 from app.rag.chunking_evaluation import evaluate_chunk_policy
 from app.runs.worker import classify_error, verify_step
+from app.runs.incident import build_incident, completion_from_steps
 from app.tools.base import tool_run_id
 from app.tools.registry import _request_id, list_recent_gmail_senders
 from app.tools.result_projection import project_tool_result
@@ -98,6 +99,39 @@ def test_context_packer_orders_by_score():
         {"source": "high", "content": "first", "score": 0.9},
     ])
     assert text.index("first") < text.index("second")
+
+
+def test_model_quota_before_write_preserves_side_effect_integrity():
+    steps = [{
+        "id": "sheet-step",
+        "title": "Create and populate Sheet",
+        "status": "failed",
+        "read_only": False,
+        "weight": 1,
+        "error_category": "rate_limit",
+        "error_message": "Quality-model quota is unavailable",
+        "output_data": {"tool_executions": []},
+    }]
+    completion = completion_from_steps(steps)
+    incident = build_incident(
+        steps, "rate_limit", "Quality-model quota is unavailable",
+    )
+    assert completion["side_effect_integrity"] == 100
+    assert incident["recoverable"] is True
+    assert "A high-risk write may require artifact review" not in (
+        incident["contributing_factors"]
+    )
+
+
+def test_failed_write_with_tool_evidence_reduces_side_effect_integrity():
+    steps = [{
+        "status": "failed",
+        "read_only": False,
+        "weight": 1,
+        "error_category": "postcondition_failure",
+        "output_data": {"tool_executions": [{"tool": "create_google_sheet"}]},
+    }]
+    assert completion_from_steps(steps)["side_effect_integrity"] == 75
 
 
 def test_candidate_budget_snapshot_keeps_base_and_effective_separate(monkeypatch):
@@ -2232,6 +2266,14 @@ async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch)
     })
     assert result["task_complete"] is False
     assert "paused" in result["error"]
+    assert result["error_category"] == "rate_limit"
+    assert result["error_component"] == "model_router"
+    assert result["error_boundary"] == "quality_model_quota"
+    assert result["error_evidence"] == {
+        "model": get_settings().groq_fast_model,
+        "fallback_allowed": False,
+        "write_contract_active": False,
+    }
     assert events == [("rate_limit_encountered", None)]
 
 

@@ -777,6 +777,7 @@ step output, artifact, checkpoint, event, and notification fields are sufficient
 | Allowed-tool ceiling separated from required-write obligation | `app/tools/contracts.py`, planner, state, worker | `tests/unit/test_core.py` write-contract cases | Implemented | None; disable the new executor path or revert code |
 | One missing-tool-only correction; no prose success | `app/agents/supervisor.py` | tool-free correction and second-answer tests | Implemented | None; revert supervisor policy |
 | Distinct selection, execution, and postcondition failures | errors, worker, verifier | unit verifier and service-agent tests | Implemented | None; historical `verification` remains compatible |
+| Pre-tool model quota remains distinct from verification | agent errors/supervisor, worker, incident completion | high-risk quota and zero-side-effect tests | Implemented | None; resume reconciles the exact step after quota recovery |
 | Sheets exact range/value readback | `app/runs/verifier.py` | Sheet create/write/append/mismatch tests | Implemented | None; verifier rollback only |
 | Calendar time/timezone/attendee/Meet readback | verifier and Calendar registry | Calendar match/mismatch tests | Implemented | None |
 | Chat destination/text-hash/reference readback | verifier | Chat match/mismatch tests | Implemented | None |
@@ -794,7 +795,7 @@ step output, artifact, checkpoint, event, and notification fields are sufficient
 | No-network lost-response, mismatch, resume, and uncertainty replay | replay engine and 13 fixtures | workflow replay script | Implemented, 13/13 local | No production side effects |
 | CI compilation before tests and full trusted validation | CI and candidate-validation workflows | workflow inspection plus trusted PR/main runs | Implemented and operational | Revert workflow-only change |
 
-Current local checkpoint: 154 unit/API tests, 28 PostgreSQL integration tests (182
+Current local checkpoint: 156 unit/API tests, 28 PostgreSQL integration tests (184
 combined), and all
 13 workflow replays pass. Python compilation and Flake8, dependency/security checks,
 migration 013→002→013 round-trip, Compose, secret/history checks, Next.js lint/build,
@@ -815,3 +816,10 @@ is published only after its own trusted matrix passes.
   rejected two invalid one-line placeholder files. The follow-up integrity guard rejects
   content-free staged-body projections before they can overwrite source and requires
   deterministic syntax/policy validation before review.
+- 2026-07-28: A live multi-service run on the exact `92de67ec` deployment proved the
+  Gmail metadata path, clarification, approval, and write-contract planning, then met
+  Groq's quality-model quota before any Sheet tool ran. The runtime correctly refused a
+  small-model downgrade for the high-risk workflow, but its caught exception was
+  mislabeled as generic verification. Pre-tool quota exhaustion is now a typed,
+  recoverable `rate_limit` at the model-router boundary; a write with zero tool attempts
+  retains 100% side-effect integrity and does not claim that artifact review is needed.
