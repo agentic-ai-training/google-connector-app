@@ -15,11 +15,14 @@ from app.runs.incident import build_incident, completion_from_steps
 from app.runs.repository import append_event
 from app.runs.informational import informational_answer, workspace_chat_answer
 from app.improvements.failure_intelligence import record_failure_incident
-from app.runs.verifier import verify_executions
-from app.mlops.metrics import run_duration, run_failures, run_transitions
+from app.runs.verifier import verify_executions_detailed
+from app.mlops.metrics import (
+    postcondition_failures, run_duration, run_failures, run_transitions,
+)
 from app.evaluation.collector import record_run_evaluation
 from app.tools.base import GoogleWorkspaceBaseTool
 from app.tools.result_projection import project_tool_result
+from app.tools.contracts import write_contract_for
 
 logger = logging.getLogger(__name__)
 
@@ -427,11 +430,34 @@ async def _execute_step(app, pool, run, step, dependencies):
         "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
         "forced_service": step["service"], "messages": [],
         "allowed_tools": (step.get("input_data") or {}).get("allowed_tools", []),
+        "operation": step.get("operation") or "execute",
+        "requires_write": not step.get("read_only", True),
+        "expected_write_tools": [],
+        "write_completion_mode": "all",
+        "tool_selection_retry_count": 0,
         "risk_level": run["risk_level"],
         "allow_small_fallback": (
             run["risk_level"] == "low" and len((run["plan"] or {}).get("services", [])) <= 1
         ),
     }
+    contract = write_contract_for(
+        step.get("service"), step.get("operation"), initial["allowed_tools"],
+    )
+    projected_contract = input_data.get("write_contract") or {}
+    if contract:
+        initial["expected_write_tools"] = list(contract.required_tools)
+        initial["write_completion_mode"] = contract.completion_mode
+    elif not step.get("read_only", True):
+        raise ExecutionFailure(
+            "The durable write step has no valid execution contract.",
+            category="planning", component="durable_worker",
+            boundary="write_contract",
+            evidence={
+                "service": step.get("service"),
+                "operation": step.get("operation"),
+                "projected_required_tools": projected_contract.get("required_tools", []),
+            },
+        )
     if result is None:
         result = await app.state.agent_graph.ainvoke(
             initial, config={"configurable": {"thread_id": f"{run_id}:{step['step_key']}"}}
@@ -439,7 +465,12 @@ async def _execute_step(app, pool, run, step, dependencies):
     output = result.get("output", "")
     executions = result.get("tool_executions", [])
     if executions:
-        verified, evidence, artifacts = await verify_executions(executions)
+        verification = await verify_executions_detailed(
+            executions, service=step.get("service"), operation=step.get("operation"),
+        )
+        verified = verification.passed
+        evidence = verification.message
+        artifacts = verification.artifacts
         if verified and not result.get("task_complete"):
             verified = False
             evidence = result.get("error") or "The agent did not reach a completed state"
@@ -447,7 +478,14 @@ async def _execute_step(app, pool, run, step, dependencies):
         verified, evidence, artifacts = verify_step(step, result)
     elapsed_ms = int((time.perf_counter() - step_started) * 1000)
     persisted_executions = _persistable_executions(executions)
-    error_category = result.get("error_category")
+    error_category = result.get("error_category") or (
+        verification.category if executions and not verified else None
+    )
+    if error_category == "postcondition_failure":
+        postcondition_failures.labels(
+            step.get("service") or "unknown",
+            step.get("operation") or "unknown",
+        ).inc()
     if not verified and error_category:
         evidence = result.get("error") or evidence
     async with pool.acquire() as conn:
@@ -474,10 +512,14 @@ async def _execute_step(app, pool, run, step, dependencies):
             evidence,
             category=error_category or "verification",
             component=result.get("error_component") or "step_executor",
-            boundary=result.get("error_boundary") or "postcondition_verification",
-            evidence=result.get("error_evidence") or {
+            boundary=result.get("error_boundary") or (
+                verification.boundary if executions else "postcondition_verification"
+            ),
+            evidence=result.get("error_evidence") or (
+                verification.evidence if executions else {
                 "service": step.get("service"), "operation": step.get("operation"),
-            },
+                }
+            ),
         )
     await append_event(pool, run_id, user_id, "step_completed", step_id=step["id"],
                        phase="execution", message=output,
@@ -651,7 +693,11 @@ async def execute_run(app, pool, run):
                 pool, occurrence_key=f"run:{run_id}:terminal", run_id=run_id,
                 session_id=run["session_id"], user_id=user_id,
                 message=run["request"], intent_kind=run.get("intent_kind") or "workspace_action",
-                stage=("verification" if category == "verification" else "execution"),
+                stage=(
+                    "verification"
+                    if category in {"verification", "postcondition_failure"}
+                    else "execution"
+                ),
                 category=category,
                 component=getattr(exc, "component", "durable_worker"), error=str(exc),
                 service=failed_step["service"] if failed_step else None,

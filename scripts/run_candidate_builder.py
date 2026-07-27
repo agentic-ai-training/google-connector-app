@@ -14,11 +14,17 @@ from groq import APIStatusError, APITimeoutError, RateLimitError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.improvements.builder import generate_candidate_draft, groq_bad_request_code
+from app.improvements.builder import (
+    CandidateBuilderFailure,
+    generate_candidate_draft,
+    groq_bad_request_code,
+)
 from app.improvements.network_guard import allowlisted_dns
 
 
 def runtime_failure_code(exc: Exception) -> str | None:
+    if isinstance(exc, CandidateBuilderFailure):
+        return exc.safe_code
     if not isinstance(exc, RuntimeError):
         return None
     message = str(exc)
@@ -38,7 +44,9 @@ def runtime_failure_code(exc: Exception) -> str | None:
     return "bounded_runtime_failure"
 
 
-def failure_payload(exc: Exception, stage: str) -> dict:
+def failure_payload(
+    exc: Exception, stage: str, latest_checkpoint: dict | None = None,
+) -> dict:
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
     retryable = isinstance(
@@ -81,10 +89,42 @@ def failure_payload(exc: Exception, stage: str) -> dict:
         message = f"Candidate builder stopped at guard {runtime_code}."
     else:
         message = f"{type(exc).__name__} during candidate {stage}."
-    return {
+    checkpoint = latest_checkpoint or {}
+    if isinstance(exc, CandidateBuilderFailure):
+        contract_errors = exc.contract_errors
+        active_role = exc.role
+        next_round = exc.round_number
+        staged_file_count = exc.staged_file_count
+        resume_point = exc.resume_point
+        retryable = not exc.terminal_policy
+    else:
+        contract_errors = checkpoint.get("last_contract_errors") or []
+        active_role = checkpoint.get("active_role")
+        next_round = checkpoint.get("next_round")
+        staged_file_count = checkpoint.get("staged_file_count")
+        resume_point = checkpoint.get("resume_point")
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        error_type = (
+            "checkpointed_timeout" if latest_checkpoint else "uncheckpointed_timeout"
+        )
+        message = f"Candidate generation stopped at {error_type}."
+        retryable = bool(latest_checkpoint)
+    payload = {
         "stage": stage, "error_type": error_type, "message": message,
         "retryable": retryable, "retry_after_seconds": retry_after,
     }
+    optional = {
+        "contract_errors": (
+            [str(value)[:100] for value in contract_errors[:20]]
+            if contract_errors else None
+        ),
+        "active_role": active_role,
+        "next_round": next_round,
+        "staged_file_count": staged_file_count,
+        "resume_point": resume_point,
+    }
+    payload.update({key: value for key, value in optional.items() if value is not None})
+    return payload
 
 
 async def report_failure(base: str, build_id: str, headers: dict, payload: dict) -> None:
@@ -108,6 +148,7 @@ async def main() -> None:
     callback_host = urlparse(base).hostname
     with allowlisted_dns({"api.groq.com", callback_host or ""}):
         stage = "input"
+        latest_checkpoint = None
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
@@ -118,17 +159,26 @@ async def main() -> None:
                 stage = "generation"
 
                 async def checkpoint_author(payload: dict) -> None:
+                    nonlocal latest_checkpoint
                     checkpointed = await client.post(
                         f"{base}/admin/candidate-builder/{build_id}/checkpoint",
                         headers=headers, json=payload,
                     )
                     checkpointed.raise_for_status()
+                    latest_checkpoint = {
+                        key: payload.get(key) for key in (
+                            "active_role", "next_round", "staged_file_count",
+                            "last_contract_errors", "resume_point",
+                            "base_token_budget", "effective_token_budget",
+                            "remaining_effective_tokens",
+                        )
+                    }
 
                 candidate, tokens, roles, models_used = await asyncio.wait_for(
                     generate_candidate_draft(
                         job, checkpoint_callback=checkpoint_author,
                     ),
-                    timeout=540,
+                    timeout=max(30, int(job.get("timeout_seconds") or 540)),
                 )
                 payload = {
                     "files": candidate.get("files") or [],
@@ -147,7 +197,7 @@ async def main() -> None:
                 submitted.raise_for_status()
                 print(json.dumps(submitted.json(), sort_keys=True))
         except Exception as exc:
-            failure = failure_payload(exc, stage)
+            failure = failure_payload(exc, stage, latest_checkpoint)
             await report_failure(base, build_id, headers, failure)
             raise RuntimeError(
                 f"Candidate builder stopped at {stage}: {failure['error_type']}"

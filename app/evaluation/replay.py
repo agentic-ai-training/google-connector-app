@@ -21,6 +21,9 @@ class ReplayStepResult:
     output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     compensated: bool = False
+    failure_category: str | None = None
+    verification: dict[str, Any] = field(default_factory=dict)
+    reconciled: bool = False
 
 
 @dataclass
@@ -43,11 +46,15 @@ class ReplayResult:
 class SimulatedGoogleWorkspace:
     """An in-memory, deterministic replacement for mutating Google APIs."""
 
-    def __init__(self, fail_once: set[str] | None = None):
+    def __init__(
+        self, fail_once: set[str] | None = None,
+        postcondition_mismatch: set[str] | None = None,
+    ):
         self.artifacts: dict[str, dict[str, Any]] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
         self._counters: dict[str, int] = {}
         self._fail_once = set(fail_once or set())
+        self._postcondition_mismatch = set(postcondition_mismatch or set())
 
     def _identifier(self, service: str) -> str:
         self._counters[service] = self._counters.get(service, 0) + 1
@@ -90,7 +97,15 @@ class SimulatedGoogleWorkspace:
 
         self.artifacts[external_id] = artifact
         self._idempotency[idempotency_key] = copy.deepcopy(artifact)
+        if failure_key in self._postcondition_mismatch:
+            artifact["verified"] = False
+            self.artifacts[external_id]["verified"] = False
+            self._idempotency[idempotency_key]["verified"] = False
         return copy.deepcopy(artifact)
+
+    def reconcile(self, idempotency_key: str) -> dict[str, Any] | None:
+        value = self._idempotency.get(idempotency_key)
+        return copy.deepcopy(value) if value else None
 
     def compensate(self, external_id: str) -> bool:
         artifact = self.artifacts.get(external_id)
@@ -122,10 +137,16 @@ def _resolve(value: Any, outputs: dict[str, dict[str, Any]]) -> Any:
 
 def replay_case(case: dict[str, Any]) -> ReplayResult:
     """Execute a fixture with deterministic retry, verification and compensation."""
-    workspace = SimulatedGoogleWorkspace(set(case.get("fail_once", [])))
+    workspace = SimulatedGoogleWorkspace(
+        set(case.get("fail_once", [])),
+        set(case.get("postcondition_mismatch", [])),
+    )
+    tool_free_once = set(case.get("tool_free_once", []))
+    tool_free_always = set(case.get("tool_free_always", []))
+    lose_response = set(case.get("lose_response_after_write", []))
+    uncertain_response = set(case.get("uncertain_write_after_acceptance", []))
     results: list[ReplayStepResult] = []
     outputs: dict[str, dict[str, Any]] = {}
-    successful_ids: list[str] = []
     failed = False
     first_breaking_point = None
 
@@ -136,27 +157,69 @@ def replay_case(case: dict[str, Any]) -> ReplayResult:
             continue
         try:
             arguments = _resolve(step.get("arguments", {}), outputs)
+            operation_key = f"{step['service']}.{step['operation']}"
+            if operation_key in tool_free_always:
+                raise RuntimeError("tool_selection: required write tool was not selected")
+            corrected_selection = operation_key in tool_free_once
+            tool_free_once.discard(operation_key)
             attempts = 1 + int(step.get("retries", 0))
             output = None
+            idempotency_key = step.get(
+                "idempotency_key", f"{case['id']}:{step['id']}",
+            )
             for attempt in range(attempts):
                 try:
                     output = workspace.execute(
                         step["service"], step["operation"], arguments,
-                        step.get("idempotency_key", f"{case['id']}:{step['id']}"),
+                        idempotency_key,
                     )
+                    if operation_key in lose_response:
+                        lose_response.remove(operation_key)
+                        raise ConnectionError("injected lost response after provider acceptance")
+                    if operation_key in uncertain_response:
+                        uncertain_response.remove(operation_key)
+                        raise TimeoutError("injected uncertain write acceptance")
+                    break
+                except ConnectionError:
+                    output = workspace.reconcile(idempotency_key)
+                    if not output:
+                        raise RuntimeError("manual_required: write outcome is uncertain")
                     break
                 except RuntimeError:
                     if attempt + 1 == attempts:
+                        if case.get("resume_failed_step"):
+                            output = workspace.execute(
+                                step["service"], step["operation"], arguments,
+                                idempotency_key,
+                            )
+                            break
                         raise
+                except TimeoutError as exc:
+                    raise RuntimeError(
+                        "manual_required: write outcome is uncertain"
+                    ) from exc
             if not output or not output.get("external_id") or not output.get("verified"):
-                raise RuntimeError("simulated postcondition verification failed")
+                raise RuntimeError(
+                    "postcondition_failure: simulated expected state mismatch"
+                )
             outputs[step["id"]] = output
-            successful_ids.append(output["external_id"])
-            results.append(ReplayStepResult(step["id"], "completed", output=output))
+            results.append(ReplayStepResult(
+                step["id"], "completed", output=output,
+                verification={"expected_matches_observed": True},
+                reconciled=operation_key in set(case.get("lose_response_after_write", [])),
+                failure_category=(
+                    "tool_selection_corrected" if corrected_selection else None
+                ),
+            ))
         except (RuntimeError, ValueError) as exc:
             failed = True
             first_breaking_point = step["id"]
-            results.append(ReplayStepResult(step["id"], "failed", error=str(exc)))
+            error = str(exc)
+            category = error.split(":", 1)[0] if ":" in error else "execution"
+            results.append(ReplayStepResult(
+                step["id"], "failed", error=error, failure_category=category,
+                verification={"expected_matches_observed": False},
+            ))
 
     if failed and case.get("compensate_on_failure", False):
         for result in reversed(results):
@@ -190,8 +253,8 @@ def replay_case(case: dict[str, Any]) -> ReplayResult:
             100.0 if not case.get("fail_once") or actual_status == "completed" else 0.0
         ),
         side_effect_integrity=(
-            100.0 if not failed or not successful_ids
-            or all(workspace.artifacts[item].get("deleted") for item in successful_ids)
+            100.0 if not failed or not workspace.artifacts
+            or all(item.get("deleted") for item in workspace.artifacts.values())
             else 0.0
         ),
         first_breaking_point=first_breaking_point,

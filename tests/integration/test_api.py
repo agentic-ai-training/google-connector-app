@@ -1081,7 +1081,76 @@ def test_expired_write_lease_requires_reconciliation_and_blocks_resume():
             json={"retry_failed_step": True},
         )
         assert response.status_code == 409
-        assert "may already have completed" in response.json()["detail"]
+        assert response.json()["detail"]["reason_code"] == "write_acceptance_unknown"
+
+
+def test_resume_preserves_completed_steps_and_requeues_exact_tool_selection_failure():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run
+
+    user_id = "exact-resume@example.com"
+    with TestClient(app) as client:
+        async def prepare():
+            pool = await get_pool()
+            marker = f"exact-resume-{uuid.uuid4()}"
+            run, _ = await create_run(
+                pool, user_id,
+                "Find recent Gmail senders and create a Google Sheet without asking",
+                marker, marker,
+            )
+            async with pool.acquire() as conn:
+                steps = await conn.fetch(
+                    """SELECT * FROM agent_run_steps WHERE run_id=$1
+                       ORDER BY sequence_no""",
+                    run["id"],
+                )
+                assert len(steps) >= 2
+                await conn.execute(
+                    """UPDATE agent_run_steps SET status='completed',completed_at=now()
+                       WHERE id=$1""",
+                    steps[0]["id"],
+                )
+                await conn.execute(
+                    """UPDATE agent_run_steps SET status='failed',
+                       error_category='tool_selection',
+                       error_message='required write tool not selected',
+                       output_data='{"tool_executions":[]}'::jsonb,
+                       completed_at=now() WHERE id=$1""",
+                    steps[1]["id"],
+                )
+                await conn.execute(
+                    """UPDATE agent_runs SET status='partial',current_phase='failed',
+                       error_category='tool_selection',completed_at=now() WHERE id=$1""",
+                    run["id"],
+                )
+            return str(run["id"]), str(steps[0]["id"]), str(steps[1]["id"])
+
+        run_id, completed_id, failed_id = client.portal.call(prepare)
+        token = client.post("/auth/token", json={"email": user_id}).json()["access_token"]
+        response = client.post(
+            f"/runs/{run_id}/resume",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"retry_failed_step": True, "step_id": failed_id},
+        )
+        assert response.status_code == 200
+        assert response.json()["reconciliation"]["reason_code"] == "no_write_tool_attempted"
+
+        async def inspect():
+            pool = await get_pool()
+            return [
+                dict(row) for row in await pool.fetch(
+                    """SELECT id,status FROM agent_run_steps
+                       WHERE id=ANY($1::uuid[]) ORDER BY id""",
+                    [completed_id, failed_id],
+                )
+            ]
+
+        statuses = {
+            str(row["id"]): row["status"] for row in client.portal.call(inspect)
+        }
+        assert statuses[completed_id] == "completed"
+        assert statuses[failed_id] == "pending"
 
 
 def test_expired_read_lease_with_exhausted_budget_fails_without_side_effect_risk():

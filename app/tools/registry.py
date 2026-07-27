@@ -177,27 +177,33 @@ def list_calendar_events(start_date:str,end_date:str,calendar_id:str="primary"):
 @tool("get_calendar_event", description="Google Workspace operation")
 def get_calendar_event(event_id:str,calendar_id:str="primary"): return g.calendar_service.events().get(calendarId=calendar_id,eventId=event_id).execute()
 @tool("create_calendar_event", description="Google Workspace operation")
-def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True):
-    request_id = _request_id('calendar',title,start_datetime,end_datetime,attendees,description)
+def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True,calendar_id:str="primary",timezone:str|None=None):
+    request_id = _request_id('calendar',calendar_id,title,start_datetime,end_datetime,attendees,description,timezone)
     existing = g.calendar_service.events().list(
-        calendarId="primary", privateExtendedProperty=f"agentRequestId={request_id}",
+        calendarId=calendar_id, privateExtendedProperty=f"agentRequestId={request_id}",
         maxResults=1, singleEvents=True,
     ).execute().get("items", [])
     if existing:
         return existing[0]
-    body={"summary":title,"start":{"dateTime":start_datetime},"end":{"dateTime":end_datetime},"description":description,"attendees":[{"email":x} for x in attendees or []],"extendedProperties":{"private":{"agentRequestId":request_id}}}
+    body={"summary":title,"start":{"dateTime":start_datetime,**({"timeZone":timezone} if timezone else {})},"end":{"dateTime":end_datetime,**({"timeZone":timezone} if timezone else {})},"description":description,"attendees":[{"email":x} for x in attendees or []],"extendedProperties":{"private":{"agentRequestId":request_id}}}
     if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{request_id}"}}
-    return g.calendar_service.events().insert(calendarId="primary",body=body,conferenceDataVersion=1,sendUpdates="all").execute()
+    return g.calendar_service.events().insert(calendarId=calendar_id,body=body,conferenceDataVersion=1,sendUpdates="all").execute()
 @tool("update_calendar_event", description="Google Workspace operation")
-def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None):
+def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None,calendar_id:str="primary",timezone:str|None=None,attendees:list[str]|None=None,add_meet:bool|None=None):
     body={};
     if title is not None: body["summary"]=title
-    if start_datetime is not None: body["start"]={"dateTime":start_datetime}
-    if end_datetime is not None: body["end"]={"dateTime":end_datetime}
+    if start_datetime is not None: body["start"]={"dateTime":start_datetime,**({"timeZone":timezone} if timezone else {})}
+    if end_datetime is not None: body["end"]={"dateTime":end_datetime,**({"timeZone":timezone} if timezone else {})}
     if description is not None: body["description"]=description
-    return g.calendar_service.events().patch(calendarId="primary",eventId=event_id,body=body).execute()
+    if attendees is not None: body["attendees"]=[{"email":x} for x in attendees]
+    if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{_request_id('calendar-update',calendar_id,event_id)}"}}
+    return g.calendar_service.events().patch(calendarId=calendar_id,eventId=event_id,body=body,conferenceDataVersion=1 if add_meet else 0,sendUpdates="all").execute()
 @tool("delete_calendar_event", description="Google Workspace operation")
-def delete_calendar_event(event_id:str,calendar_id:str="primary"): g.calendar_service.events().delete(calendarId=calendar_id,eventId=event_id).execute(); return "Event deleted"
+def delete_calendar_event(event_id:str,calendar_id:str="primary"):
+    g.calendar_service.events().delete(
+        calendarId=calendar_id, eventId=event_id,
+    ).execute()
+    return {"eventId": event_id, "calendarId": calendar_id, "deleted": True}
 @tool("check_calendar_availability", description="Google Workspace operation")
 def check_calendar_availability(start_datetime:str,end_datetime:str,attendee_emails:list[str]|None=None): return g.calendar_service.freebusy().query(body={"timeMin":start_datetime,"timeMax":end_datetime,"items":[{"id":x} for x in attendee_emails or ["primary"]]}).execute()
 
@@ -231,7 +237,14 @@ def get_drive_file(file_id:str):
 @tool("upload_drive_file", description="Google Workspace operation")
 def upload_drive_file(file_path:str,parent_folder_id:str|None=None,name:str|None=None): return g.drive_service.files().create(body={"name":name or Path(file_path).name,**({"parents":[parent_folder_id]} if parent_folder_id else {})},media_body=MediaFileUpload(file_path),fields="id,name,webViewLink").execute()
 @tool("share_drive_file", description="Google Workspace operation")
-def share_drive_file(file_id:str,email:str,role:str="reader"): return g.drive_service.permissions().create(fileId=file_id,body={"type":"user","role":role,"emailAddress":email},sendNotificationEmail=True).execute()
+def share_drive_file(file_id:str,email:str,role:str="reader",permission_type:str="user"):
+    existing=g.drive_service.permissions().list(fileId=file_id,fields="permissions(id,type,role,emailAddress,domain,deleted)").execute().get("permissions",[])
+    principal_key="domain" if permission_type=="domain" else "emailAddress"
+    for permission in existing:
+        if (permission.get("type")==permission_type and permission.get("role")==role
+                and permission.get(principal_key)==email and not permission.get("deleted")):
+            return permission
+    return g.drive_service.permissions().create(fileId=file_id,body={"type":permission_type,"role":role,principal_key:email},sendNotificationEmail=permission_type=="user",fields="id,type,role,emailAddress,domain,deleted").execute()
 @tool("move_drive_file", description="Google Workspace operation")
 def move_drive_file(file_id:str,new_folder_id:str):
     old=g.drive_service.files().get(fileId=file_id,fields="parents").execute().get("parents",[])

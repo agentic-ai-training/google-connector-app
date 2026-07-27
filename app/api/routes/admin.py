@@ -33,7 +33,12 @@ from app.improvements.candidates import (
     unsupported_candidate_surfaces, valid_candidate_frontend_url,
     validate_candidate_files,
 )
-from app.improvements.builder import store_candidate_checkpoint, store_candidate_draft
+from app.improvements.builder import (
+    effective_builder_token_budget,
+    store_candidate_checkpoint,
+    store_candidate_draft,
+)
+from app.improvements.retry import candidate_retry_decision
 from app.okf.candidates import stage_okf_candidate_bundle
 from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
@@ -91,7 +96,15 @@ def _candidate_build_view(row) -> dict:
     failure = _json_object(checkpoint.get("last_runner_failure"))
     generation = _json_object(checkpoint.get("generation_checkpoint"))
     dispatch = _json_object(checkpoint.get("last_retry_dispatch"))
-    retryable = failure.get("retryable") is True
+    decision = candidate_retry_decision(
+        item,
+        error_type=failure.get("error_type"),
+        contract_errors=failure.get("contract_errors") or [],
+        runner_retryable=(
+            failure.get("runner_retryable", failure.get("retryable")) is True
+        ),
+    )
+    retryable = decision.eligible
     retry_after = failure.get("retry_after_seconds")
     try:
         retry_after = max(60, min(86_400, int(retry_after or 1_800)))
@@ -103,10 +116,14 @@ def _candidate_build_view(row) -> dict:
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
-            "tokens_used", "token_budget", "error_message", "created_at",
+            "tokens_used", "token_budget", "created_at",
             "updated_at", "file_count",
         )
     } | {
+        "error_message": (
+            f"Candidate builder stopped at {failure.get('error_type')}."
+            if failure.get("error_type") else None
+        ),
         "retryable": retryable,
         "retry_count": int(failure.get("retry_count") or 0),
         "retry_stage": failure.get("stage"),
@@ -117,6 +134,39 @@ def _candidate_build_view(row) -> dict:
         "generation_phase": generation.get("phase"),
         "active_role": generation.get("active_role"),
         "next_round": generation.get("next_round"),
+        "base_token_budget": int(item.get("token_budget") or 0),
+        "effective_token_budget": int(
+            generation.get("effective_token_budget")
+            or effective_builder_token_budget(item)
+        ),
+        "cumulative_tokens": int(item.get("tokens_used") or 0),
+        "active_role_tokens": int(generation.get("role_tokens_used") or 0),
+        "remaining_effective_tokens": int(
+            generation.get("remaining_effective_tokens")
+            if generation.get("remaining_effective_tokens") is not None
+            else max(
+                0, effective_builder_token_budget(item)
+                - int(item.get("tokens_used") or 0),
+            )
+        ),
+        "staged_file_count": int(
+            generation.get("staged_file_count")
+            or generation.get("file_count")
+            or item.get("file_count")
+            or 0
+        ),
+        "tool_calls": int(generation.get("tool_calls") or 0),
+        "read_bytes": int(generation.get("read_bytes") or 0),
+        "json_tool_protocol": bool(generation.get("json_tool_protocol")),
+        "last_tool_name": generation.get("last_tool_name"),
+        "contract_errors": (
+            failure.get("contract_errors")
+            or generation.get("last_contract_errors")
+            or []
+        )[:20],
+        "progress_gate": generation.get("progress_gate"),
+        "retry_reason": decision.reason_code,
+        "resume_point": decision.resume_point,
     }
 
 
@@ -178,40 +228,29 @@ async def candidate_builder_input(build_id: str):
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
-            """SELECT b.*,p.proposal_key,p.risk_level FROM candidate_builds b
+            """SELECT b.*,p.proposal_key,p.risk_level,
+                      p.candidate_deployment_id,
+                      (SELECT count(*) FROM candidate_build_files f
+                       WHERE f.build_id=b.id) AS file_count
+               FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
-               WHERE b.id=$1 AND (
-                 b.status IN ('queued','investigating') OR (
-                   b.status='failed' AND b.candidate_commit IS NULL AND
-                   (
-                     b.checkpoint#>>'{last_runner_failure,error_type}' IN
-                       ('APIStatusError','RuntimeError','BadRequestError','NotFoundError',
-                        'history_budget_exhausted')
-                     OR b.checkpoint#>>'{last_runner_failure,error_type}' IN
-                        ('tool_token_budget_exhausted','tool_round_limit_exhausted')
-                     OR (
-                       b.checkpoint#>>'{last_runner_failure,error_type}'=
-                         'candidate_contract_invalid' AND
-                       b.tool_policy_version='bounded-repo-tools-v1'
-                     )
-                     OR (
-                       b.checkpoint#>>'{last_runner_failure,error_type}'=
-                         'tool_generation_failed' AND
-                       b.tool_policy_version IN
-                         ('bounded-repo-tools-v1','bounded-repo-tools-v2-review-envelope')
-                     )
-                     OR (
-                       b.checkpoint#>>'{last_runner_failure,stage}'='submission' AND
-                       b.checkpoint#>>'{last_runner_failure,error_type}'='HTTPStatusError' AND
-                       b.error_message='Candidate callback returned HTTP 422 during submission.'
-                     )
-                   )
-                 )
-               ) FOR UPDATE""",
+               WHERE b.id=$1 AND b.status IN ('queued','failed')
+               FOR UPDATE""",
             build_id,
         )
         if not row:
             raise HTTPException(409, "Candidate build is unavailable or already finalized")
+        if row["status"] == "failed":
+            failure = _json_object(row["checkpoint"]).get("last_runner_failure", {})
+            decision = candidate_retry_decision(
+                dict(row), error_type=failure.get("error_type"),
+                contract_errors=failure.get("contract_errors") or [],
+                runner_retryable=failure.get("runner_retryable") is True,
+            )
+            if not decision.eligible:
+                raise HTTPException(
+                    409, f"Candidate retry is blocked: {decision.reason_code}",
+                )
         await conn.execute(
             """UPDATE candidate_builds SET status='investigating',updated_at=now(),
                  checkpoint=checkpoint||$2::jsonb WHERE id=$1""",
@@ -238,6 +277,7 @@ async def candidate_builder_input(build_id: str):
         "sanitized_input": job["sanitized_input"],
         "generation_checkpoint": generation_checkpoint,
         "checkpoint_files": [dict(item) for item in checkpoint_files],
+        "timeout_seconds": get_settings().candidate_builder_timeout_seconds,
     }}
 
 
@@ -270,16 +310,24 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         build = await conn.fetchrow(
-            """SELECT b.*,p.id proposal_id FROM candidate_builds b
+            """SELECT b.*,p.id proposal_id,p.candidate_deployment_id,
+                      (SELECT count(*) FROM candidate_build_files f
+                       WHERE f.build_id=b.id) AS file_count
+               FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
                WHERE b.id=$1 AND b.status IN ('queued','investigating') FOR UPDATE""",
             build_id,
         )
         if not build:
             raise HTTPException(409, "Candidate build is unavailable or already finalized")
-        state = "queued" if body.retryable else "failed"
+        retry_decision = candidate_retry_decision(
+            dict(build), error_type=body.error_type,
+            contract_errors=body.contract_errors,
+            runner_retryable=body.retryable,
+        )
+        state = "queued" if retry_decision.eligible else "failed"
         retry_after_seconds = body.retry_after_seconds
-        if body.retryable and retry_after_seconds is None:
+        if retry_decision.eligible and retry_after_seconds is None:
             retry_after_seconds = (
                 1_800 if "rate" in body.error_type.casefold() else 300
             )
@@ -287,7 +335,7 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
             "last_runner_failure", {}
         )
         retry_count = int(previous_failure.get("retry_count") or 0) + 1
-        if body.retryable:
+        if retry_decision.eligible:
             # A rolling/daily quota can release only enough capacity for the next
             # partial turn. Avoid repeatedly replaying an entire ephemeral build.
             retry_after_seconds = _candidate_retry_delay(
@@ -296,13 +344,22 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
         checkpoint = {
             "last_runner_failure": {
                 "stage": body.stage, "error_type": body.error_type,
-                "retryable": body.retryable,
+                "retryable": retry_decision.eligible,
+                "runner_retryable": body.retryable,
+                "retry_reason": retry_decision.reason_code,
+                "resume_point": retry_decision.resume_point,
+                "contract_errors": body.contract_errors,
+                "active_role": body.active_role,
+                "next_round": body.next_round,
+                "staged_file_count": body.staged_file_count,
                 "retry_after_seconds": retry_after_seconds,
                 "retry_count": retry_count,
                 "contains_private_evidence": False,
             },
             "last_retry_dispatch": {
-                "state": "waiting_for_retry" if body.retryable else "terminal",
+                "state": (
+                    "waiting_for_retry" if retry_decision.eligible else "terminal"
+                ),
                 "contains_private_evidence": False,
             },
         }
@@ -315,7 +372,8 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
         )
         payload = json.dumps({
             "build_id": build_id, "stage": body.stage,
-            "error_type": body.error_type, "retryable": body.retryable,
+            "error_type": body.error_type, "retryable": retry_decision.eligible,
+            "retry_reason": retry_decision.reason_code,
             "retry_after_seconds": retry_after_seconds,
             "retry_count": retry_count,
             "contains_private_evidence": False,
@@ -331,7 +389,10 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
             build["proposal_id"], payload,
         )
     return {
-        "build_id": build_id, "status": state, "retryable": body.retryable,
+        "build_id": build_id, "status": state,
+        "retryable": retry_decision.eligible,
+        "retry_reason": retry_decision.reason_code,
+        "resume_point": retry_decision.resume_point,
         "retry_after_seconds": retry_after_seconds, "retry_count": retry_count,
     }
 

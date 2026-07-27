@@ -41,6 +41,7 @@ jobs:
           DATABASE_URL: postgresql://agent_user:agent_pass_2024@localhost:5432/agent_db
           ASYNC_DATABASE_URL: postgresql+asyncpg://agent_user:agent_pass_2024@localhost:5432/agent_db
         run: |
+          python -m compileall -q app scripts
           alembic upgrade head
           pytest tests/ -q 2>&1 | tee candidate-tests.log
           python scripts/run_golden_evals.py 2>&1 | tee -a candidate-tests.log
@@ -49,7 +50,6 @@ jobs:
           python scripts/run_context_packing_evals.py 2>&1 | tee -a candidate-tests.log
           python scripts/run_dp_allocation_evals.py 2>&1 | tee -a candidate-tests.log
           python scripts/run_dual_worker_simulation.py 2>&1 | tee -a candidate-tests.log
-          python -m compileall -q app
           python -m flake8 app scripts tests migrations
           bandit -q -r app scripts -ll
           pip-audit -r requirements.txt --progress-spinner off

@@ -17,6 +17,60 @@ _NUMBER = re.compile(r"\b\d+\b")
 _PROVIDER_CODE = re.compile(
     r"(?i)(?:error code|status(?: code)?|http)\s*[:=]?\s*([1-5]\d\d)|\b([1-5]\d\d)\b"
 )
+_SAFE_EVIDENCE_KEYS = frozenset({
+    "service", "operation", "tool", "failed_tools", "verified_tools",
+    "required_tools", "successful_tools", "attempted_tools", "missing_tools",
+    "interrupted_steps", "phase", "role", "round", "next_round",
+    "retry_count", "automatic_retry", "reason", "reason_code", "boundary",
+    "error_type", "provider_status", "source", "last_verified_operation",
+    "progress_gate", "resume_point", "checks", "verification", "context_report",
+})
+
+
+def sanitize_failure_evidence(value, key: str | None = None, depth: int = 0):
+    """Recursively retain only bounded operational facts at the DB boundary."""
+    if depth > 5:
+        return "[redacted]"
+    normalized_key = (key or "").casefold()
+    if any(marker in normalized_key for marker in (
+        "body", "text", "content", "description", "credential", "token",
+        "secret", "prompt", "message", "recipient", "email", "principal",
+    )) and not normalized_key.endswith("_hash"):
+        return "[redacted]"
+    if isinstance(value, dict):
+        output = {}
+        for raw_key, item in list(value.items())[:50]:
+            name = str(raw_key)[:100]
+            lowered = name.casefold()
+            allowed = (
+                name in _SAFE_EVIDENCE_KEYS
+                or lowered.endswith((
+                    "_match", "_count", "_hash", "_tokens", "_budget",
+                    "_bytes", "_status", "_type", "_present", "_required",
+                ))
+                or lowered in {
+                    "match", "active", "deleted", "truncated", "recoverable",
+                    "tool_calls", "read_bytes", "staged_file_count",
+                    "artifact_count", "reconciliation_required",
+                }
+                or lowered.endswith("_id")
+            )
+            if not allowed:
+                continue
+            if lowered.endswith("_id") and item is not None:
+                rendered = str(item)
+                output[name] = f"<opaque:{rendered[-8:]}>"
+            else:
+                output[name] = sanitize_failure_evidence(item, name, depth + 1)
+        return output
+    if isinstance(value, (list, tuple)):
+        return [
+            sanitize_failure_evidence(item, key, depth + 1)
+            for item in list(value)[:50]
+        ]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return str(value)[:200]
 
 
 def sanitize_request_excerpt(message: str) -> str:
@@ -82,6 +136,9 @@ def failure_mechanism(category: str, error: str) -> tuple[str, str | None, bool]
         "authentication": "credential_or_token_rejection",
         "permission": "authorization_or_scope_rejection",
         "verification": "postcondition_mismatch",
+        "tool_selection": "required_write_tool_not_selected",
+        "tool_failure": "write_tool_execution_failure",
+        "postcondition_failure": "postcondition_mismatch",
         "planning": "planner_contract_rejection",
         "embedding": "embedding_pipeline_failure",
     }
@@ -220,7 +277,70 @@ def analyze_failure(
             ),
         ]
         recommended, reason = "A", "Bounded deferred retry is safe for transient, idempotent steps."
-    elif stage == "verification" or category == "verification":
+    elif category == "tool_selection":
+        title = "Required write tool was not selected"
+        root = (
+            "The service agent returned prose without satisfying the trusted "
+            "write-execution contract."
+        )
+        factors = [
+            "A write cannot be complete until every required operation tool succeeds.",
+            "A successful tool call still requires operation-specific readback.",
+        ]
+        options = [
+            _option(
+                "A", "Enforce the write-execution contract",
+                "Constrain one corrective turn to only missing required tools, reject "
+                "a second tool-free answer, and verify the resulting provider state.",
+                ["service agent", "write contract", "durable worker", "verifier",
+                 "no-network replay"],
+                ["A text-only write receives one constrained correction.",
+                 "Correction exposes only missing required tools.",
+                 "A repeated tool-free answer fails as tool_selection.",
+                 "An uncertain attempted write is never repeated.",
+                 "A successful write still requires verified postconditions."],
+                "Addresses the full execution boundary with explicit regression coverage.",
+                automation_eligible=True,
+            ),
+            _option(
+                "B", "Pause tool-free writes for administrator recovery",
+                "Reject prose-only completion immediately and preserve the exact resume point.",
+                ["service agent", "failure taxonomy", "reconciliation", "admin portal"],
+                ["No false success is emitted.", "The failed step is safely resumable."],
+                "Simpler and safer, but misses the bounded automatic correction opportunity.",
+                automation_eligible=True,
+            ),
+        ]
+        recommended, reason = (
+            "A", "One constrained correction restores valid requests without allowing loops."
+        )
+    elif category == "tool_failure":
+        title = "Write tool execution failure"
+        root = "A required write tool returned explicit failure evidence."
+        factors = ["The attempted write must not be repeated until its outcome is reconciled."]
+        options = [
+            _option(
+                "A", "Add operation-specific execution recovery",
+                "Classify provider failures and reconcile idempotent state before retry.",
+                ["tool adapter", "retry policy", "reconciliation", "replay"],
+                ["Explicit failures retain their provider class.",
+                 "Uncertain writes are never repeated."],
+                "Improves recovery while preserving side-effect safety.",
+                automation_eligible=True,
+            ),
+            _option(
+                "B", "Require manual resume for this operation",
+                "Preserve all verified work and expose the exact failed operation.",
+                ["durable resume", "admin portal"],
+                ["Completed steps remain complete.", "The failure remains actionable."],
+                "Safest fallback, with more operator involvement.",
+                automation_eligible=True,
+            ),
+        ]
+        recommended, reason = "A", "Typed recovery can safely handle known provider outcomes."
+    elif stage == "verification" or category in {
+        "verification", "postcondition_failure",
+    }:
         title = "Result verification failure"
         root = "Execution returned, but required postcondition evidence was missing or incorrect."
         factors = ["An HTTP success response is not sufficient proof of task completion."]
@@ -551,7 +671,7 @@ async def record_failure_incident(
     boundary = ":".join((component, service or "none", operation or "none"))
     from app.config.settings import get_settings
     source_version = get_settings().deployment_version
-    safe_evidence = evidence or {}
+    safe_evidence = sanitize_failure_evidence(evidence or {})
     payload = {
         "occurrence_key": occurrence_key, "run_id": run_id,
         "session_id": session_id, "user_id": user_id,

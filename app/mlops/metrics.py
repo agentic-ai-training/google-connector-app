@@ -81,6 +81,51 @@ model_context_preflight_compactions = Counter(
 candidate_build_queue = Gauge(
     "agent_candidate_builds", "Groq-only candidate builds by durable state", ["status"],
 )
+tool_selection_corrections = Counter(
+    "agent_tool_selection_corrections_total",
+    "Write steps given one constrained missing-tool correction",
+    ["service", "operation"],
+)
+tool_selection_failures = Counter(
+    "agent_tool_selection_failures_total",
+    "Write steps terminated because required tools were not selected",
+    ["service", "operation"],
+)
+postcondition_failures = Counter(
+    "agent_postcondition_failures_total",
+    "Write readback mismatches by stable operation boundary",
+    ["service", "operation"],
+)
+write_reconciliation = Counter(
+    "agent_write_reconciliation_total",
+    "Write reconciliation decisions",
+    ["service", "operation", "outcome"],
+)
+candidate_progress_gates = Counter(
+    "agent_candidate_progress_gates_total",
+    "Candidate builder progress gates",
+    ["role", "gate"],
+)
+candidate_checkpoint_resumes = Counter(
+    "agent_candidate_checkpoint_resumes_total",
+    "Candidate builder checkpoint resumes",
+    ["role", "phase"],
+)
+candidate_budget_ratio = Gauge(
+    "agent_candidate_budget_ratio",
+    "Cumulative candidate tokens divided by effective budget",
+    ["mode", "status"],
+)
+candidate_progress_state = Gauge(
+    "agent_candidate_progress_state",
+    "Candidate builds at each bounded role and progress gate",
+    ["role", "gate"],
+)
+candidate_retry_state = Gauge(
+    "agent_candidate_retry_state",
+    "Candidate builds by server-authoritative retry outcome",
+    ["eligible", "reason"],
+)
 failure_theme_queue = Gauge(
     "agent_failure_themes", "Cross-cluster architectural themes by state", ["status"],
 )

@@ -126,10 +126,25 @@
       "type":"table","title":"Trusted OKF publication and candidate scope","gridPos":{"h":11,"w":24,"x":0,"y":133},
       "datasource":{"type":"postgres","uid":"postgres-reporting"},
       "targets":[{"format":"table","rawSql":"SELECT bundle_hash,source_version,publication_status,approved_by,approved_at,proposal_key,proposal_status,candidate_version,applicability,created_at FROM reporting.okf_candidate_publication ORDER BY created_at DESC LIMIT 150","refId":"A"},{"format":"table","rawSql":"SELECT proposal_key,candidate_kind,candidate_state,status,applicability,canary_status,routing_enabled,traffic_percent,control_version,routed_candidate_version FROM reporting.candidate_applicability ORDER BY proposal_key DESC LIMIT 150","refId":"B"}]
+    },
+    {
+      "type":"timeseries","title":"Write selection corrections versus terminal failures","gridPos":{"h":8,"w":8,"x":0,"y":144},
+      "datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"expr":"sum by(service,operation)(rate(agent_tool_selection_corrections_total[15m]))","legendFormat":"corrected {{service}}/{{operation}}"},{"expr":"sum by(service,operation)(rate(agent_tool_selection_failures_total[15m]))","legendFormat":"failed {{service}}/{{operation}}"}]
+    },
+    {
+      "type":"timeseries","title":"Postcondition failures by operation","gridPos":{"h":8,"w":8,"x":8,"y":144},
+      "datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"expr":"sum by(service,operation)(rate(agent_postcondition_failures_total[15m]))","legendFormat":"{{service}}/{{operation}}"}]
+    },
+    {
+      "type":"timeseries","title":"Write reconciliation outcomes","gridPos":{"h":8,"w":8,"x":16,"y":144},
+      "datasource":{"type":"prometheus","uid":"prometheus"},
+      "targets":[{"expr":"sum by(service,operation,outcome)(increase(agent_write_reconciliation_total[1h]))","legendFormat":"{{outcome}} {{service}}/{{operation}}"}]
     }
   ],
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":6
+  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":7
 }

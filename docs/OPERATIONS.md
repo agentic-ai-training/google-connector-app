@@ -172,3 +172,38 @@ NEON_DATABASE_URL=... python scripts/backfill_legacy_rag.py --user-id owner@exam
 This reuses existing vectors, assigns an explicit ACL owner, and labels rows
 `legacy-import-<source>-v1`. As each source is refreshed, the v2 source-aware ingester
 tombstones the legacy chunk. Roll back only this import with `--rollback`.
+
+## Write failure and reconciliation runbook
+
+- `tool_selection`: the model never invoked the required write tool after one
+  missing-tool-only correction. Confirm the service/operation contract and allowed-tool
+  subset, then resume the exact failed step. No provider write was attempted.
+- `tool_failure`: a required tool returned explicit or uncertain failure evidence. Do
+  not click repeatedly. Inspect provider status and the artifact ledger; resume only
+  after reconciliation reports `safe_to_retry` or `already_completed`.
+- `postcondition_failure`: provider readback did not match the intended state. Compare
+  the content-free verifier checks and use the operation-specific recovery action.
+- `manual_required`: provider acceptance cannot be established safely, or an append
+  cannot be matched to an exact range. Preserve the artifact, inspect Google directly,
+  and record a cleanup/recovery decision. Never edit run rows as normal recovery.
+
+`POST /runs/{run_id}/resume` accepts `step_id`. A 409 includes a bounded
+`reason_code`; it means no external write was repeated. Completed dependencies must
+remain `completed` before and after a retry.
+
+## Candidate builder progress runbook
+
+Interpret budgets separately:
+
+- Base: the stored per-job budget and immutable audit value.
+- Effective: the approved builder-only fallback ceiling.
+- Cumulative: all accepted author/reviewer model usage.
+- Current role: usage and remaining authority for the active role.
+
+The portal shows the phase, role, next round, staged files, tool calls, read bytes,
+protocol, progress gate, retry reason, and exact resume point. `files_required`,
+`independent_review_rejected`, unsafe path/secret policy failures, invalid checkpoints,
+and exhausted authority are terminal. Provider quota/network errors may resume from a
+valid checkpoint; an `uncheckpointed_timeout` does not claim resumable progress.
+Checkpoint messages, file bodies, raw provider responses, and Workspace content must
+never appear in the portal.

@@ -16,6 +16,9 @@ FAILURE_RECOMMENDATIONS = {
     "authentication": "Improve OAuth scope diagnostics and reconnect guidance.",
     "permission": "Validate required scopes and sharing policy before execution.",
     "verification": "Strengthen tool-specific resource and read-after-write postconditions.",
+    "tool_selection": "Enforce the trusted write-tool contract with one constrained correction.",
+    "tool_failure": "Reconcile an attempted write before any operation-specific retry.",
+    "postcondition_failure": "Compare expected provider state with content-free readback.",
     "embedding": "Tune embedding backpressure, batching, and dead-letter recovery.",
     "execution": "Add a golden replay case and constrain the planner/tool policy.",
 }
@@ -103,7 +106,17 @@ async def analyze_recent_failures(pool) -> int:
     """Backfill any missed terminal run once; live failures are recorded immediately."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """SELECT r.* FROM agent_runs r
+            """SELECT r.*,failed.service AS failed_service,
+                      failed.operation AS failed_operation,
+                      failed.error_category AS failed_step_category,
+                      failed.error_message AS failed_step_error,
+                      failed.title AS failed_step_title
+               FROM agent_runs r
+               LEFT JOIN LATERAL (
+                 SELECT service,operation,error_category,error_message,title
+                 FROM agent_run_steps s WHERE s.run_id=r.id AND s.status='failed'
+                 ORDER BY sequence_no LIMIT 1
+               ) failed ON TRUE
                WHERE r.status IN ('failed','partial')
                  AND r.completed_at >= now()-interval '7 days'
                  AND NOT EXISTS (
@@ -114,14 +127,35 @@ async def analyze_recent_failures(pool) -> int:
     for row in rows:
         run = dict(row)
         incident = _json_object(run.get("incident_summary"))
+        category = (
+            run.get("failed_step_category")
+            or run.get("error_category")
+            or "execution"
+        )
+        stage = (
+            "verification"
+            if category in {"verification", "postcondition_failure"} else "execution"
+        )
         try:
             await record_failure_incident(
                 pool, occurrence_key=f"run:{run['id']}:backfill", run_id=run["id"],
                 session_id=run["session_id"], user_id=run["user_id"],
                 message=run["request"], intent_kind=run.get("intent_kind") or "workspace_action",
-                stage="execution", category=run.get("error_category") or "execution",
-                component="durable_worker", error=run.get("error_message") or "unknown failure",
-                breaking_point=incident.get("breaking_point"),
+                stage=stage, category=category,
+                component=(
+                    "step_verifier" if category == "postcondition_failure"
+                    else "service_agent" if category in {"tool_selection", "tool_failure"}
+                    else "durable_worker"
+                ),
+                error=(
+                    run.get("failed_step_error")
+                    or run.get("error_message") or "unknown failure"
+                ),
+                service=run.get("failed_service"),
+                operation=run.get("failed_operation"),
+                breaking_point=(
+                    run.get("failed_step_title") or incident.get("breaking_point")
+                ),
                 completion={
                     "technical": _number(run.get("technical_completion"), 0),
                     "functional": _number(run.get("functional_completion"), 0),
@@ -174,6 +208,21 @@ async def analyze_cross_cluster_themes(pool) -> int:
                 "planner-tool-contract",
                 "Align planning and executable tool contracts",
                 "Several concrete planning/execution clusters indicate an architectural contract gap.",
+            )
+        elif mechanism in {
+            "required_write_tool_not_selected",
+            "write_tool_execution_failure",
+            "postcondition_mismatch",
+        }:
+            family = (
+                cluster.get("service") or "workspace",
+                cluster.get("operation") or "write",
+            )
+            theme = (
+                f"write-execution-contract:{family[0]}:{family[1]}",
+                "Enforce and verify the write execution contract",
+                "Compatible write-selection, execution, and postcondition clusters "
+                "share an operation boundary that needs one replay-backed contract.",
             )
         else:
             continue

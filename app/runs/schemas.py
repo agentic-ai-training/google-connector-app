@@ -1,6 +1,9 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+SafeDiagnostic = Annotated[str, Field(min_length=1, max_length=100)]
 
 
 class PlanStep(BaseModel):
@@ -47,6 +50,7 @@ class RunDecision(BaseModel):
 
 class RunResume(BaseModel):
     retry_failed_step: bool = True
+    step_id: str | None = Field(default=None, max_length=100)
 
 
 class RunClarification(BaseModel):
@@ -185,6 +189,18 @@ class CandidateBuildCheckpoint(BaseModel):
     role_models_used: list[str] = Field(default_factory=list, max_length=5)
     models_used: list[str] = Field(default_factory=list, max_length=5)
     tokens_used: int = Field(ge=0)
+    base_token_budget: int | None = Field(default=None, ge=0)
+    effective_token_budget: int | None = Field(default=None, ge=0)
+    remaining_effective_tokens: int | None = Field(default=None, ge=0)
+    active_role_token_budget: int | None = Field(default=None, ge=0)
+    remaining_active_role_tokens: int | None = Field(default=None, ge=0)
+    staged_file_count: int | None = Field(default=None, ge=0, le=50)
+    last_contract_errors: list[SafeDiagnostic] = Field(
+        default_factory=list, max_length=20,
+    )
+    last_tool_name: str | None = Field(default=None, max_length=100)
+    progress_gate: str | None = Field(default=None, max_length=100)
+    resume_point: str | None = Field(default=None, max_length=200)
 
 
 class CandidateBuildFailure(BaseModel):
@@ -193,3 +209,8 @@ class CandidateBuildFailure(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     retryable: bool
     retry_after_seconds: int | None = Field(default=None, ge=1, le=86_400)
+    contract_errors: list[SafeDiagnostic] = Field(default_factory=list, max_length=20)
+    active_role: str | None = Field(default=None, max_length=100)
+    next_round: int | None = Field(default=None, ge=0, le=8)
+    staged_file_count: int | None = Field(default=None, ge=0, le=50)
+    resume_point: str | None = Field(default=None, max_length=200)

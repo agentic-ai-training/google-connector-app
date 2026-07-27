@@ -71,3 +71,38 @@ DP context packing, workflow choice, and periodic quota allocation are offline o
 feature-flagged candidate policies. They filter ACL/risk-invalid choices first, stay
 within hard resource bounds, and fall back to deterministic greedy/queue policies. They
 cannot relax write approval, OAuth, verification, or side-effect constraints.
+
+## Write execution and recovery contracts
+
+The planner's `allowed_tools` list is a security ceiling: an agent can never call outside
+it. A `WriteContract` is a separate completion obligation: its required tools must be a
+subset of that ceiling and must succeed in the declared order/mode. A write agent that
+returns prose receives exactly one correction with only the missing required tools bound.
+A second tool-free answer is `tool_selection`; an attempted failed or uncertain write is
+`tool_failure` and is never automatically repeated.
+
+Provider success is followed by operation-specific readback. Sheets compare normalized
+values and ranges, Calendar compares time/timezone/attendees/Meet state, Chat compares
+resource/destination/text hash/references, and Drive sharing compares the permission
+type/role/principal. Mismatch is `postcondition_failure`. Durable evidence contains IDs,
+counts, booleans, and hashes—not cell values, messages, titles, or recipients.
+
+Resume is an explicit state machine:
+
+```text
+failed exact step -> reconciling
+  -> safe_to_retry: requeue only that step
+  -> already_completed: mark it complete and continue downstream
+  -> manual_required: block external repetition and retain evidence
+```
+
+Completed dependencies and verified artifacts never reset. Reconciliation performs no
+external call while holding a long database transaction.
+
+Candidate generation uses the same durable-authority principle. Every accepted turn
+checkpoints its role, next round, counters, content-free contract errors, staged-file
+count, and separate base/effective/current-role budgets. Early, restricted, hard-file,
+and finalization gates prevent investigation-only loops. The runner may suggest a retry,
+but the server recomputes eligibility from the checkpoint, remaining round/token
+authority, terminal policy codes, and absence of a commit/deployment. A valid reviewer
+checkpoint resumes at its persisted round with frozen author files.
