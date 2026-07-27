@@ -8,6 +8,8 @@ from app.runs.informational import (
     classify_workspace_intent,
     approved_okf_capability_sources,
 )
+from app.tools.contracts import WRITE_TOOLS, write_contract_for
+from app.tools.registry import registered_tool_names
 
 SERVICES = {
     "gmail": ("gmail", "email", "emails", "mail", "mails"),
@@ -303,6 +305,16 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
             dependencies=dependencies,
             arguments={"request": message, "service": service,
                        "allowed_tools": OPERATION_TOOLS.get((service, operation), []),
+                       "write_contract": (
+                           {
+                               "required_tools": list(contract.required_tools),
+                               "completion_mode": contract.completion_mode,
+                           }
+                           if (contract := write_contract_for(
+                               service, operation,
+                               OPERATION_TOOLS.get((service, operation), []),
+                           )) else None
+                       ),
                        "tool_arguments": exact_tool_arguments,
                        "workflow_hints": {
                            "extract_unique_sender_names": service == "gmail" and "people" in message.lower(),
@@ -343,6 +355,7 @@ def validate_plan(plan: ExecutionPlan) -> list[str]:
     if len(keys) != len(set(keys)):
         errors.append("Step identifiers must be unique")
     known = set(keys)
+    registered = set(registered_tool_names())
     for step in plan.steps:
         missing = set(step.dependencies) - known
         if missing:
@@ -354,6 +367,28 @@ def validate_plan(plan: ExecutionPlan) -> list[str]:
         allowed = OPERATION_TOOLS.get((step.service, step.operation))
         if step.service != "general" and not allowed:
             errors.append(f"{step.id} uses unknown operation {step.operation}")
+            continue
+        allowed = list(step.arguments.get("allowed_tools") or allowed or [])
+        projected = step.arguments.get("write_contract")
+        required = list((projected or {}).get("required_tools") or [])
+        if step.read_only and any(tool in WRITE_TOOLS for tool in required):
+            errors.append(f"{step.id} is read-only but requires a write tool")
+        if not step.read_only:
+            contract = write_contract_for(step.service, step.operation, allowed)
+            if not contract or not required:
+                errors.append(f"{step.id} has no valid required write contract")
+            elif (
+                required != list(contract.required_tools)
+                or (projected or {}).get("completion_mode") != contract.completion_mode
+            ):
+                errors.append(f"{step.id} has a mismatched write contract")
+        if not set(required).issubset(allowed):
+            errors.append(f"{step.id} requires tools outside its allowed tool ceiling")
+        unknown_required = set(required) - registered
+        if unknown_required:
+            errors.append(
+                f"{step.id} requires unregistered tools: {sorted(unknown_required)}"
+            )
     positions = {key: index for index, key in enumerate(keys)}
     for step in plan.steps:
         if any(positions[dependency] >= positions[step.id] for dependency in step.dependencies):

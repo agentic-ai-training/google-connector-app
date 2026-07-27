@@ -46,3 +46,27 @@ class ModelContextLengthFailure(ExecutionFailure):
             provider_param="messages",
             evidence=evidence,
         )
+
+
+class ToolSelectionFailure(ExecutionFailure):
+    def __init__(self, message: str, *, evidence: dict[str, Any] | None = None):
+        super().__init__(
+            message, category="tool_selection", component="service_agent",
+            boundary="write_tool_selection", evidence=evidence,
+        )
+
+
+class ToolExecutionFailure(ExecutionFailure):
+    def __init__(self, message: str, *, evidence: dict[str, Any] | None = None):
+        super().__init__(
+            message, category="tool_failure", component="service_agent",
+            boundary="write_tool_execution", evidence=evidence,
+        )
+
+
+class PostconditionFailure(ExecutionFailure):
+    def __init__(self, message: str, *, evidence: dict[str, Any] | None = None):
+        super().__init__(
+            message, category="postcondition_failure", component="step_verifier",
+            boundary="postcondition_verification", evidence=evidence,
+        )

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -36,7 +37,12 @@ from app.runs.schemas import (
     RunResume,
 )
 from app.improvements.failure_intelligence import record_failure_incident
+from app.mlops.metrics import write_reconciliation
 from app.runs.planner import classify_request, infer_operation
+from app.runs.reconciliation import (
+    ReconciliationDecision,
+    reconcile_failed_step,
+)
 from app.improvements.routing import (
     resolve_candidate_api_target,
     resolve_run_candidate_api_target,
@@ -48,6 +54,10 @@ sessions_router = APIRouter(prefix="/sessions", tags=["runs"])
 
 def _serializable(value):
     return json.loads(json.dumps(value, default=str))
+
+
+def _decision_payload(decision: ReconciliationDecision) -> dict:
+    return _serializable(asdict(decision))
 
 
 def _routing_plan(message: str) -> dict:
@@ -118,6 +128,117 @@ async def _forward_to_candidate(target, path: str, request: Request, payload: di
 def _cleanup_hash(user_id: str, artifact_id: str, external_id: str, action: str) -> str:
     value = f"{user_id}\0{artifact_id}\0{external_id}\0{action}"
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+async def _reconcile_and_resume(
+    pool, run_id: str, user_id: str, step_id: str | None = None,
+) -> ReconciliationDecision:
+    """Reconcile one failed step, then mutate only the proven-safe resume point."""
+    async with pool.acquire() as conn, conn.transaction():
+        run_row = await conn.fetchrow(
+            """SELECT * FROM agent_runs WHERE id=$1 AND user_id=$2
+               AND status IN ('failed','partial') FOR UPDATE""",
+            run_id, user_id,
+        )
+        if not run_row:
+            raise HTTPException(409, "Run cannot be resumed")
+        if step_id:
+            step_row = await conn.fetchrow(
+                """SELECT * FROM agent_run_steps
+                   WHERE id=$1 AND run_id=$2 AND status='failed' FOR UPDATE""",
+                step_id, run_id,
+            )
+        else:
+            step_row = await conn.fetchrow(
+                """SELECT * FROM agent_run_steps
+                   WHERE run_id=$1 AND status='failed'
+                   ORDER BY sequence_no LIMIT 1 FOR UPDATE""",
+                run_id,
+            )
+        if not step_row:
+            raise HTTPException(409, "No matching failed step can be resumed")
+        artifacts = await conn.fetch(
+            "SELECT * FROM agent_artifacts WHERE run_id=$1 AND step_id=$2",
+            run_id, step_row["id"],
+        )
+        await conn.execute(
+            """UPDATE agent_runs SET current_phase='reconciling',
+               current_step_id=$1 WHERE id=$2""",
+            step_row["id"], run_id,
+        )
+
+    run = dict(run_row)
+    step = dict(step_row)
+    prior_executions = (
+        (step.get("output_data") or {}).get("tool_executions", [])
+        if isinstance(step.get("output_data"), dict) else []
+    )
+    credentials_token = None
+    if prior_executions and not step.get("read_only"):
+        credentials = await load_google_credentials(pool, user_id)
+        if credentials is not None:
+            credentials_token = request_google_credentials.set(credentials)
+    try:
+        decision = await reconcile_failed_step(
+            run, step, [dict(item) for item in artifacts],
+        )
+    finally:
+        if credentials_token is not None:
+            request_google_credentials.reset(credentials_token)
+
+    async with pool.acquire() as conn, conn.transaction():
+        locked = await conn.fetchrow(
+            """SELECT status,error_category FROM agent_run_steps
+               WHERE id=$1 AND run_id=$2 FOR UPDATE""",
+            step_row["id"], run_id,
+        )
+        if not locked or locked["status"] != "failed":
+            raise HTTPException(409, "The failed step changed during reconciliation")
+        if decision.state == "already_completed":
+            await conn.execute(
+                """UPDATE agent_run_steps SET status='completed',
+                   error_category=NULL,error_message=NULL,completed_at=COALESCE(completed_at,now())
+                   WHERE id=$1""",
+                step_row["id"],
+            )
+        elif decision.state == "safe_to_retry":
+            await conn.execute(
+                """UPDATE agent_run_steps SET status='pending',started_at=NULL,
+                   completed_at=NULL,error_category=NULL,error_message=NULL WHERE id=$1""",
+                step_row["id"],
+            )
+        else:
+            await conn.execute(
+                """UPDATE agent_runs SET current_phase='reconciliation',
+                   current_step_id=$1,error_category='worker_reconciliation',
+                   error_message=$2 WHERE id=$3""",
+                step_row["id"], decision.reason_code, run_id,
+            )
+        if decision.state != "manual_required":
+            await conn.execute(
+                """UPDATE agent_runs SET status='queued',current_phase='queued',
+                   completed_at=NULL,error_category=NULL,error_message=NULL,
+                   current_step_id=NULL,lease_owner=NULL,lease_expires_at=NULL,
+                   side_effect_integrity=100 WHERE id=$1 AND user_id=$2""",
+                run_id, user_id,
+            )
+    await append_event(
+        pool, run_id, user_id, "run_reconciled",
+        step_id=step_row["id"], phase="reconciliation",
+        message=f"Resume decision: {decision.reason_code}",
+        payload={
+            "state": decision.state,
+            "reason_code": decision.reason_code,
+            "resume_step_id": decision.resume_step_id,
+            "evidence": decision.evidence,
+        },
+    )
+    write_reconciliation.labels(
+        step.get("service") or "unknown",
+        step.get("operation") or "unknown",
+        decision.state,
+    ).inc()
+    return decision
 
 
 def _google_cleanup(artifact: dict, action: str) -> dict:
@@ -337,34 +458,21 @@ async def stop_run(run_id: str, request: Request):
 @router.post("/{run_id}/resume")
 async def resume_run(run_id: str, body: RunResume, request: Request):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        reconciliation = await conn.fetchval(
-            """SELECT error_category='worker_reconciliation' FROM agent_runs
-               WHERE id=$1 AND user_id=$2""",
-            run_id, request.state.user_id,
-        )
-        if reconciliation:
-            raise HTTPException(
-                409,
-                "Automatic resume is blocked because an external write may already have "
-                "completed. Reconcile the Google resource before creating a replacement run.",
-            )
-        result = await conn.execute(
-            """UPDATE agent_runs SET status='queued',current_phase='queued',
-               completed_at=NULL,error_category=NULL,error_message=NULL,
-               lease_owner=NULL,lease_expires_at=NULL
-               WHERE id=$1 AND user_id=$2 AND status IN ('failed','partial')""",
-            run_id, request.state.user_id,
-        )
-        if result.endswith("0"):
-            raise HTTPException(409, "Run cannot be resumed")
-        if body.retry_failed_step:
-            await conn.execute(
-                """UPDATE agent_run_steps SET status='pending',error_category=NULL,
-                   error_message=NULL WHERE run_id=$1 AND status='failed'""",
-                run_id,
-            )
-    return {"run_id": run_id, "status": "queued"}
+    if not body.retry_failed_step:
+        raise HTTPException(409, "A failed step must be selected for safe resume")
+    decision = await _reconcile_and_resume(
+        pool, run_id, request.state.user_id, body.step_id,
+    )
+    if decision.state == "manual_required":
+        raise HTTPException(409, {
+            "message": "Automatic resume requires manual reconciliation.",
+            "reason_code": decision.reason_code,
+            "resume_step_id": decision.resume_step_id,
+        })
+    return {
+        "run_id": run_id, "status": "queued",
+        "reconciliation": _decision_payload(decision),
+    }
 
 
 @router.post("/{run_id}/artifacts/{artifact_id}/cleanup-request")
@@ -437,6 +545,7 @@ async def decide_artifact_cleanup(
     async with pool.acquire() as conn, conn.transaction():
         cleanup = await conn.fetchrow(
             """SELECT c.*,a.artifact_type,a.external_id,a.metadata,a.safe_to_delete
+                   ,a.step_id
                FROM artifact_cleanup_requests c
                JOIN agent_artifacts a ON a.id=c.artifact_id
                WHERE c.artifact_id=$1 AND c.run_id=$2 AND c.user_id=$3
@@ -468,19 +577,23 @@ async def decide_artifact_cleanup(
     action = cleanup["action"]
     try:
         if action == "retry_population":
-            async with pool.acquire() as conn, conn.transaction():
-                await conn.execute(
-                    """UPDATE agent_run_steps SET status='pending',error_category=NULL,
-                       error_message=NULL WHERE run_id=$1 AND status='failed'""",
-                    run_id,
+            decision = await _reconcile_and_resume(
+                pool, run_id, request.state.user_id,
+                str(cleanup["step_id"]) if cleanup["step_id"] else None,
+            )
+            if decision.state == "manual_required":
+                result = {
+                    "run_id": run_id, "queued": False,
+                    "reason_code": decision.reason_code,
+                }
+                cleanup_state = "manual_required"
+                raise RuntimeError(
+                    f"Manual reconciliation required: {decision.reason_code}"
                 )
-                await conn.execute(
-                    """UPDATE agent_runs SET status='queued',current_phase='queued',
-                       completed_at=NULL,error_category=NULL,error_message=NULL,
-                       lease_owner=NULL,lease_expires_at=NULL WHERE id=$1 AND user_id=$2""",
-                    run_id, request.state.user_id,
-                )
-            result = {"run_id": run_id, "queued": True}
+            result = {
+                "run_id": run_id, "queued": True,
+                "reconciliation": _decision_payload(decision),
+            }
             cleanup_state = "population_retried"
         else:
             credentials = await load_google_credentials(pool, request.state.user_id)

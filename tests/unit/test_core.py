@@ -70,11 +70,13 @@ from app.improvements.candidates import (
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
     _groq_tool_json, generate_candidate_draft,
+    CandidateBuilderFailure, builder_budget_snapshot,
     candidate_contract_errors, candidate_model_order, candidate_review_projection,
     choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
     normalize_candidate_contract, reviewer_contract_errors, groq_bad_request_code,
 )
+from app.improvements.retry import candidate_retry_decision
 from app.improvements.builder_tools import (
     BoundedRepositoryTools, BuilderToolLimitError,
 )
@@ -96,6 +98,69 @@ def test_context_packer_orders_by_score():
         {"source": "high", "content": "first", "score": 0.9},
     ])
     assert text.index("first") < text.index("second")
+
+
+def test_candidate_budget_snapshot_keeps_base_and_effective_separate(monkeypatch):
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "openai/gpt-oss-20b")
+    monkeypatch.setenv("CANDIDATE_BUILDER_MAX_EFFECTIVE_TOKEN_BUDGET", "48000")
+    get_settings.cache_clear()
+    try:
+        snapshot = builder_budget_snapshot(
+            {"model_name": "quality", "token_budget": 12_000},
+            cumulative_tokens=9_420, active_role_tokens=2_110,
+            active_role_budget=10_000,
+        )
+        assert snapshot["base_token_budget"] == 12_000
+        assert snapshot["effective_token_budget"] == 48_000
+        assert snapshot["remaining_effective_tokens"] == 38_580
+        assert snapshot["remaining_active_role_tokens"] == 7_890
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_retry_requires_safe_checkpoint_and_blocks_policy_failures(monkeypatch):
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    job = {
+        "model_name": "quality", "token_budget": 12_000, "tokens_used": 1_000,
+        "candidate_commit": None, "candidate_deployment_id": None,
+        "checkpoint": {"generation_checkpoint": {
+            "phase": "role_in_progress",
+            "active_role": "independent_safety_reviewer",
+            "next_round": 2, "messages": [{"role": "user", "content": "bounded"}],
+            "file_count": 2,
+        }},
+    }
+    try:
+        decision = candidate_retry_decision(
+            job, error_type="candidate_contract_invalid", runner_retryable=True,
+        )
+        assert decision.eligible
+        assert decision.resume_point["next_round"] == 2
+        rejected = candidate_retry_decision(
+            job, error_type="independent_review_rejected", runner_retryable=True,
+        )
+        assert not rejected.eligible
+        assert rejected.reason_code == "independent_review_rejected"
+        no_checkpoint = candidate_retry_decision(
+            {**job, "checkpoint": {}},
+            error_type="candidate_contract_invalid", runner_retryable=True,
+        )
+        assert not no_checkpoint.eligible
+    finally:
+        get_settings.cache_clear()
+
+
+def test_files_required_failure_is_typed_and_content_free():
+    failure = CandidateBuilderFailure(
+        "files_required", contract_errors=["files_required"],
+        role="coordinator", round_number=7, staged_file_count=0,
+    )
+    assert runtime_failure_code(failure) == "files_required"
+    payload = failure_payload(failure, "generation")
+    assert payload["contract_errors"] == ["files_required"]
+    assert payload["active_role"] == "coordinator"
+    assert "content" not in payload
 
 
 def test_candidate_runtime_surfaces_are_explicit_and_supported():
@@ -1135,7 +1200,8 @@ def test_candidate_reviewer_uses_manifest_and_bounded_staged_reads(tmp_path):
     projected = candidate_review_projection({"files": tools.staged_files()})
     assert projected["files"][0]["content_chars"] > 10_000
     assert len(json.dumps(projected)) < 2_000
-    assert "line = 1" in projected["files"][0]["preview"]
+    assert "preview" not in projected["files"][0]
+    assert "line = 1" not in json.dumps(projected)
 
     staged = tools.execute("read_staged_candidate_file", {
         "path": "app/generated.py", "start_line": 10, "end_line": 20,
@@ -1155,9 +1221,9 @@ def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
     }
     timeout = failure_payload(TimeoutError("private timing detail"), "generation")
     assert timeout == {
-        "stage": "generation", "error_type": "TimeoutError",
-        "message": "TimeoutError during candidate generation.",
-        "retryable": True, "retry_after_seconds": None,
+        "stage": "generation", "error_type": "uncheckpointed_timeout",
+        "message": "Candidate generation stopped at uncheckpointed_timeout.",
+        "retryable": False, "retry_after_seconds": None,
     }
 
     from groq import RateLimitError
@@ -1728,6 +1794,177 @@ async def test_service_node_executes_tool(monkeypatch):
     assert result["output"] == "verified"
     assert result["tool_results"] == [{"echo": "ok"}]
     assert result["task_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_write_service_gets_one_missing_tool_only_correction(monkeypatch):
+    bound = []
+
+    @tool(description="Required write")
+    def required_write(value: str):
+        return {"id": "resource-1", "value": value}
+
+    @tool(description="Unrelated write")
+    def unrelated_write():
+        return {"id": "wrong"}
+
+    class FakeLLM:
+        calls = 0
+
+        def bind_tools(self, tools):
+            bound.append([item.name for item in tools])
+            return self
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return AIMessage(content="done")
+            if self.calls == 2:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "required_write", "args": {"value": "ok"},
+                    "id": "call-1", "type": "tool_call",
+                }])
+            return AIMessage(content="verified")
+
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"sheets": [required_write, unrelated_write]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
+    result = await make_service_node("sheets")({
+        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "allowed_tools": ["required_write", "unrelated_write"],
+        "requires_write": True, "operation": "write",
+        "expected_write_tools": ["required_write"], "write_completion_mode": "all",
+        "session_id": "test",
+    })
+    assert result["task_complete"] is True
+    assert bound[0] == ["required_write", "unrelated_write"]
+    assert bound[1] == ["required_write"]
+
+
+@pytest.mark.asyncio
+async def test_second_tool_free_write_answer_is_tool_selection(monkeypatch):
+    @tool(description="Required write")
+    def required_write():
+        return {"id": "resource-1"}
+
+    class FakeLLM:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="done")
+
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"sheets": [required_write]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
+    result = await make_service_node("sheets")({
+        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "allowed_tools": ["required_write"], "requires_write": True,
+        "operation": "write", "expected_write_tools": ["required_write"],
+        "write_completion_mode": "all", "session_id": "test",
+    })
+    assert result["task_complete"] is False
+    assert result["error_category"] == "tool_selection"
+    assert result["error_boundary"] == "write_tool_selection"
+
+
+@pytest.mark.asyncio
+async def test_failed_write_tool_is_not_repeated(monkeypatch):
+    calls = 0
+
+    @tool(description="Required write")
+    def required_write():
+        nonlocal calls
+        calls += 1
+        return {"error": "provider rejected"}
+
+    class FakeLLM:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            return AIMessage(content="", tool_calls=[{
+                "name": "required_write", "args": {},
+                "id": "call-1", "type": "tool_call",
+            }])
+
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"sheets": [required_write]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
+    result = await make_service_node("sheets")({
+        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "allowed_tools": ["required_write"], "requires_write": True,
+        "operation": "write", "expected_write_tools": ["required_write"],
+        "write_completion_mode": "all", "session_id": "test",
+    })
+    assert calls == 1
+    assert result["error_category"] == "tool_failure"
+
+
+@pytest.mark.asyncio
+async def test_sheet_create_success_then_correction_exposes_only_write(monkeypatch):
+    bound = []
+
+    @tool(description="Create Sheet")
+    def create_google_sheet(title: str):
+        return {"spreadsheetId": "sheet-1", "spreadsheetUrl": "https://example.invalid"}
+
+    @tool(description="Write Sheet")
+    def write_google_sheet(spreadsheet_id: str, values: list[list[str]]):
+        return {"spreadsheetId": spreadsheet_id, "updatedRows": len(values)}
+
+    @tool(description="Unrelated append")
+    def append_to_google_sheet(spreadsheet_id: str, values: list[list[str]]):
+        return {"spreadsheetId": spreadsheet_id, "updates": {}}
+
+    class FakeLLM:
+        calls = 0
+
+        def bind_tools(self, tools):
+            bound.append([item.name for item in tools])
+            return self
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            responses = {
+                1: AIMessage(content="", tool_calls=[{
+                    "name": "create_google_sheet", "args": {"title": "Fixture"},
+                    "id": "create", "type": "tool_call",
+                }]),
+                2: AIMessage(content="created"),
+                3: AIMessage(content="", tool_calls=[{
+                    "name": "write_google_sheet",
+                    "args": {"spreadsheet_id": "sheet-1", "values": [["Name"], ["Ada"]]},
+                    "id": "write", "type": "tool_call",
+                }]),
+            }
+            return responses.get(self.calls, AIMessage(content="verified"))
+
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"sheets": [
+            create_google_sheet, write_google_sheet, append_to_google_sheet,
+        ]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
+    result = await make_service_node("sheets")({
+        "message": "create and populate a sheet",
+        "model_to_use": "groq_fast", "services": ["sheets"],
+        "allowed_tools": [
+            "create_google_sheet", "write_google_sheet", "append_to_google_sheet",
+        ],
+        "requires_write": True, "operation": "create_and_write",
+        "expected_write_tools": ["create_google_sheet", "write_google_sheet"],
+        "write_completion_mode": "ordered", "session_id": "test",
+    })
+    assert result["task_complete"] is True
+    assert bound[1] == ["write_google_sheet"]
 
 
 @pytest.mark.asyncio

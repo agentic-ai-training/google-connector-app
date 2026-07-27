@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from groq import APIStatusError, AsyncGroq, RateLimitError
@@ -17,6 +18,9 @@ from app.improvements.candidates import (
     validate_candidate_files,
 )
 from app.improvements.builder_tools import BoundedRepositoryTools
+from app.mlops.metrics import (
+    candidate_checkpoint_resumes, candidate_progress_gates,
+)
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +33,63 @@ BUILDER_REVIEWER_MAX_ROUNDS = 5
 BUILDER_TOOL_TURN_MAX_TOKENS = 2_048
 BUILDER_FINAL_TURN_MAX_TOKENS = 4_096
 BUILDER_QUOTA_RETRY_TOKEN_STEPS = (1_024, 512, 256)
+BUILDER_AUTHOR_EARLY_FILE_ROUND = 3
+BUILDER_AUTHOR_RESTRICTED_ROUND = 5
+BUILDER_AUTHOR_HARD_FILE_ROUND = 7
+BUILDER_CORRECTION_RESERVE_TOKENS = 1_024
+BUILDER_FINALIZATION_RESERVE_TOKENS = 4_096
+BUILDER_FINISH_TOOL_NAMES = frozenset({
+    "stage_candidate_file",
+    "inspect_candidate_diff",
+    "validate_staged_candidate",
+    "inspect_candidate_manifest",
+    "discard_staged_candidate_file",
+    "read_staged_candidate_file",
+})
+
+
+@dataclass
+class CandidateBuilderFailure(RuntimeError):
+    """Typed, content-free builder failure used across runner and server boundaries."""
+
+    safe_code: str
+    contract_errors: list[str] = field(default_factory=list)
+    role: str | None = None
+    round_number: int | None = None
+    staged_file_count: int = 0
+    retry_class: str = "structural"
+    terminal_policy: bool = False
+    resume_point: str | None = None
+
+    def __post_init__(self):
+        RuntimeError.__init__(self, self.safe_code)
+
+
+def builder_budget_snapshot(
+    job: dict, cumulative_tokens: int, active_role_tokens: int,
+    active_role_budget: int,
+) -> dict:
+    """Report distinct stored, effective, cumulative, and active-role budgets."""
+    base = int(job["token_budget"])
+    effective = effective_builder_token_budget(job)
+    return {
+        "base_token_budget": base,
+        "effective_token_budget": effective,
+        "tokens_used": max(0, int(cumulative_tokens)),
+        "role_tokens_used": max(0, int(active_role_tokens)),
+        "active_role_token_budget": max(0, int(active_role_budget)),
+        "remaining_effective_tokens": max(0, effective - int(cumulative_tokens)),
+        "remaining_active_role_tokens": max(
+            0, int(active_role_budget) - int(active_role_tokens),
+        ),
+    }
+
+
+def _restricted_builder_schemas(schemas: list[dict]) -> list[dict]:
+    return [
+        schema for schema in schemas
+        if (schema.get("function") or {}).get("name") in BUILDER_FINISH_TOOL_NAMES
+    ]
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -340,11 +401,12 @@ def candidate_review_projection(candidate: dict | None) -> dict:
             "change_type": item.get("change_type"),
             "content_chars": len(content),
             "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-            "preview": content[:500],
         })
+    exact_diff = str(value.get("exact_diff") or "")
     return {
         "files": files,
-        "exact_diff_preview": str(value.get("exact_diff") or "")[:8_000],
+        "exact_diff_chars": len(exact_diff),
+        "exact_diff_sha256": hashlib.sha256(exact_diff.encode()).hexdigest(),
         "rollback_plan": value.get("rollback_plan"),
         "validation_commands": value.get("validation_commands") or [],
         "full_content_access": "use read_staged_candidate_file",
@@ -514,13 +576,16 @@ async def _groq_tool_json(
     progress: dict | None = None,
     progress_callback: Callable[[dict], Awaitable[None]] | None = None,
     role_token_budget: int | None = None,
+    cumulative_tokens_before: int = 0,
 ) -> tuple[dict, int, list[str]]:
     """Run a bounded tool loop; Groq never receives a shell or network tool."""
     settings = get_settings()
     client = AsyncGroq(api_key=settings.groq_api_key)
     resume = dict(progress or {})
     if resume and resume.get("active_role") != role:
-        raise RuntimeError("Candidate turn checkpoint role does not match")
+        raise CandidateBuilderFailure(
+            "invalid_checkpoint", role=role, terminal_policy=True,
+        )
     initial_messages = [{
         "role": "user",
         "content": _candidate_prompt(
@@ -555,12 +620,24 @@ async def _groq_tool_json(
     )
     start_round = int(resume.get("next_round") or 0)
     if start_round > max_rounds:
-        raise RuntimeError("Candidate turn checkpoint exceeds role round limit")
+        raise CandidateBuilderFailure(
+            "invalid_checkpoint", role=role, round_number=start_round,
+            terminal_policy=True,
+        )
     if resume:
+        candidate_checkpoint_resumes.labels(
+            role, str(resume.get("phase") or "role_in_progress"),
+        ).inc()
         tools.restore_counters(
             calls=int(resume.get("tool_calls") or 0),
             read_bytes=int(resume.get("read_bytes") or 0),
         )
+
+    last_tool_name = str(resume.get("last_tool_name") or "") or None
+    last_contract_errors = [
+        str(value)[:100] for value in resume.get("last_contract_errors", [])[:20]
+    ]
+    progress_gate = str(resume.get("progress_gate") or "investigating")
 
     async def emit_progress(next_round: int) -> None:
         if progress_callback is None:
@@ -568,6 +645,8 @@ async def _groq_tool_json(
         fitted = _fit_builder_history(messages)
         if len(json.dumps(fitted, default=str)) > BUILDER_HISTORY_MAX_CHARS:
             raise RuntimeError("Candidate checkpoint history exceeds its bounded size")
+        active_used = tokens
+        cumulative = cumulative_tokens_before + tokens - initial_tokens
         await progress_callback({
             "phase": "role_in_progress",
             "active_role": role,
@@ -576,17 +655,74 @@ async def _groq_tool_json(
             "json_tool_protocol": json_tool_protocol,
             "tool_calls": tools.calls,
             "read_bytes": tools.read_bytes,
-            "role_tokens_used": tokens,
             "role_models_used": models_used,
+            "staged_file_count": len(tools.staged_files()),
+            "last_contract_errors": last_contract_errors,
+            "last_tool_name": last_tool_name,
+            "progress_gate": progress_gate,
+            "resume_point": f"{role}:round:{next_round}",
+            **builder_budget_snapshot(
+                job, cumulative, active_used, token_budget,
+            ),
         })
 
     for round_number in range(start_round, max_rounds):
         if tokens >= token_budget:
-            raise RuntimeError("Candidate token budget exhausted during tool reasoning")
+            raise CandidateBuilderFailure(
+                "tool_token_budget_exhausted", role=role,
+                round_number=round_number,
+                staged_file_count=len(tools.staged_files()),
+                retry_class="budget",
+                resume_point=f"{role}:round:{round_number}",
+            )
         remaining = max(256, token_budget - tokens)
         messages = _fit_builder_history(messages)
-        force_finalize = round_number >= max_rounds - 2
+        reviewing = role == "independent_safety_reviewer"
+        staged_count = len(tools.staged_files())
+        if not reviewing and not staged_count:
+            if (
+                round_number >= BUILDER_AUTHOR_HARD_FILE_ROUND
+                and last_contract_errors != ["files_required"]
+            ):
+                raise CandidateBuilderFailure(
+                    "files_required", contract_errors=["files_required"],
+                    role=role, round_number=round_number,
+                    staged_file_count=0, retry_class="structural",
+                    resume_point=f"{role}:round:{round_number}",
+                )
+            if round_number == BUILDER_AUTHOR_EARLY_FILE_ROUND:
+                progress_gate = "file_required_correction"
+                candidate_progress_gates.labels(role, progress_gate).inc()
+                messages.append({
+                    "role": "user",
+                    "content": json.dumps({
+                        "progress_gate": progress_gate,
+                        "instruction": (
+                            "Stage at least one complete candidate file now before any "
+                            "additional broad repository investigation."
+                        ),
+                    }),
+                })
+            elif round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
+                if progress_gate != "finish_tools_only":
+                    progress_gate = "finish_tools_only"
+                    candidate_progress_gates.labels(role, progress_gate).inc()
+        reserve = (
+            BUILDER_CORRECTION_RESERVE_TOKENS
+            + BUILDER_FINALIZATION_RESERVE_TOKENS
+        )
+        force_finalize = (
+            round_number >= max_rounds - 2
+            or (
+                token_budget >= reserve
+                and remaining <= reserve
+                and (reviewing or staged_count > 0)
+            )
+        )
         if force_finalize:
+            if progress_gate != "finalization":
+                progress_gate = "finalization"
+                candidate_progress_gates.labels(role, progress_gate).inc()
             final_messages = _json_tool_protocol_kwargs({
                 "messages": messages, "tools": [],
             })["messages"]
@@ -619,9 +755,12 @@ async def _groq_tool_json(
             )
             json_tool_protocol = True
         else:
+            available_schemas = tools.schemas()
+            if not reviewing and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
+                available_schemas = _restricted_builder_schemas(available_schemas)
             response, model, json_tool_protocol = await _candidate_completion(
                 client, job, messages=messages,
-                tools=tools.schemas(), tool_choice="auto", temperature=0.1,
+                tools=available_schemas, tool_choice="auto", temperature=0.1,
                 max_tokens=min(
                     BUILDER_TOOL_TURN_MAX_TOKENS,
                     settings.candidate_builder_max_output_tokens,
@@ -647,6 +786,7 @@ async def _groq_tool_json(
                 "tool_calls": [_compact_builder_tool_call(call) for call in calls],
             })
             for call in message.tool_calls:
+                last_tool_name = call.function.name
                 try:
                     arguments = json.loads(call.function.arguments or "{}")
                     result = tools.execute(call.function.name, arguments)
@@ -697,13 +837,26 @@ async def _groq_tool_json(
                 await emit_progress(round_number + 1)
                 continue
             name = str(protocol_call.get("name") or "")
-            arguments = protocol_call.get("arguments")
-            if not isinstance(arguments, dict):
+            last_tool_name = name or None
+            result = None
+            if (
+                not reviewing
+                and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND
+                and name not in BUILDER_FINISH_TOOL_NAMES
+            ):
+                result = {
+                    "error": "progress_gate",
+                    "detail": "Only staging and final validation tools remain available",
+                }
+                arguments = protocol_call.get("arguments")
+            else:
+                arguments = protocol_call.get("arguments")
+            if result is None and not isinstance(arguments, dict):
                 result = {
                     "error": "ValueError",
                     "detail": "JSON repository action arguments must be an object",
                 }
-            else:
+            elif result is None:
                 try:
                     result = tools.execute(name, arguments)
                 except Exception as exc:
@@ -733,6 +886,7 @@ async def _groq_tool_json(
         })
         if role == "independent_safety_reviewer":
             review_errors = reviewer_contract_errors(candidate)
+            last_contract_errors = review_errors
             if review_errors:
                 if round_number < max_rounds - 1:
                     messages.append({
@@ -747,9 +901,11 @@ async def _groq_tool_json(
                     })
                     await emit_progress(round_number + 1)
                     continue
-                raise RuntimeError(
-                    "Reviewer contract failed local validation: "
-                    + ",".join(review_errors)
+                raise CandidateBuilderFailure(
+                    "reviewer_contract_invalid", contract_errors=review_errors,
+                    role=role, round_number=round_number,
+                    staged_file_count=len(tools.staged_files()),
+                    terminal_policy=True,
                 )
             return candidate, tokens - initial_tokens, models_used
         if tools.staged_files():
@@ -761,6 +917,7 @@ async def _groq_tool_json(
                 "Frozen candidate files are authoritative; trusted CI will compute the diff."
             )
         contract_errors = candidate_contract_errors(candidate)
+        last_contract_errors = contract_errors
         if contract_errors:
             if round_number < max_rounds - 1:
                 messages.append({
@@ -775,12 +932,19 @@ async def _groq_tool_json(
                 })
                 await emit_progress(round_number + 1)
                 continue
-            raise RuntimeError(
-                "Candidate contract failed local validation: "
-                + ",".join(contract_errors)
+            raise CandidateBuilderFailure(
+                "candidate_contract_invalid", contract_errors=contract_errors,
+                role=role, round_number=round_number,
+                staged_file_count=len(tools.staged_files()),
+                retry_class="structural",
+                resume_point=f"{role}:round:{round_number}",
             )
         return candidate, tokens - initial_tokens, models_used
-    raise RuntimeError("Candidate builder exceeded its bounded reasoning/tool rounds")
+    raise CandidateBuilderFailure(
+        "tool_round_limit_exhausted", role=role, round_number=max_rounds,
+        staged_file_count=len(tools.staged_files()), retry_class="round_limit",
+        resume_point=f"{role}:round:{max_rounds}",
+    )
 
 
 async def generate_candidate_draft(
@@ -835,7 +999,10 @@ async def generate_candidate_draft(
         if role in completed_roles:
             continue
         if tokens >= token_budget:
-            raise RuntimeError("Candidate token budget exhausted before review")
+            raise CandidateBuilderFailure(
+                "review_token_budget_exhausted", role=role,
+                retry_class="budget", resume_point=f"{role}:round:0",
+            )
         role_progress = (
             resume if resume.get("phase") == "role_in_progress"
             and resume.get("active_role") == role else None
@@ -875,6 +1042,7 @@ async def generate_candidate_draft(
             job, repository_tools, role, candidate,
             progress=role_progress, progress_callback=checkpoint_role,
             role_token_budget=token_budget - tokens + initial_role_tokens,
+            cumulative_tokens_before=tokens,
         )
         tokens += used
         for model in call_models:
@@ -882,8 +1050,13 @@ async def generate_candidate_draft(
                 models_used.append(model)
         if role == "independent_safety_reviewer":
             if output.get("approved") is False:
-                raise RuntimeError(
-                    output.get("reason") or "Independent review rejected candidate"
+                raise CandidateBuilderFailure(
+                    "independent_review_rejected",
+                    role=role,
+                    staged_file_count=len(repository_tools.staged_files()),
+                    retry_class="policy",
+                    terminal_policy=True,
+                    resume_point=f"{role}:rejected",
                 )
             candidate = output.get("revised_candidate") or candidate
             if repository_tools.staged_files():
@@ -915,6 +1088,12 @@ async def generate_candidate_draft(
                     "roles_completed": completed_roles,
                     "models_used": models_used,
                     "tokens_used": tokens,
+                    "staged_file_count": len(checkpoint_candidate["files"]),
+                    "last_contract_errors": [],
+                    "last_tool_name": None,
+                    "progress_gate": "author_complete",
+                    "resume_point": "independent_safety_reviewer:round:0",
+                    **builder_budget_snapshot(job, tokens, 0, token_budget - tokens),
                 })
     candidate = normalize_candidate_contract(candidate or {})
     candidate.setdefault("exact_diff", "generated files are the authoritative candidate")
@@ -922,8 +1101,10 @@ async def generate_candidate_draft(
     candidate.setdefault("validation_commands", [])
     final_errors = candidate_contract_errors(candidate)
     if final_errors:
-        raise RuntimeError(
-            "Candidate contract failed local validation: " + ",".join(final_errors)
+        raise CandidateBuilderFailure(
+            "candidate_contract_invalid", contract_errors=final_errors,
+            staged_file_count=len(candidate.get("files") or []),
+            retry_class="structural",
         )
     return candidate, tokens, roles, models_used
 
@@ -999,6 +1180,43 @@ async def store_candidate_checkpoint(
             "rollback_plan": candidate.get("rollback_plan") or {},
             "validation_commands": candidate.get("validation_commands") or [],
             "file_count": len(files),
+            "staged_file_count": len(files),
+            "base_token_budget": int(
+                candidate.get("base_token_budget") or job["token_budget"]
+            ),
+            "effective_token_budget": int(
+                candidate.get("effective_token_budget")
+                or effective_builder_token_budget(dict(job))
+            ),
+            "remaining_effective_tokens": max(
+                0, int(
+                    candidate.get("remaining_effective_tokens")
+                    if candidate.get("remaining_effective_tokens") is not None
+                    else effective_builder_token_budget(dict(job)) - int(tokens)
+                ),
+            ),
+            "active_role_token_budget": int(
+                candidate.get("active_role_token_budget") or 0
+            ),
+            "remaining_active_role_tokens": int(
+                candidate.get("remaining_active_role_tokens") or 0
+            ),
+            "last_contract_errors": [
+                str(value)[:100]
+                for value in (candidate.get("last_contract_errors") or [])[:20]
+            ],
+            "last_tool_name": (
+                str(candidate.get("last_tool_name"))[:100]
+                if candidate.get("last_tool_name") else None
+            ),
+            "progress_gate": (
+                str(candidate.get("progress_gate"))[:100]
+                if candidate.get("progress_gate") else None
+            ),
+            "resume_point": (
+                str(candidate.get("resume_point"))[:200]
+                if candidate.get("resume_point") else None
+            ),
             "contains_private_evidence": False,
         }
         if phase == "role_in_progress":
@@ -1129,14 +1347,33 @@ async def process_one_candidate_build(pool) -> bool:
         )
         if not row:
             return False
+        checkpoint_files = await conn.fetch(
+            """SELECT path,change_type,content FROM candidate_build_files
+               WHERE build_id=$1 ORDER BY path""",
+            row["id"],
+        )
         await conn.execute(
             "UPDATE candidate_builds SET status='investigating',updated_at=now() WHERE id=$1",
             row["id"],
         )
     job = dict(row)
+    job["generation_checkpoint"] = (
+        (job.get("checkpoint") or {}).get("generation_checkpoint") or {}
+    )
+    job["checkpoint_files"] = [dict(item) for item in checkpoint_files]
+    latest_checkpoint: dict = {}
     try:
+        async def checkpoint_embedded(payload: dict) -> None:
+            nonlocal latest_checkpoint
+            latest_checkpoint = dict(payload)
+            await store_candidate_checkpoint(
+                pool, job["id"], payload, int(payload.get("tokens_used") or 0),
+                list(payload.get("roles_completed") or []),
+                list(payload.get("models_used") or []),
+            )
+
         candidate, tokens, roles, models_used = await asyncio.wait_for(
-            generate_candidate_draft(job),
+            generate_candidate_draft(job, checkpoint_callback=checkpoint_embedded),
             timeout=get_settings().candidate_builder_timeout_seconds,
         )
         await store_candidate_draft(
@@ -1145,16 +1382,54 @@ async def process_one_candidate_build(pool) -> bool:
         return True
     except Exception as exc:
         logger.exception("Candidate build %s failed", job["id"])
+        from app.improvements.retry import candidate_retry_decision
+        safe_code = (
+            exc.safe_code if isinstance(exc, CandidateBuilderFailure)
+            else (
+                "checkpointed_timeout"
+                if isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+                and latest_checkpoint
+                else type(exc).__name__
+            )
+        )
+        contract_errors = (
+            exc.contract_errors if isinstance(exc, CandidateBuilderFailure) else []
+        )
+        runner_retryable = not (
+            isinstance(exc, CandidateBuilderFailure) and exc.terminal_policy
+        )
         async with pool.acquire() as conn, conn.transaction():
+            current = await conn.fetchrow(
+                "SELECT * FROM candidate_builds WHERE id=$1 FOR UPDATE", job["id"],
+            )
+            retry = candidate_retry_decision(
+                dict(current), error_type=safe_code,
+                contract_errors=contract_errors,
+                runner_retryable=runner_retryable,
+            )
+            status = "queued" if retry.eligible else "failed"
             await conn.execute(
-                """UPDATE candidate_builds SET status='failed',error_message=$1,
-                   updated_at=now(),completed_at=now() WHERE id=$2""",
-                str(exc)[:2000], job["id"],
+                """UPDATE candidate_builds SET status=$1,error_message=$2,
+                   checkpoint=checkpoint||$3::jsonb,updated_at=now(),
+                   completed_at=CASE WHEN $1='failed' THEN now() ELSE NULL END
+                   WHERE id=$4""",
+                status, f"Candidate builder stopped at guard {safe_code}.",
+                json.dumps({
+                    "last_runner_failure": {
+                        "stage": "generation", "error_type": safe_code,
+                        "retryable": retry.eligible,
+                        "runner_retryable": runner_retryable,
+                        "retry_reason": retry.reason_code,
+                        "resume_point": retry.resume_point,
+                        "contract_errors": contract_errors[:20],
+                        "contains_private_evidence": False,
+                    },
+                }), job["id"],
             )
             proposal = await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE id=$1", job["proposal_id"],
             )
-            if proposal:
+            if proposal and not retry.eligible:
                 from app.improvements.failure_intelligence import release_theme_for_proposal
                 await release_theme_for_proposal(conn, dict(proposal))
         return True

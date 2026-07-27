@@ -75,3 +75,18 @@ stable-cohort handoff. The bearer token is placed only in the URL fragment, neve
 parameter or request URL; rollback stops routing before preview deletion. Planner/API
 candidates use the separately attested Railway candidate API and stable control-side proxy
 routing; neither surface replaces the control deployment during canary preparation.
+
+## Reliability amendment — 2026-07-27
+
+- A required write can receive one constrained missing-tool correction only. Once a
+  write tool has been attempted with failed or uncertain evidence, automatic repetition
+  is prohibited until operation-specific reconciliation proves it safe.
+- Sheets, Calendar, Chat, and Drive-sharing verification persists only bounded IDs,
+  shapes/counts, booleans, and SHA-256 comparisons. Cell values, Chat text, event titles,
+  attendee/principal values, OAuth material, and raw provider bodies are excluded.
+- Candidate retry authority is server-side. Runner `retryable` input cannot override
+  terminal policy, unsafe paths, secret-like content, reviewer rejection, invalid
+  checkpoints, commits/deployments, or exhausted round/token authority.
+- The protected portal receives only sanitized checkpoint diagnostics. It never receives
+  checkpoint conversations, generated file contents, private evidence, Workspace bodies,
+  credentials, or raw model/provider errors.

@@ -3,7 +3,10 @@ from contextlib import suppress
 
 from app.mlops.metrics import (
     artifact_cleanup_queue,
+    candidate_budget_ratio,
     candidate_build_queue,
+    candidate_progress_state,
+    candidate_retry_state,
     canary_routing,
     embedding_queue,
     improvement_queue,
@@ -44,6 +47,9 @@ OKF_PUBLICATION_STATES = (
 
 
 async def collect_operational_metrics(pool):
+    candidate_budget_ratio.clear()
+    candidate_progress_state.clear()
+    candidate_retry_state.clear()
     for state in RUN_STATES:
         run_queue_depth.labels(state).set(0)
     for state in EMBEDDING_STATES:
@@ -105,6 +111,41 @@ async def collect_operational_metrics(pool):
             "SELECT status,count(*) AS count FROM candidate_builds GROUP BY status"
         ):
             candidate_build_queue.labels(row["status"]).set(row["count"])
+        for row in await conn.fetch(
+            """SELECT mode,status,
+                      sum(tokens_used)::float /
+                      greatest(sum(coalesce(
+                        nullif(checkpoint#>>'{generation_checkpoint,effective_token_budget}','')::numeric,
+                        token_budget)),1)::float AS ratio
+               FROM candidate_builds GROUP BY mode,status"""
+        ):
+            candidate_budget_ratio.labels(row["mode"], row["status"]).set(
+                float(row["ratio"] or 0)
+            )
+        for row in await conn.fetch(
+            """SELECT coalesce(
+                        checkpoint#>>'{generation_checkpoint,active_role}','none') AS role,
+                      coalesce(
+                        checkpoint#>>'{generation_checkpoint,progress_gate}','none') AS gate,
+                      count(*) AS count
+               FROM candidate_builds
+               WHERE status IN ('queued','investigating')
+               GROUP BY role,gate"""
+        ):
+            candidate_progress_state.labels(row["role"], row["gate"]).set(row["count"])
+        for row in await conn.fetch(
+            """SELECT coalesce(
+                        checkpoint#>>'{last_runner_failure,retryable}','false') AS eligible,
+                      coalesce(
+                        checkpoint#>>'{last_runner_failure,retry_reason}','none') AS reason,
+                      count(*) AS count
+               FROM candidate_builds
+               WHERE checkpoint ? 'last_runner_failure'
+               GROUP BY eligible,reason"""
+        ):
+            candidate_retry_state.labels(
+                row["eligible"], row["reason"],
+            ).set(row["count"])
         for row in await conn.fetch(
             "SELECT status,count(*) AS count FROM failure_themes GROUP BY status"
         ):

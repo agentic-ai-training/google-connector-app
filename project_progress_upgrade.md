@@ -766,3 +766,35 @@ After implementation and verification, teach through this repository:
 - 2026-07-22: The first v5 production retry still exhausted quota before the author-complete boundary, proving phase-only durability was insufficient. Tool policy v6 now checkpoints after every accepted author or reviewer turn: bounded compacted conversation, next round, protocol mode, staged files, cumulative token/model use, and non-replenishable tool-call/read-byte counters. Resume continues at the next round and retains the original aggregate token/round/tool limits. Invalid free-form model output is represented only by content length and SHA-256 before persistence. No checkpoint contains Groq credentials, Workspace evidence, trusted test claims, execution access, or approval authority. A simulated ephemeral-runner interruption resumes without replaying its completed model/tool turn, and PostgreSQL coverage proves empty-file investigation state, author completion, and final reviewed freezing remain atomic.
 - 2026-07-22: Candidate retry visibility is now first-class in the protected improvement portal. Its API projects only sanitized operational fields—retry count/type/stage, next eligibility, dispatch state, durable role phase/round, token use, and frozen-file count—while excluding the checkpoint conversation and sanitized builder input. The browser renders the local eligibility time and refreshes it with the existing 30-second poll. Full local backend evidence is 130 unit plus 26 PostgreSQL integration tests (156 total); web lint and production build pass.
 - 2026-07-22: The new visibility exposed a stale retry-dispatch marker that remained `dispatching` after GitHub accepted a workflow and after its runner returned to quota wait. The durable dispatch state machine now records `dispatched`, `runner_leased`, `waiting_for_retry`, `completed`, `terminal`, or dispatch `failed` at the authoritative transition. These markers never contain generated content or credentials and do not alter the independently calculated retry deadline. The full 156-test backend suite and web lint/build pass.
+
+## Sprint 35 — Write-contract, verification, reconciliation, and builder reliability audit
+
+The 2026-07-27 reliability blueprint is implemented without a schema migration. Existing
+step output, artifact, checkpoint, event, and notification fields are sufficient.
+
+| Requirement | Implementation | Regression evidence | Status | Migration / rollout and rollback |
+|---|---|---|---|---|
+| Allowed-tool ceiling separated from required-write obligation | `app/tools/contracts.py`, planner, state, worker | `tests/unit/test_core.py` write-contract cases | Implemented | None; disable the new executor path or revert code |
+| One missing-tool-only correction; no prose success | `app/agents/supervisor.py` | tool-free correction and second-answer tests | Implemented | None; revert supervisor policy |
+| Distinct selection, execution, and postcondition failures | errors, worker, verifier | unit verifier and service-agent tests | Implemented | None; historical `verification` remains compatible |
+| Sheets exact range/value readback | `app/runs/verifier.py` | Sheet create/write/append/mismatch tests | Implemented | None; verifier rollback only |
+| Calendar time/timezone/attendee/Meet readback | verifier and Calendar registry | Calendar match/mismatch tests | Implemented | None |
+| Chat destination/text-hash/reference readback | verifier | Chat match/mismatch tests | Implemented | None |
+| Drive permission type/role/principal readback and idempotency | verifier and registry | Drive match/mismatch tests | Implemented | None |
+| Content-free evidence persistence | failure-intelligence sanitizer | redaction/hash unit test | Implemented | None; stricter sanitizer is fail-closed |
+| Exact-step resume and three-way reconciliation | reconciliation service, runs API/schema | unit decisions and PostgreSQL exact-resume test | Implemented | None; uncertain writes stay blocked |
+| Candidate budget/checkpoint diagnostics | builder, schemas, admin API/UI | budget and sanitized-view tests | Implemented | None; old checkpoints use bounded defaults |
+| Early/restricted/hard file and finalization gates | builder | typed `files_required` and finalization tests | Implemented | None; revert gate constants |
+| Typed builder failures and shared retry authority | builder, retry service, runner/admin | retry eligibility and terminal-policy tests | Implemented | None; server remains authoritative |
+| Same checkpoint callback in both builder paths | builder and Actions runner | checkpoint lifecycle tests | Implemented | None |
+| Granular intelligence and cross-cluster write themes | failure intelligence and analyzer | sanitizer/analyzer unit coverage | Implemented | None |
+| Metrics, alerts, Grafana, and safe portal fields | metrics/collector, monitoring files, admin page | dashboard validation and client build | Implemented; final validation pending | Publish dashboards only through confirmed Grafana sync |
+| No-network lost-response, mismatch, resume, and uncertainty replay | replay engine and 13 fixtures | workflow replay script | Implemented, 13/13 local | No production side effects |
+| CI compilation before tests and full trusted validation | CI and candidate-validation workflows | workflow inspection plus CI run | Implemented; remote CI pending publication | Revert workflow-only change |
+
+Local checkpoint: 148 unit tests, 27 PostgreSQL integration tests (175 combined), and all
+13 workflow replays pass. Python compilation and Flake8, dependency/security checks,
+migration 013→002→013 round-trip, Compose, secret/history checks, Next.js lint/build,
+Flutter analyze/test/debug APK, Docker API/worker/Prometheus/Grafana health, and two
+Grafana dashboard definitions pass. Remote CI, publication, deployment, and production
+smoke evidence are recorded only after those steps actually complete.

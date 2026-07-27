@@ -35,5 +35,86 @@
       {"id": "chat", "service": "chat", "operation": "send", "dependencies": ["sheet"], "arguments": {"space": "fixture-space", "text": "${sheet.spreadsheetUrl}"}},
       {"id": "calendar", "service": "calendar", "operation": "create", "dependencies": ["sheet"], "arguments": {"timezone": "UTC"}}
     ]
+  },
+  {
+    "id": "write-text-only-corrected-to-tool",
+    "tool_free_once": ["sheets.create_and_write"],
+    "expect": {"artifact_count": 1},
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Ada"]]}}
+    ]
+  },
+  {
+    "id": "repeated-tool-free-write-fails",
+    "tool_free_always": ["calendar.create"],
+    "expected_status": "failed",
+    "expect": {"artifact_count": 0, "first_breaking_point": "calendar"},
+    "steps": [
+      {"id": "calendar", "service": "calendar", "operation": "create", "arguments": {"timezone": "Asia/Kolkata"}}
+    ]
+  },
+  {
+    "id": "sheet-create-write-postcondition-success",
+    "expect": {"artifact_count": 1},
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Ada"], ["Grace"]]}}
+    ]
+  },
+  {
+    "id": "sheet-content-postcondition-mismatch",
+    "postcondition_mismatch": ["sheets.create_and_write"],
+    "expected_status": "failed",
+    "expect": {"artifact_count": 1, "first_breaking_point": "sheet"},
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Mismatch"]]}}
+    ]
+  },
+  {
+    "id": "calendar-timezone-attendee-meet-verification",
+    "expect": {"artifact_count": 1},
+    "steps": [
+      {"id": "calendar", "service": "calendar", "operation": "create", "arguments": {"attendee": "fixture@example.com", "timezone": "Asia/Kolkata", "add_meet": true}}
+    ]
+  },
+  {
+    "id": "partial-gmail-sheet-chat-calendar",
+    "fail_once": ["chat.send"],
+    "expected_status": "failed",
+    "expect": {"artifact_count": 2, "first_breaking_point": "chat"},
+    "steps": [
+      {"id": "gmail", "service": "gmail", "operation": "recent_senders", "arguments": {"max_results": 20}},
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "dependencies": ["gmail"], "arguments": {"rows": [["Name"], ["Ada"]]}},
+      {"id": "chat", "service": "chat", "operation": "send", "dependencies": ["sheet"], "arguments": {"space": "fixture-space", "text": "${sheet.spreadsheetUrl}"}},
+      {"id": "calendar", "service": "calendar", "operation": "create", "dependencies": ["sheet"], "arguments": {"timezone": "Asia/Kolkata"}}
+    ]
+  },
+  {
+    "id": "resume-preserves-completed-gmail-and-sheet",
+    "fail_once": ["chat.send"],
+    "resume_failed_step": true,
+    "expect": {"artifact_count": 4},
+    "steps": [
+      {"id": "gmail", "service": "gmail", "operation": "recent_senders", "arguments": {"max_results": 20}},
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "dependencies": ["gmail"], "arguments": {"rows": [["Name"], ["Ada"]]}},
+      {"id": "chat", "service": "chat", "operation": "send", "dependencies": ["sheet"], "arguments": {"space": "fixture-space", "text": "${sheet.spreadsheetUrl}"}},
+      {"id": "calendar", "service": "calendar", "operation": "create", "dependencies": ["sheet"], "arguments": {"timezone": "Asia/Kolkata"}}
+    ]
+  },
+  {
+    "id": "lost-write-response-reconciles",
+    "lose_response_after_write": ["chat.send"],
+    "expect": {"artifact_count": 1},
+    "steps": [
+      {"id": "chat", "service": "chat", "operation": "send", "arguments": {"space": "fixture-space", "text": "safe fixture"}}
+    ]
+  },
+  {
+    "id": "uncertain-write-blocks-repeat",
+    "uncertain_write_after_acceptance": ["sheets.create_and_write"],
+    "expected_status": "failed",
+    "expect": {"artifact_count": 1, "first_breaking_point": "sheet"},
+    "steps": [
+      {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Ada"]]}}
+    ]
   }
 ]

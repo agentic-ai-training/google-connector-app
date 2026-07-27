@@ -21,7 +21,10 @@
     {"type":"timeseries","title":"Tool-result projection and model context","gridPos":{"h":8,"w":12,"x":0,"y":48},"targets":[{"expr":"histogram_quantile(0.95,sum by(le,tool_name)(rate(agent_tool_result_projected_tokens_bucket[15m])))","legendFormat":"projected {{tool_name}}"},{"expr":"histogram_quantile(0.95,sum by(le,model)(rate(agent_model_context_preflight_tokens_bucket[15m])))","legendFormat":"context {{model}}"}]},
     {"type":"timeseries","title":"Candidate builds, themes, and canary routing","gridPos":{"h":8,"w":12,"x":12,"y":48},"targets":[{"expr":"agent_candidate_builds","legendFormat":"build {{status}}"},{"expr":"agent_failure_themes","legendFormat":"theme {{status}}"},{"expr":"agent_canary_routing","legendFormat":"canary {{status}} routing={{routing_enabled}}"}]},
     {"type":"stat","title":"Deployed build","gridPos":{"h":5,"w":12,"x":0,"y":56},"targets":[{"expr":"agent_build_info","legendFormat":"{{version}}"}]},
-    {"type":"timeseries","title":"Trusted OKF publication lifecycle","gridPos":{"h":5,"w":12,"x":12,"y":56},"targets":[{"expr":"agent_okf_bundle_publications","legendFormat":"{{status}}"}]}
+    {"type":"timeseries","title":"Trusted OKF publication lifecycle","gridPos":{"h":5,"w":12,"x":12,"y":56},"targets":[{"expr":"agent_okf_bundle_publications","legendFormat":"{{status}}"}]},
+    {"type":"timeseries","title":"Candidate cumulative / effective budget","gridPos":{"h":8,"w":8,"x":0,"y":61},"targets":[{"expr":"agent_candidate_budget_ratio","legendFormat":"{{mode}} {{status}}"}]},
+    {"type":"timeseries","title":"Candidate active role and progress gate","gridPos":{"h":8,"w":8,"x":8,"y":61},"targets":[{"expr":"agent_candidate_progress_state","legendFormat":"{{role}} / {{gate}}"}]},
+    {"type":"timeseries","title":"Candidate retry eligibility and terminal reasons","gridPos":{"h":8,"w":8,"x":16,"y":61},"targets":[{"expr":"agent_candidate_retry_state","legendFormat":"eligible={{eligible}} {{reason}}"}]}
   ],
   "refresh":"15s",
   "schemaVersion":41,
@@ -30,5 +33,5 @@
   "time":{"from":"now-6h","to":"now"},
   "title":"Google Connector Agent Performance",
   "uid":"google-connector-agent",
-  "version":6
+  "version":7
 }

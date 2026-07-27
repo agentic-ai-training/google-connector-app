@@ -27,3 +27,8 @@ class AgentState(TypedDict, total=False):
     risk_level: str
     allow_small_fallback: bool
     allowed_tools: list[str]
+    operation: str
+    requires_write: bool
+    expected_write_tools: list[str]
+    write_completion_mode: str
+    tool_selection_retry_count: int

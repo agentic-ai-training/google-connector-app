@@ -71,6 +71,21 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "A governed Groq candidate build failed before canary"}
+      - alert: RepeatedWriteToolSelectionFailures
+        expr: sum(rate(agent_tool_selection_failures_total[15m])) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Required write tools are repeatedly not being selected"}
+      - alert: ManualWriteReconciliationBacklog
+        expr: sum(increase(agent_write_reconciliation_total{outcome="manual_required"}[30m])) > 2
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Multiple writes require manual reconciliation"}
+      - alert: CandidateRetryWithoutCheckpointProgress
+        expr: sum(increase(agent_candidate_checkpoint_resumes_total[30m])) > 5 and on() sum(increase(agent_candidate_progress_gates_total{gate=~"author_complete|finalization"}[30m])) == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Candidate retries are looping without checkpoint progress"}
       - alert: CandidateCanaryRolledBack
         expr: agent_canary_routing{status="rolled_back"} > 0
         for: 1m
