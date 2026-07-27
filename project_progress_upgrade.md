@@ -784,17 +784,34 @@ step output, artifact, checkpoint, event, and notification fields are sufficient
 | Content-free evidence persistence | failure-intelligence sanitizer | redaction/hash unit test | Implemented | None; stricter sanitizer is fail-closed |
 | Exact-step resume and three-way reconciliation | reconciliation service, runs API/schema | unit decisions and PostgreSQL exact-resume test | Implemented | None; uncertain writes stay blocked |
 | Candidate budget/checkpoint diagnostics | builder, schemas, admin API/UI | budget and sanitized-view tests | Implemented | None; old checkpoints use bounded defaults |
+| Native/JSON candidate history integrity | builder history fitter | atomic protocol-exchange, summary-consolidation, and counter-bound tests | Implemented | None; old bounded checkpoints remain resumable |
+| Staged-source provenance integrity | builder tools and mandatory author preflight | projected-body overwrite and syntax-correction tests | Implemented | None; unrecoverable legacy placeholder checkpoints stop safely |
 | Early/restricted/hard file and finalization gates | builder | typed `files_required` and finalization tests | Implemented | None; revert gate constants |
 | Typed builder failures and shared retry authority | builder, retry service, runner/admin | retry eligibility and terminal-policy tests | Implemented | None; server remains authoritative |
 | Same checkpoint callback in both builder paths | builder and Actions runner | checkpoint lifecycle tests | Implemented | None |
 | Granular intelligence and cross-cluster write themes | failure intelligence and analyzer | sanitizer/analyzer unit coverage | Implemented | None |
 | Metrics, alerts, Grafana, and safe portal fields | metrics/collector, monitoring files, admin page | dashboard validation and client build | Implemented; final validation pending | Publish dashboards only through confirmed Grafana sync |
 | No-network lost-response, mismatch, resume, and uncertainty replay | replay engine and 13 fixtures | workflow replay script | Implemented, 13/13 local | No production side effects |
-| CI compilation before tests and full trusted validation | CI and candidate-validation workflows | workflow inspection plus CI run | Implemented; remote CI pending publication | Revert workflow-only change |
+| CI compilation before tests and full trusted validation | CI and candidate-validation workflows | workflow inspection plus trusted PR/main runs | Implemented and operational | Revert workflow-only change |
 
-Local checkpoint: 148 unit tests, 27 PostgreSQL integration tests (175 combined), and all
+Current local checkpoint: 154 unit/API tests, 28 PostgreSQL integration tests (182
+combined), and all
 13 workflow replays pass. Python compilation and Flake8, dependency/security checks,
 migration 013→002→013 round-trip, Compose, secret/history checks, Next.js lint/build,
 Flutter analyze/test/debug APK, Docker API/worker/Prometheus/Grafana health, and two
-Grafana dashboard definitions pass. Remote CI, publication, deployment, and production
-smoke evidence are recorded only after those steps actually complete.
+Grafana dashboard definitions pass. PRs #70–#74 passed the trusted CI/candidate
+attestation matrix and their exact merge commits passed joint Railway API/worker and
+Vercel frontend deployment attestation. The final staged-provenance preflight hardening
+is published only after its own trusted matrix passes.
+
+- 2026-07-27: PR #70 implemented the complete reliability-audit blueprint. Production
+  retries then found and closed three independent legacy-resume defects without
+  weakening budgets: the callback's misplaced deployment-column lookup (PR #71), a
+  tool counter that advanced after rejected calls (PR #72), and native/JSON protocol
+  history that was not compacted as one atomic exchange (PRs #73–#74).
+- 2026-07-27: Historical no-file builds now terminate as `files_required`; the preserved
+  reviewer checkpoint resumes without restarting its author; and build `7aa74d5b`
+  progressed from author round 6 through independent review. Its reviewer correctly
+  rejected two invalid one-line placeholder files. The follow-up integrity guard rejects
+  content-free staged-body projections before they can overwrite source and requires
+  deterministic syntax/policy validation before review.

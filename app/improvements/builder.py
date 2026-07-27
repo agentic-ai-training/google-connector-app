@@ -602,6 +602,20 @@ def candidate_contract_errors(candidate: dict) -> list[str]:
     return list(dict.fromkeys(errors))
 
 
+def staged_validation_codes(validation: dict) -> list[str]:
+    """Project deterministic pre-review failures into content-free contract codes."""
+    codes = []
+    for error in validation.get("errors") or []:
+        code = str(error.get("code") or "")
+        if code.endswith("_invalid"):
+            codes.append("candidate_syntax_invalid")
+        elif code == "candidate_policy":
+            codes.append("candidate_file_policy_rejected")
+        else:
+            codes.append("candidate_structural_validation_failed")
+    return list(dict.fromkeys(codes))
+
+
 def reviewer_contract_errors(review: dict) -> list[str]:
     """Validate the review envelope without treating it as candidate files."""
     if not isinstance(review.get("approved"), bool):
@@ -804,7 +818,7 @@ async def _groq_tool_json(
         if not reviewing and not staged_count:
             if (
                 round_number >= BUILDER_AUTHOR_HARD_FILE_ROUND
-                and last_contract_errors != ["files_required"]
+                and "files_required" not in last_contract_errors
             ):
                 raise CandidateBuilderFailure(
                     "files_required", contract_errors=["files_required"],
@@ -1030,6 +1044,26 @@ async def _groq_tool_json(
                     terminal_policy=True,
                 )
             return candidate, tokens - initial_tokens, models_used
+        direct_stage_errors = []
+        direct_files = candidate.get("files")
+        if isinstance(direct_files, list):
+            for item in direct_files[:50]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    tools.stage(
+                        str(item.get("path") or ""),
+                        str(item.get("change_type") or ""),
+                        str(item.get("content") or ""),
+                    )
+                except (ValueError, TypeError) as exc:
+                    direct_stage_errors.append(
+                        "projected_candidate_body_rejected"
+                        if "Projected staged-file provenance" in str(exc)
+                        else "candidate_file_policy_rejected"
+                    )
+                except RuntimeError:
+                    direct_stage_errors.append("candidate_output_limit_exceeded")
         if tools.staged_files():
             candidate["files"] = tools.staged_files()
             candidate.setdefault("exact_diff", tools.diff()["diff"])
@@ -1039,6 +1073,9 @@ async def _groq_tool_json(
                 "Frozen candidate files are authoritative; trusted CI will compute the diff."
             )
         contract_errors = candidate_contract_errors(candidate)
+        contract_errors.extend(direct_stage_errors)
+        contract_errors.extend(staged_validation_codes(tools.validate_staged()))
+        contract_errors = list(dict.fromkeys(contract_errors))
         last_contract_errors = contract_errors
         if contract_errors:
             if round_number < max_rounds - 1:
@@ -1129,6 +1166,20 @@ async def generate_candidate_draft(
             resume if resume.get("phase") == "role_in_progress"
             and resume.get("active_role") == role else None
         )
+        if role == "independent_safety_reviewer":
+            validation_codes = staged_validation_codes(
+                repository_tools.validate_staged(),
+            )
+            if validation_codes:
+                raise CandidateBuilderFailure(
+                    "candidate_pre_review_validation_failed",
+                    contract_errors=validation_codes,
+                    role=role,
+                    staged_file_count=len(repository_tools.staged_files()),
+                    retry_class="structural",
+                    terminal_policy=True,
+                    resume_point=f"{role}:preflight",
+                )
         initial_role_tokens = int(
             (role_progress or {}).get("role_tokens_used") or 0
         )
