@@ -13,7 +13,7 @@ from app.tools.contracts import WRITE_TOOLS, write_contract_for
 from app.tools.registry import registered_tool_names
 
 SERVICES = {
-    "gmail": ("gmail", "email", "emails", "mail", "mails"),
+    "gmail": ("gmail", "email", "emails", "emials", "mail", "mails", "maisl"),
     "calendar": ("calendar", "event", "schedule", "invite", "meeting"),
     "drive": ("drive", "file", "files", "folder", "folders", "share"),
     "docs": ("doc", "docs", "document", "documents"),

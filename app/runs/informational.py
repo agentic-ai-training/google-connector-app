@@ -83,7 +83,8 @@ _ACTION_PATTERN = (
     r"|\bhow many\b"
 )
 _WORKSPACE_TERMS = tuple(SERVICE_LABELS) + (
-    "email", "mail", "spreadsheet", "document", "meeting", "event",
+    "email", "emails", "emials", "mail", "mails", "maisl",
+    "spreadsheet", "document", "meeting", "event",
     "google workspace", "workspace",
 )
 

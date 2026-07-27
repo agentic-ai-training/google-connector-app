@@ -418,7 +418,11 @@ async def _execute_step(app, pool, run, step, dependencies):
             qualifier = "" if raw_result.get("complete") else "at least "
             category = raw_result.get("category")
             period = raw_result.get("period")
-            description = f"{category} " if category else ""
+            description = {
+                "promotions": "promotional ",
+                "updates": "update ",
+                "forums": "forum ",
+            }.get(category, f"{category} " if category else "")
             timeframe = " today" if period == "today" else ""
             output = (
                 f"{qualifier}{count} unique Gmail sender"
