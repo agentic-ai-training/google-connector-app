@@ -116,14 +116,19 @@ python scripts/sync_grafana_dashboards.py
 ```
 
 Publishing is a separately authorized external write. Create a Grafana service-account
-token with dashboard write access, keep it out of Git and shell history, then run:
+token with dashboard write access and save it in the untracked root `.env.local`:
 
 ```bash
-export GRAFANA_URL=https://pluckypanther2969.grafana.net
-export GRAFANA_SERVICE_ACCOUNT_TOKEN=... # enter locally; never paste into chat
+GRAFANA_URL=https://pluckypanther2969.grafana.net
+GRAFANA_SERVICE_ACCOUNT_TOKEN=... # enter locally; never paste into chat
+```
+
+The synchronizer loads `.env.local` without replacing variables explicitly exported by
+the operator. Publish only after reviewing the two version-controlled dashboard files:
+
+```bash
 python scripts/sync_grafana_dashboards.py --apply \
   --confirmation 'SYNC GRAFANA DASHBOARDS'
-unset GRAFANA_SERVICE_ACCOUNT_TOKEN
 ```
 
 The synchronizer validates required dashboard fields, requires HTTPS, overwrites only
