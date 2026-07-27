@@ -6,6 +6,7 @@ import ast
 import difflib
 import hashlib
 import json
+import re
 import time
 import tomllib
 from pathlib import Path
@@ -20,6 +21,11 @@ from app.improvements.candidates import (
 
 class BuilderToolLimitError(RuntimeError):
     pass
+
+
+PROJECTED_STAGED_BODY = re.compile(
+    r"^\[staged in memory; \d+ chars; sha256:[0-9a-f]{64}; body omitted\]$",
+)
 
 
 class BoundedRepositoryTools:
@@ -224,6 +230,10 @@ class BoundedRepositoryTools:
 
     def stage(self, path: str, change_type: str, content: str = "") -> dict:
         self._safe_path(path)
+        if change_type != "delete" and PROJECTED_STAGED_BODY.fullmatch(content.strip()):
+            raise ValueError(
+                "Projected staged-file provenance cannot become candidate source",
+            )
         if len(content.encode()) > 500_000:
             raise BuilderToolLimitError("candidate file size limit exceeded")
         item = {

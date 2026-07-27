@@ -1182,7 +1182,7 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
             BoundedRepositoryTools(tmp_path), "coordinator",
         ))
         assert candidate["files"][0]["path"] == "tests/contract_retry.py"
-        assert candidate["exact_diff"].startswith("Frozen candidate files")
+        assert "+value = 1" in candidate["exact_diff"]
         assert tokens == 16
         assert any(
             "candidate_contract_rejected" in message["content"]
@@ -1190,6 +1190,50 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         )
         assert "tools" not in requests[6]
         assert "tools" not in requests[7]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_candidate_builder_corrects_invalid_python_before_review(monkeypatch, tmp_path):
+    requests = []
+
+    class Completions:
+        async def create(self, *, model, **kwargs):
+            requests.append(kwargs)
+            usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
+            content = json.dumps({
+                "files": [{
+                    "path": "app/generated.py",
+                    "change_type": "create",
+                    "content": "if:\n" if len(requests) == 1 else "value = 1\n",
+                }],
+                "rollback_plan": {"action": "remove candidate"},
+                "validation_commands": ["pytest -q tests/unit"],
+            })
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(
+                    content=content, tool_calls=None,
+                ))], usage=usage,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
+    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    get_settings.cache_clear()
+    try:
+        candidate, _, _ = asyncio.run(_groq_tool_json(
+            {
+                "model_name": "openai/gpt-oss-20b", "token_budget": 1_000,
+                "sanitized_input": {"title": "syntax correction test"},
+            },
+            BoundedRepositoryTools(tmp_path), "coordinator",
+        ))
+        assert candidate["files"][0]["content"] == "value = 1\n"
+        assert any(
+            "candidate_syntax_invalid" in message["content"]
+            for message in requests[1]["messages"]
+        )
     finally:
         get_settings.cache_clear()
 
@@ -2619,6 +2663,20 @@ def test_candidate_builder_can_validate_hash_and_rollback_staged_files(tmp_path)
     discarded = tools.execute("discard_staged_candidate_file", {"path": "app/broken.py"})
     assert discarded == {"discarded": "app/broken.py", "existed": True, "file_count": 1}
     assert tools.execute("validate_staged_candidate", {})["valid"] is True
+
+
+def test_candidate_builder_never_restages_projected_file_provenance(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path)
+    tools.stage("app/generated.py", "create", "value = 1\n")
+    projected = (
+        "[staged in memory; 225 chars; "
+        f"sha256:{'a' * 64}; body omitted]"
+    )
+    with pytest.raises(
+        ValueError, match="provenance cannot become candidate source",
+    ):
+        tools.stage("app/generated.py", "create", projected)
+    assert tools.staged_files()[0]["content"] == "value = 1\n"
 
 
 def test_okf_candidate_rejects_reserved_concepts_and_escaping_links():
