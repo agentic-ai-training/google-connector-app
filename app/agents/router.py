@@ -1,5 +1,8 @@
 from app.config.settings import get_settings
-DEEP_TERMS=("analyse","analyze","strategy","plan","long document","reason","compare","research")
+DEEP_TERMS=(
+    "analyse", "analyze", "strategy", "plan", "long document", "reason",
+    "compare", "research", "essay", "roadmap", "application",
+)
 async def route_model_node(state):
     text=state.get("message","").lower()
     return {

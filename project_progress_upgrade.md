@@ -871,3 +871,97 @@ Local evidence at this checkpoint: 160 non-database tests pass (29 integration t
 skipped), all 29 PostgreSQL integration tests pass, the 29-case golden planner suite and
 13/13 workflow replays pass, Python compilation and Flake8 pass, all offline
 chunking/policy/DP/dual-worker evaluations pass, and Next.js lint/production build pass.
+
+## Sprint 37 — Relevance-gated conversation context and compositional work
+
+The durable `/runs` path must support natural follow-ups and bounded Workspace writing
+without becoming a general-purpose chat product or silently inheriting old authority.
+This sprint adds two explicit planning concerns.
+
+### Epic 37.1 — Analyze every current statement before classification
+
+- A dedicated request-statement analysis component runs for every durable request. It
+  analyzes the current statement only and emits normalized text, explicit service cues,
+  composition intent, contextual-reference cues, service-only clarification, email
+  recipients, and current-turn external-write authority.
+- The classifier is required to consume this structured contract and passes the
+  resulting intent, services, risk, ambiguities, and action boundaries to the typed
+  planner. This component is distinct from conversation-history retrieval.
+- A deterministic implementation is the auditable control. A future model-assisted
+  analyzer may compete only behind replay, evaluation, canary, and rollback gates.
+- A separate `request_analyzed` event and content-free planning diagnostics prove that
+  the component ran without copying message text into metric labels or event payloads.
+
+### Epic 37.2 — Include prior conversation context only when relevant
+
+- A separate deterministic conversation-context resolver runs after current-statement
+  analysis and before classification for every durable request.
+- It first evaluates the current message for a service-only clarification, a referential
+  action such as `make it shorter` or `send it`, or an explicit follow-up phrase.
+- Only a relevant request may load one recent prior turn, and only from the same
+  authenticated user and exact session. Unrelated, cross-session, cross-user, deleted,
+  or stale context is never supplied to the classifier, planner, RAG, or model.
+- Self-contained requests proceed with their current text alone; this keeps latency,
+  prompt size, token cost, and privacy exposure bounded.
+- Reused context is reference material only. The current message is the sole authority
+  for external writes, approval bypass language, service selection, recipients, risk,
+  and other consequential actions. A past `send`, `share`, or `without asking` cannot
+  authorize the new turn.
+- The raw current request remains the durable audit record. Planning diagnostics and a
+  `context_analyzed` event record only content-free relevance facts, source run IDs,
+  bounded character counts, and whether prior context was included.
+- The analyzer is a required intake component, not another unconstrained LLM agent.
+  A learned relevance classifier may later compete behind evaluation and canary gates,
+  but the deterministic privacy and authority boundary remains mandatory.
+
+### Epic 37.3 — Typed composition inside Workspace workflows
+
+- Add `composition/compose` as a first-class, tool-free plan step for drafting,
+  rewriting, summarizing, outlining, brainstorming, applications, essays, roadmaps,
+  pointers, and similar bounded writing related to a Google Workspace outcome.
+- Draft-only requests complete through composition without calling Google APIs.
+- Combined requests form an explicit dependency DAG, for example:
+  `compose application → Gmail send`, or
+  `compose roadmap → create Google Doc`.
+- Downstream service steps receive the verified, compact dependency output. They must
+  not regenerate the content or claim that a prior write occurred.
+- Content nouns do not invent service actions: “draft an email asking for a meeting”
+  is composition, not a Calendar mutation. Conversely, “schedule the meeting” is a
+  Calendar action.
+- Writing remains within Google Workspace use cases; unrelated global conversation is
+  rejected by the existing guarded conversation classifier.
+
+### Epic 37.4 — Model, safety, and approval policy
+
+- Complex composition routes to the configured Groq reasoning model; ordinary short
+  composition may use the configured quality model.
+- The small Groq fallback is allowed only for low-risk, single-step composition when
+  its existing safety and context limits pass. Complex or mutating workflows do not
+  silently downgrade.
+- Composition itself has no Google tools and is read-only. Creating a Doc or Sheet is
+  a normal reversible Workspace write; sending email/Chat, inviting attendees,
+  sharing, deleting, publishing, or otherwise high-risk writing requires the existing
+  human approval unless the current request explicitly invokes an allowed opt-out.
+- The planner preserves explicit preconditions, postconditions, token budgets,
+  dependency outputs, verification, incident capture, and durable resume semantics.
+
+### Epic 37.5 — Acceptance, telemetry, and rollback
+
+- Golden and unit cases cover standalone drafts, combined compose-and-send/create
+  flows, referential rewrites, contextual sends, ambiguous service replies, typo
+  variants, authority non-inheritance, and cross-tenant/session isolation.
+- Empty composition output is a postcondition failure and enters granular failure
+  intelligence rather than producing false success.
+- Context diagnostics make it possible to measure relevance decisions without storing
+  duplicated message bodies in events or Prometheus labels.
+- Rollback removes the context analyzer call and composition routing while retaining
+  the raw durable requests, events, and legacy control path; no schema downgrade is
+  required.
+
+Local evidence at this checkpoint: 169 unit tests and 30 PostgreSQL integration tests
+pass; all Python sources compile; Flake8, Bandit, and `pip-audit` pass; the expanded
+32-case golden planner set, 13 workflow replays, chunking, policy, greedy/DP packing,
+DP allocation, dual-worker, and Grafana-definition checks pass; the migration
+downgrade/forward-repair guardrail returns to revision 013; secret-history and Compose
+configuration guardrails pass; Next.js lint/build and Flutter analyze/test/debug APK
+build pass; and Docker Desktop rebuilds healthy API and ready worker images.

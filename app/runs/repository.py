@@ -4,7 +4,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.config.settings import get_settings
-from app.runs.planner import SERVICES, action_hash, build_plan, classify_request, validate_plan
+from app.runs.context import analyze_conversation_context
+from app.runs.planner import action_hash, build_plan, validate_plan
+from app.runs.request_analysis import RequestStatementAnalysis
+from app.runs.request_analysis import analyze_request_statement
 from app.mlops.metrics import approval_requests, run_transitions
 from app.improvements.failure_intelligence import record_failure_incident
 from app.improvements.routing import resolve_executor_assignment
@@ -26,41 +29,12 @@ async def resolve_contextual_request(
     pool, user_id: str, session_id: str, message: str,
     timezone_name: str | None = None,
 ) -> str:
-    """Resolve a service-only reply against one recent ambiguous run.
-
-    The lookup is deliberately scoped to the same user and session, has a short
-    lifetime, and is accepted only when the combined text becomes a supported
-    Workspace action involving the named service.
-    """
-    normalized = " ".join(message.casefold().strip().split())
-    service = next((
-        canonical for canonical, aliases in SERVICES.items()
-        if normalized == canonical or normalized in aliases
-    ), None)
-    if not service:
-        return message
-    async with pool.acquire() as conn:
-        previous = await conn.fetchrow(
-            """SELECT request FROM agent_runs
-               WHERE user_id=$1 AND session_id=$2
-                 AND intent_kind IN ('ambiguous','out_of_scope')
-                 AND deleted_at IS NULL AND queued_at >= now()-interval '15 minutes'
-               ORDER BY queued_at DESC LIMIT 1""",
-            user_id, session_id,
-        )
-    if not previous:
-        return message
-    combined = (
-        f"{previous['request']}\n\n"
-        f"User clarified that the requested Google service is {service}."
+    """Compatibility wrapper for callers that only need the effective text."""
+    del timezone_name
+    analysis = await analyze_conversation_context(
+        pool, user_id=user_id, session_id=session_id, message=message,
     )
-    policy = classify_request(combined, timezone_name)
-    if (
-        policy["intent_kind"] == "workspace_action"
-        and service in (policy.get("services") or [])
-    ):
-        return combined
-    return message
+    return analysis.effective_message
 
 
 async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
@@ -77,13 +51,23 @@ async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
 
 async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                      required_executor_version: str | None = None,
-                     timezone_name: str | None = None):
+                     timezone_name: str | None = None,
+                     planning_message: str | None = None,
+                     context_diagnostics: dict | None = None,
+                     request_analysis: RequestStatementAnalysis | None = None):
     settings = get_settings()
     if len(message) > settings.max_request_chars:
         raise RunLimitExceeded(
             f"Request exceeds the {settings.max_request_chars}-character safety limit"
         )
-    plan, policy = build_plan(message, timezone_name)
+    planning_message = planning_message or message
+    context_diagnostics = context_diagnostics or {
+        "version": "conversation-context-v1", "mode": "standalone",
+    }
+    plan, policy = build_plan(
+        planning_message, timezone_name, authority_message=message,
+        request_analysis=request_analysis,
+    )
     plan_errors = validate_plan(plan)
     if plan_errors:
         error = "Invalid execution plan: " + "; ".join(plan_errors)
@@ -116,7 +100,14 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                 policy["risk_level"], policy["approval_bypassed"], key,
                 "source-aware-v1", "v0.1", settings.deployment_version, retention,
                 _json(policy["required_clarifications"]), policy["intent_kind"],
-                _json(policy["intent_evidence"]), _json({"validation_errors": plan_errors}),
+                _json(policy["intent_evidence"]), _json({
+                    "validation_errors": plan_errors,
+                    "request_analysis": (
+                        request_analysis.diagnostics()
+                        if request_analysis else None
+                    ),
+                    "conversation_context": context_diagnostics,
+                }),
                 error, settings.deployment_version,
             )
             await conn.execute(
@@ -204,17 +195,26 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                    (session_id,user_id,request,objective,status,current_phase,plan,
                     risk_level,requires_approval,approval_bypassed,idempotency_key,
                     chunker_version,okf_version,deployment_version,retention_until,
-                    clarification_questions,intent_kind,intent_evidence,executor_version,
+                    clarification_questions,intent_kind,intent_evidence,
+                    planning_diagnostics,executor_version,
                     canary_id,cohort_assignment,assignment_reason,assigned_at,okf_bundle_version)
                    VALUES($1,$2,$3,$3,$4,'planned',$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16::jsonb,
-                          $17,$18,$19,$20,now(),$21)
+                          $17::jsonb,$18,$19,$20,$21,now(),$22)
                    RETURNING *""",
                 session_id, user_id, message, status, _json(plan.model_dump()),
                 policy["risk_level"], policy["requires_approval"],
                 policy["approval_bypassed"], key, "source-aware-v1", "v0.1",
                 settings.deployment_version, retention,
                 _json(policy["required_clarifications"]), policy["intent_kind"],
-                _json(policy["intent_evidence"]), assignment.executor_version,
+                _json(policy["intent_evidence"]),
+                _json({
+                    "request_analysis": (
+                        request_analysis.diagnostics()
+                        if request_analysis else None
+                    ),
+                    "conversation_context": context_diagnostics,
+                }),
+                assignment.executor_version,
                 assignment.canary_id, assignment.cohort, assignment.reason,
                 assignment.okf_bundle_version,
             )
@@ -240,8 +240,17 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                 """INSERT INTO agent_run_events
                    (run_id,user_id,event_type,phase,message,payload)
                    VALUES($1,$2,'run_created','planned','Durable run created',$3::jsonb),
-                         ($1,$2,'plan_produced','planned','Execution plan produced',$4::jsonb)""",
-                run_id, user_id, _json({"status": status}), _json(plan.model_dump()),
+                         ($1,$2,'request_analyzed','planning',
+                          'Current request statement analyzed',$4::jsonb),
+                         ($1,$2,'context_analyzed','planning',
+                          'Conversation context relevance evaluated',$5::jsonb),
+                         ($1,$2,'plan_produced','planned','Execution plan produced',$6::jsonb)""",
+                run_id, user_id, _json({"status": status}),
+                _json(
+                    request_analysis.diagnostics()
+                    if request_analysis else {"version": "request-statement-v1"}
+                ),
+                _json(context_diagnostics), _json(plan.model_dump()),
             )
             if policy["required_clarifications"]:
                 await conn.execute(
@@ -284,17 +293,31 @@ async def clarify_run(pool, run_id, user_id, answers):
         )
         if not run:
             return None
-        augmented = run["request"] + "\n\nUser clarifications:\n" + "\n".join(
-            f"{key}: {value}" for key, value in sorted(answers.items())
+        combined_answers = {
+            **(run["clarification_answers"] or {}),
+            **answers,
+        }
+        clarification_text = "\n\nUser clarifications:\n" + "\n".join(
+            f"{key}: {value}" for key, value in sorted(combined_answers.items())
         )
-        plan, policy = build_plan(augmented)
+        planning_base = (run["plan"] or {}).get("objective") or run["request"]
+        planning_message = planning_base + clarification_text
+        authority_message = run["request"] + clarification_text
+        statement = analyze_request_statement(authority_message)
+        plan, policy = build_plan(
+            planning_message,
+            authority_message=authority_message,
+            request_analysis=statement,
+        )
         if policy["required_clarifications"]:
             await conn.execute(
-                """UPDATE agent_runs SET request=$1,plan=$2::jsonb,
-                   clarification_questions=$3::jsonb,clarification_answers=$4::jsonb
+                """UPDATE agent_runs SET plan=$1::jsonb,
+                   clarification_questions=$2::jsonb,clarification_answers=$3::jsonb,
+                   planning_diagnostics=COALESCE(planning_diagnostics,'{}'::jsonb) ||
+                       jsonb_build_object('request_analysis',$4::jsonb)
                    WHERE id=$5""",
-                augmented, _json(plan.model_dump()),
-                _json(policy["required_clarifications"]), _json(answers), run_id,
+                _json(plan.model_dump()), _json(policy["required_clarifications"]),
+                _json(combined_answers), _json(statement.diagnostics()), run_id,
             )
             return "awaiting_clarification"
         await conn.execute("DELETE FROM agent_run_steps WHERE run_id=$1", run_id)
@@ -315,12 +338,15 @@ async def clarify_run(pool, run_id, user_id, answers):
             )
         status = "awaiting_approval" if policy["requires_approval"] else "queued"
         await conn.execute(
-            """UPDATE agent_runs SET request=$1,objective=$1,status=$2,current_phase='planned',
+            """UPDATE agent_runs SET objective=$1,status=$2,current_phase='planned',
                plan=$3::jsonb,risk_level=$4,requires_approval=$5,
-               clarification_questions='[]'::jsonb,clarification_answers=$6::jsonb
-               WHERE id=$7""",
-            augmented, status, _json(plan.model_dump()), policy["risk_level"],
-            policy["requires_approval"], _json(answers), run_id,
+               clarification_questions='[]'::jsonb,clarification_answers=$6::jsonb,
+               planning_diagnostics=COALESCE(planning_diagnostics,'{}'::jsonb) ||
+                   jsonb_build_object('request_analysis',$7::jsonb)
+               WHERE id=$8""",
+            planning_message, status, _json(plan.model_dump()), policy["risk_level"],
+            policy["requires_approval"], _json(combined_answers),
+            _json(statement.diagnostics()), run_id,
         )
         await conn.execute(
             """INSERT INTO agent_run_events
@@ -336,7 +362,7 @@ async def clarify_run(pool, run_id, user_id, answers):
                    (run_id,requested_from,action_hash,action_summary,expires_at)
                    VALUES($1,$2,$3,$4::jsonb,now()+interval '30 minutes')""",
                 run_id, user_id, digest,
-                _json({"objective": augmented, "risk": policy["risk_level"],
+                _json({"objective": authority_message, "risk": policy["risk_level"],
                        "services": policy["services"]}),
             )
         return status
