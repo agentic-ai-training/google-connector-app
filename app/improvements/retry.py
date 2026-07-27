@@ -80,6 +80,7 @@ def candidate_retry_decision(
         and active_role in {
             "coordinator", "investigator_and_patch_author",
             "tool_extension_designer", "independent_safety_reviewer",
+            "review_remediation_author",
         }
         and isinstance(messages, list) and bool(messages)
     )

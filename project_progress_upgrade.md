@@ -550,6 +550,16 @@ their category; a multi-service unbounded-result theme requires at least two spe
   OAuth/precondition documentation, tests, and OKF concepts only as an untrusted candidate.
 - [x] Require an independent Groq review role for security-sensitive or multi-file changes;
   deterministic validators remain authoritative over model claims.
+- [x] When the independent reviewer rejects an otherwise structurally valid draft, pass
+  only bounded/redacted feedback to one remediation-author turn, freeze the corrected
+  files, and require a second independent review. A second rejection remains terminal.
+- [x] Checkpoint the remediation role before its first provider call, preserve aggregate
+  token/tool/read limits across interruption, and allow the final author round to attempt
+  its forced correction instead of failing immediately before that turn.
+- [x] Allow an administrator to create a separately identified attempt under a newer
+  builder policy from a terminal build. Preserve the original row, reuse only sanitized
+  evidence, pin the new attempt to the current control version, audit the supersession,
+  and continue to require trusted CI and all human publication/deployment/canary gates.
 
 ### Epic 30.3 — Isolated candidate workspace and evidence
 
@@ -764,6 +774,14 @@ After implementation and verification, teach through this repository:
 - 2026-07-22: PR #62 (`b4151815`) completed isolated, immutable Vercel-preview execution and stable cohort handoff for frontend candidates; PR #63 (`ca5fc5b`) completed joint production API/worker/frontend attestation. Main CI run `29869216872` and deploy run `29869217061` pass, and both public health surfaces report the exact control commit `ca5fc5b39f2783ee377ba17239abdada3211e3a9`. A clean Docker Desktop rebuild runs API, version-specific worker, PostgreSQL 16/pgvector 0.8.5 at migration 013, Ollama with a live 768-dimensional embedding probe, Prometheus with both targets up and 24 valid alert rules, and both provisioned Grafana dashboards. The dated Sprint 28–34 requirement audit is `docs/COMPLETION_AUDIT_2026-07-22.md`. The selected real candidate build `7aa74d5b` remains safely queued with no files, commit, deployment, canary, or side effects after Groq exhausted every builder-only quality-model quota; durable retries honor the provider reset window automatically.
 - 2026-07-22: Operational follow-up found that repeated quota retries were durable only at the build level: every ephemeral runner restarted the multi-role author/reviewer conversation from zero, discarded completed author work, and could consume newly released capacity before a later turn failed. The builder now freezes validated author files and sanitized phase metadata in the existing candidate tables, resumes directly at independent review, progressively reduces only the rejected turn's output reservation from 2,048 to 1,024/512/256 tokens, replaces partial files atomically when the final reviewed draft is stored, and exponentially backs repeated rate-limit retries up to six hours. Checkpoints remain untrusted, contain no Workspace content or production credentials, execute no generated code, and cannot satisfy CI, deployment, canary, promotion, or OKF approval gates. Local evidence: 127 unit tests, 26 PostgreSQL integration tests, all 153 together, complete evaluation/security/client gates, and a database-backed checkpoint-to-final-draft lifecycle test pass.
 - 2026-07-22: The first v5 production retry still exhausted quota before the author-complete boundary, proving phase-only durability was insufficient. Tool policy v6 now checkpoints after every accepted author or reviewer turn: bounded compacted conversation, next round, protocol mode, staged files, cumulative token/model use, and non-replenishable tool-call/read-byte counters. Resume continues at the next round and retains the original aggregate token/round/tool limits. Invalid free-form model output is represented only by content length and SHA-256 before persistence. No checkpoint contains Groq credentials, Workspace evidence, trusted test claims, execution access, or approval authority. A simulated ephemeral-runner interruption resumes without replaying its completed model/tool turn, and PostgreSQL coverage proves empty-file investigation state, author completion, and final reviewed freezing remain atomic.
+- 2026-07-28: A production-history audit found that all real builder attempts were
+  terminal and that the strongest attempt reached independent review but had no
+  review-to-repair transition. Builder policies v2/v7 add one bounded remediation-author
+  pass followed by mandatory independent re-review, a pre-provider remediation
+  checkpoint, and a final-round correction opportunity. The portal also exposes an
+  audited new-policy attempt that clones only sanitized evidence into a fresh build while
+  keeping the terminal source immutable; it grants no publication, deployment, canary,
+  promotion, or OKF authority.
 - 2026-07-22: Candidate retry visibility is now first-class in the protected improvement portal. Its API projects only sanitized operational fields—retry count/type/stage, next eligibility, dispatch state, durable role phase/round, token use, and frozen-file count—while excluding the checkpoint conversation and sanitized builder input. The browser renders the local eligibility time and refreshes it with the existing 30-second poll. Full local backend evidence is 130 unit plus 26 PostgreSQL integration tests (156 total); web lint and production build pass.
 - 2026-07-22: The new visibility exposed a stale retry-dispatch marker that remained `dispatching` after GitHub accepted a workflow and after its runner returned to quota wait. The durable dispatch state machine now records `dispatched`, `runner_leased`, `waiting_for_retry`, `completed`, `terminal`, or dispatch `failed` at the authoritative transition. These markers never contain generated content or credentials and do not alter the independently calculated retry deadline. The full 156-test backend suite and web lint/build pass.
 

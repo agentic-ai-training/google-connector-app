@@ -34,6 +34,8 @@ from app.improvements.candidates import (
     validate_candidate_files,
 )
 from app.improvements.builder import (
+    MODEL_POLICY_VERSION,
+    TOOL_POLICY_VERSION,
     effective_builder_token_budget,
     store_candidate_checkpoint,
     store_candidate_draft,
@@ -63,6 +65,8 @@ class FeatureFlagIn(BaseModel):
 class FailureIncidentDecisionIn(BaseModel):
     decision: str
     note: str | None = Field(default=None, max_length=4000)
+class CandidateBuildNewAttemptIn(BaseModel):
+    confirmation: str
 
 
 def _json_object(value) -> dict:
@@ -116,6 +120,7 @@ def _candidate_build_view(row) -> dict:
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
+            "model_policy_version", "tool_policy_version",
             "tokens_used", "token_budget", "created_at",
             "updated_at", "file_count",
         )
@@ -220,6 +225,95 @@ async def candidate_builds(status: str | None = None, limit: int = 100):
             status, max(1, min(limit, 200)),
         )
     return {"builds": [_candidate_build_view(row) for row in rows]}
+
+
+@router.post("/candidate-builds/{build_id}/new-policy-attempt")
+async def new_policy_candidate_attempt(
+    build_id: str, body: CandidateBuildNewAttemptIn, request: Request,
+):
+    """Clone terminal sanitized work under newer builder policy without rewriting history."""
+    if body.confirmation != "RETRY WITH CURRENT BUILDER POLICY":
+        raise HTTPException(422, "Exact retry confirmation is required")
+    settings = get_settings()
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        source = await conn.fetchrow(
+            """SELECT b.*,p.proposal_key,p.candidate_state
+                 FROM candidate_builds b
+                 JOIN improvement_proposals p ON p.id=b.proposal_id
+                WHERE b.id=$1 FOR UPDATE""",
+            build_id,
+        )
+        if not source:
+            raise HTTPException(404, "Candidate build not found")
+        if source["status"] not in {"failed", "cancelled"}:
+            raise HTTPException(409, "Only a terminal build can start a new policy attempt")
+        if source["candidate_state"] != "diagnosis_only":
+            raise HTTPException(
+                409, "The proposal already has an implementation candidate",
+            )
+        if (
+            source["model_policy_version"] == MODEL_POLICY_VERSION
+            and source["tool_policy_version"] == TOOL_POLICY_VERSION
+        ):
+            raise HTTPException(
+                409, "This build already used the current builder policy",
+            )
+        existing = await conn.fetchval(
+            """SELECT id FROM candidate_builds
+                WHERE proposal_id=$1 AND status IN ('queued','investigating','drafted',
+                                                    'validating','validated')
+                ORDER BY created_at DESC LIMIT 1""",
+            source["proposal_id"],
+        )
+        if existing:
+            raise HTTPException(
+                409, f"An active candidate attempt already exists: {existing}",
+            )
+        new_id = await conn.fetchval(
+            """INSERT INTO candidate_builds
+               (proposal_id,selected_option,mode,base_commit,model_name,
+                model_policy_version,tool_policy_version,token_budget,sanitized_input,
+                checkpoint,created_by)
+               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)
+               RETURNING id""",
+            source["proposal_id"], source["selected_option"], source["mode"],
+            settings.deployment_version, settings.candidate_builder_model,
+            MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
+            settings.candidate_builder_job_token_budget, source["sanitized_input"],
+            json.dumps({
+                "supersedes_build_id": str(source["id"]),
+                "retry_reason": "new_builder_policy",
+                "contains_private_evidence": False,
+            }),
+            request.state.user_id,
+        )
+        payload = json.dumps({
+            "source_build_id": str(source["id"]),
+            "new_build_id": str(new_id),
+            "model_policy_version": MODEL_POLICY_VERSION,
+            "tool_policy_version": TOOL_POLICY_VERSION,
+            "contains_private_evidence": False,
+        })
+        await conn.execute(
+            """INSERT INTO improvement_notifications
+               (proposal_id,channel,event_type,status,sanitized_payload)
+               VALUES($1,'admin',$2,'sent',$3::jsonb),
+                     ($1,'grafana',$2,'sent',$3::jsonb)""",
+            source["proposal_id"],
+            f"candidate_builder_new_policy_attempt_{str(new_id)[:8]}", payload,
+        )
+    try:
+        from app.improvements.publisher import dispatch_candidate_builder
+        dispatch = await dispatch_candidate_builder(str(new_id))
+    except Exception as exc:
+        dispatch = {"status": "not_dispatched", "reason": str(exc)}
+    return {
+        "source_build_id": build_id,
+        "build_id": str(new_id),
+        "status": "queued",
+        "dispatch": dispatch,
+    }
 
 
 @router.post("/candidate-builder/{build_id}/input")
