@@ -2568,6 +2568,13 @@ def test_promotional_sender_count_is_timezone_bounded_and_deterministic():
         "max_messages": 500,
     }
     assert validate_plan(plan) == []
+    typo_plan, typo_policy = build_plan(
+        "how many senders sent me promotional maisl today?", "Asia/Kolkata",
+    )
+    assert typo_policy["intent_kind"] == "workspace_action"
+    assert [(step.service, step.operation) for step in typo_plan.steps] == [
+        ("gmail", "sender_count"),
+    ]
 
 
 def test_gmail_sender_count_reads_only_from_headers(monkeypatch):
