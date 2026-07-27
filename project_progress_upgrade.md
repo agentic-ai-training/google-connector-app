@@ -838,3 +838,36 @@ is published only after its own trusted matrix passes.
   dashboard publisher now also consumes the previously documented untracked
   `.env.local` management credential without overriding explicit process variables;
   publication still requires the exact confirmation phrase and never prints the token.
+
+## Sprint 36 — Deterministic Gmail counts and contextual service clarification
+
+Production runs `48a30383`, `2eaf933d`, and `44b52dc4` exposed a routing gap: “how
+many senders sent me promotional mails today?” was persisted as an ambiguous,
+successfully completed guarded-chat run, so Gmail was never called. The action
+classifier recognized search/list/read verbs but not count/how-many intent.
+
+The correction is a general, bounded Gmail count path rather than a hard-coded answer:
+
+- `count` and `how many` are recognized as operational intent, while sender counting is
+  selected only when the user asks about senders/people rather than every Gmail count.
+- `sender_count` uses `count_gmail_senders`, a metadata-only deterministic tool. It
+  projects Gmail category names, computes exact local-day epoch bounds from an IANA
+  timezone, reads only the `From` header, and deduplicates normalized addresses.
+- The scan is capped at 500 messages by the plan and 2,000 by the tool. Exhausted scans
+  return an exact count; capped scans truthfully return a lower bound rather than a
+  false exact result.
+- The browser supplies its IANA timezone. Non-browser clients that request “today”
+  without a timezone receive a material clarification instead of a server-time guess.
+- No LLM, Groq token, RAG lookup, body fetch, or embedding is used for this operation.
+- A service-only follow-up such as `gmail` may resolve one recent unresolved request,
+  but only within the same authenticated user and session, within 15 minutes, and only
+  if the combined request becomes a valid action involving that service. Cross-user and
+  cross-session context reuse remains impossible.
+- The exact production wording is now in the golden planner set. Unit coverage proves
+  routing, category/timezone arguments, metadata-only access, and deduplication;
+  PostgreSQL API coverage proves contextual resolution and tenant isolation.
+
+Local evidence at this checkpoint: 160 non-database tests pass (29 integration tests
+skipped), all 29 PostgreSQL integration tests pass, the 29-case golden planner suite and
+13/13 workflow replays pass, Python compilation and Flake8 pass, all offline
+chunking/policy/DP/dual-worker evaluations pass, and Next.js lint/production build pass.

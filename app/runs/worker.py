@@ -388,9 +388,14 @@ async def _execute_step(app, pool, run, step, dependencies):
             payload={"artifact_count": 0, "model_calls": 0, "tool_calls": 0},
         )
         return output
-    if step.get("operation") == "recent_senders":
+    if step.get("operation") in {"recent_senders", "sender_count"}:
         tools = {tool.name: tool for tool in get_toolsets()["gmail"]}
-        tool = tools["list_recent_gmail_senders"]
+        tool_name = (
+            "list_recent_gmail_senders"
+            if step.get("operation") == "recent_senders"
+            else "count_gmail_senders"
+        )
+        tool = tools[tool_name]
         if isinstance(tool, GoogleWorkspaceBaseTool):
             tool.db_pool = pool
         state = {
@@ -408,11 +413,30 @@ async def _execute_step(app, pool, run, step, dependencies):
             "compact_result": envelope.compact_result,
             "projection": envelope.metadata(),
         }]
+        if step.get("operation") == "sender_count":
+            count = raw_result.get("unique_sender_count", 0)
+            qualifier = "" if raw_result.get("complete") else "at least "
+            category = raw_result.get("category")
+            period = raw_result.get("period")
+            description = f"{category} " if category else ""
+            timeframe = " today" if period == "today" else ""
+            output = (
+                f"{qualifier}{count} unique Gmail sender"
+                f"{'s' if count != 1 else ''} sent {description}mail{timeframe}."
+            )
+            if not raw_result.get("complete"):
+                output += (
+                    f" This is a lower bound from the first "
+                    f"{raw_result.get('messages_scanned', 0)} matching messages."
+                )
+        else:
+            count = raw_result.get("returned", 0)
+            output = (
+                f"Found {count} recent Gmail sender"
+                f"{'s' if count != 1 else ''}."
+            )
         result = {
-            "output": (
-                f"Found {raw_result.get('returned', 0)} recent Gmail sender"
-                f"{'s' if raw_result.get('returned', 0) != 1 else ''}."
-            ),
+            "output": output,
             "tool_results": [envelope.compact_result],
             "tool_executions": executions,
             "task_complete": True,

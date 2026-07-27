@@ -40,6 +40,7 @@ class RunCreate(BaseModel):
     message: str = Field(min_length=1, max_length=50_000)
     session_id: str = Field(min_length=1, max_length=200)
     idempotency_key: str | None = Field(default=None, max_length=200)
+    timezone: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class RunDecision(BaseModel):

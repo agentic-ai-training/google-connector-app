@@ -79,7 +79,8 @@ _GUIDANCE_PATTERNS = (
 )
 _ACTION_PATTERN = (
     r"\b(search|find|list|show|get|read|send|reply|create|make|build|write|append|"
-    r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check)\b"
+    r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check|count)\b"
+    r"|\bhow many\b"
 )
 _WORKSPACE_TERMS = tuple(SERVICE_LABELS) + (
     "email", "mail", "spreadsheet", "document", "meeting", "event",

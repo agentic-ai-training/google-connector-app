@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.config.settings import get_settings
-from app.runs.planner import action_hash, build_plan, validate_plan
+from app.runs.planner import SERVICES, action_hash, build_plan, classify_request, validate_plan
 from app.mlops.metrics import approval_requests, run_transitions
 from app.improvements.failure_intelligence import record_failure_incident
 from app.improvements.routing import resolve_executor_assignment
@@ -22,6 +22,47 @@ def _json(value):
     return json.dumps(value, default=str)
 
 
+async def resolve_contextual_request(
+    pool, user_id: str, session_id: str, message: str,
+    timezone_name: str | None = None,
+) -> str:
+    """Resolve a service-only reply against one recent ambiguous run.
+
+    The lookup is deliberately scoped to the same user and session, has a short
+    lifetime, and is accepted only when the combined text becomes a supported
+    Workspace action involving the named service.
+    """
+    normalized = " ".join(message.casefold().strip().split())
+    service = next((
+        canonical for canonical, aliases in SERVICES.items()
+        if normalized == canonical or normalized in aliases
+    ), None)
+    if not service:
+        return message
+    async with pool.acquire() as conn:
+        previous = await conn.fetchrow(
+            """SELECT request FROM agent_runs
+               WHERE user_id=$1 AND session_id=$2
+                 AND intent_kind IN ('ambiguous','out_of_scope')
+                 AND deleted_at IS NULL AND queued_at >= now()-interval '15 minutes'
+               ORDER BY queued_at DESC LIMIT 1""",
+            user_id, session_id,
+        )
+    if not previous:
+        return message
+    combined = (
+        f"{previous['request']}\n\n"
+        f"User clarified that the requested Google service is {service}."
+    )
+    policy = classify_request(combined, timezone_name)
+    if (
+        policy["intent_kind"] == "workspace_action"
+        and service in (policy.get("services") or [])
+    ):
+        return combined
+    return message
+
+
 async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
                        phase=None, message=None, payload=None):
     async with pool.acquire() as conn:
@@ -35,13 +76,14 @@ async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
 
 
 async def create_run(pool, user_id, message, session_id, idempotency_key=None,
-                     required_executor_version: str | None = None):
+                     required_executor_version: str | None = None,
+                     timezone_name: str | None = None):
     settings = get_settings()
     if len(message) > settings.max_request_chars:
         raise RunLimitExceeded(
             f"Request exceeds the {settings.max_request_chars}-character safety limit"
         )
-    plan, policy = build_plan(message)
+    plan, policy = build_plan(message, timezone_name)
     plan_errors = validate_plan(plan)
     if plan_errors:
         error = "Invalid execution plan: " + "; ".join(plan_errors)

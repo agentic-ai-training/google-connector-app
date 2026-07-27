@@ -1,9 +1,11 @@
 import base64
 import hashlib
 import io
+from datetime import datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
@@ -144,6 +146,96 @@ def list_recent_gmail_senders(
         "unique": unique,
         "scanned": scanned,
     }
+
+
+@tool(
+    "count_gmail_senders",
+    description=(
+        "Count unique Gmail senders from metadata only, optionally within a Gmail "
+        "category and the current local day. This never retrieves message bodies."
+    ),
+)
+def count_gmail_senders(
+    category: str | None = None,
+    period: str = "all",
+    timezone: str | None = None,
+    max_messages: int = 500,
+):
+    allowed_categories = {"primary", "promotions", "social", "updates", "forums"}
+    normalized_category = category.casefold().strip() if category else None
+    if normalized_category and normalized_category not in allowed_categories:
+        raise ValueError(f"Unsupported Gmail category: {category}")
+    if period not in {"all", "today"}:
+        raise ValueError("period must be 'all' or 'today'")
+
+    query_parts = ["-in:sent"]
+    if normalized_category:
+        query_parts.append(f"category:{normalized_category}")
+    local_date = None
+    if period == "today":
+        if not timezone:
+            raise ValueError("timezone is required when period is today")
+        try:
+            zone = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown timezone: {timezone}") from exc
+        now = datetime.now(zone)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        query_parts.extend([
+            f"after:{int(start.timestamp())}",
+            f"before:{int(end.timestamp())}",
+        ])
+        local_date = start.date().isoformat()
+
+    limit = max(1, min(int(max_messages), 2_000))
+    seen = set()
+    scanned = 0
+    page_token = None
+    exhausted = False
+    while scanned < limit:
+        response = g.gmail_service.users().messages().list(
+            userId="me",
+            q=" ".join(query_parts),
+            maxResults=min(100, limit - scanned),
+            pageToken=page_token,
+        ).execute()
+        message_ids = response.get("messages", [])
+        if not message_ids:
+            exhausted = True
+            break
+        for item in message_ids:
+            if scanned >= limit:
+                break
+            message = g.gmail_service.users().messages().get(
+                userId="me",
+                id=item["id"],
+                format="metadata",
+                metadataHeaders=["From"],
+                fields="id,payload/headers",
+            ).execute()
+            scanned += 1
+            _, sender_email = parseaddr(_headers(message).get("from", ""))
+            normalized = sender_email.strip().casefold()
+            if normalized:
+                seen.add(normalized)
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            exhausted = True
+            break
+
+    return {
+        "unique_sender_count": len(seen),
+        "messages_scanned": scanned,
+        "category": normalized_category,
+        "period": period,
+        "timezone": timezone,
+        "local_date": local_date,
+        "complete": exhausted,
+        "scan_limit": limit,
+    }
+
+
 @tool("get_gmail_message", description="Google Workspace operation")
 def get_gmail_message(message_id:str): return _gmail(g.gmail_service.users().messages().get(userId="me",id=message_id,format="full").execute())
 @tool("send_gmail", description="Google Workspace operation")
@@ -346,7 +438,8 @@ def list_meet_participants(conference_record: str, max_results: int = 100):
 
 
 _TOOL_NAMES = (
-    "search_gmail", "list_recent_gmail_senders", "get_gmail_message", "send_gmail", "reply_gmail",
+    "search_gmail", "list_recent_gmail_senders", "count_gmail_senders",
+    "get_gmail_message", "send_gmail", "reply_gmail",
     "label_gmail", "trash_gmail", "list_gmail_threads",
     "list_calendar_events", "get_calendar_event", "create_calendar_event",
     "update_calendar_event", "delete_calendar_event", "check_calendar_availability",
