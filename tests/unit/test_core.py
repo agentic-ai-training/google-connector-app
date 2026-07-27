@@ -1211,6 +1211,16 @@ def test_candidate_reviewer_uses_manifest_and_bounded_staged_reads(tmp_path):
     assert len(staged["content"].splitlines()) == 11
 
 
+def test_candidate_tool_limit_never_persists_more_than_its_authority(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path, max_calls=2)
+    tools.execute("list_repository_files", {"directory": "app"})
+    tools.execute("list_repository_files", {"directory": "tests"})
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="tool-call limit exceeded"):
+            tools.execute("list_repository_files", {"directory": "docs"})
+    assert tools.calls == 2
+
+
 def test_candidate_builder_failure_payload_is_sanitized_and_retryable():
     error = httpx.ConnectError("private upstream detail")
     payload = failure_payload(error, "input")

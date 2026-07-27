@@ -140,9 +140,9 @@ class BoundedRepositoryTools:
         }
 
     def _charge(self) -> None:
-        self.calls += 1
-        if self.calls > self.max_calls:
+        if self.calls >= self.max_calls:
             raise BuilderToolLimitError("candidate repository tool-call limit exceeded")
+        self.calls += 1
         if time.monotonic() - self.started > self.max_elapsed_seconds:
             raise BuilderToolLimitError("candidate repository tool time limit exceeded")
 
