@@ -26,6 +26,7 @@ from app.runs.repository import (
     decide_run,
     get_run,
     list_events,
+    resolve_contextual_request,
     search_runs,
 )
 from app.runs.schemas import (
@@ -60,8 +61,8 @@ def _decision_payload(decision: ReconciliationDecision) -> dict:
     return _serializable(asdict(decision))
 
 
-def _routing_plan(message: str) -> dict:
-    policy = classify_request(message)
+def _routing_plan(message: str, timezone_name: str | None = None) -> dict:
+    policy = classify_request(message, timezone_name)
     services = policy.get("services") or []
     return {
         "services": services,
@@ -283,29 +284,36 @@ async def start_run(body: RunCreate, request: Request):
         pool, "pilot_cohorts", request.state.user_id
     ):
         raise HTTPException(403, "This account is not in the active pilot cohort")
+    effective_message = await resolve_contextual_request(
+        pool, request.state.user_id, body.session_id, body.message, body.timezone,
+    )
     candidate_claims = None
     if settings.executor_role == "candidate":
         candidate_claims = _validated_candidate_assertion(request)
     elif settings.executor_role == "control":
         async with pool.acquire() as conn, conn.transaction():
             target = await resolve_candidate_api_target(
-                conn, request.state.user_id, _routing_plan(body.message),
+                conn, request.state.user_id,
+                _routing_plan(effective_message, body.timezone),
             )
         if target:
-            return await _forward_to_candidate(target, "/runs", request, body.model_dump(mode="json"))
+            payload = body.model_dump(mode="json")
+            payload["message"] = effective_message
+            return await _forward_to_candidate(target, "/runs", request, payload)
     try:
         run, created = await create_run(
-            pool, request.state.user_id, body.message,
+            pool, request.state.user_id, effective_message,
             body.session_id, body.idempotency_key,
             required_executor_version=(candidate_claims or {}).get("candidate_version"),
+            timezone_name=body.timezone,
         )
     except RunLimitExceeded as exc:
         try:
-            policy = classify_request(body.message)
+            policy = classify_request(effective_message, body.timezone)
             incident = await record_failure_incident(
                 pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:admission",
                 session_id=body.session_id, user_id=request.state.user_id,
-                message=body.message, intent_kind=policy["intent_kind"],
+                message=effective_message, intent_kind=policy["intent_kind"],
                 stage="admission", category="rate_limit", component="run_admission",
                 error=str(exc), breaking_point="Run admission policy", policy=policy,
             )
@@ -316,11 +324,11 @@ async def start_run(body: RunCreate, request: Request):
         raise HTTPException(429, detail) from exc
     except (CandidateAssignmentMismatch, ValueError, KeyError, TypeError) as exc:
         try:
-            policy = classify_request(body.message)
+            policy = classify_request(effective_message, body.timezone)
             incident = await record_failure_incident(
                 pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:planning",
                 session_id=body.session_id, user_id=request.state.user_id,
-                message=body.message, intent_kind=policy["intent_kind"],
+                message=effective_message, intent_kind=policy["intent_kind"],
                 stage="planning", category="planning", component="request_planner",
                 error=str(exc), breaking_point="Request planning", policy=policy,
             )

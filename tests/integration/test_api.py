@@ -175,6 +175,68 @@ def test_contextual_workflow_and_failure_inbox_are_durable():
         client.portal.call(cleanup)
 
 
+def test_service_only_reply_resolves_recent_same_session_ambiguity():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"context-followup-{uuid.uuid4()}@example.com"
+    session_id = f"context-followup-{uuid.uuid4()}"
+    run_ids = []
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        first = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "How many senders contacted me today?",
+            "timezone": "Asia/Kolkata",
+        })
+        assert first.status_code == 202
+        run_ids.append(first.json()["run_id"])
+        first_run = client.get(f"/runs/{run_ids[-1]}", headers=headers).json()
+        assert first_run["intent_kind"] == "out_of_scope"
+
+        second = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "gmail",
+            "timezone": "Asia/Kolkata",
+        })
+        assert second.status_code == 202
+        run_ids.append(second.json()["run_id"])
+        resolved = client.get(f"/runs/{run_ids[-1]}", headers=headers).json()
+        assert resolved["intent_kind"] == "workspace_action"
+        assert [(step["service"], step["operation"]) for step in resolved["steps"]] == [
+            ("gmail", "sender_count"),
+        ]
+
+        other_user = f"context-isolation-{uuid.uuid4()}@example.com"
+        other_token = client.post(
+            "/auth/token", json={"email": other_user}
+        ).json()["access_token"]
+        isolated = client.post("/runs", headers={
+            "Authorization": f"Bearer {other_token}",
+        }, json={
+            "session_id": session_id,
+            "message": "gmail",
+            "timezone": "Asia/Kolkata",
+        })
+        assert isolated.status_code == 202
+        run_ids.append(isolated.json()["run_id"])
+        isolated_run = client.get(
+            f"/runs/{run_ids[-1]}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        ).json()
+        assert isolated_run["intent_kind"] == "ambiguous"
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=ANY($1::uuid[])",
+                    run_ids,
+                )
+        client.portal.call(cleanup)
+
+
 def test_private_okf_bundle_is_namespaced_and_excluded_by_default(tmp_path):
     from app.api.main import app
     from app.config.settings import get_settings

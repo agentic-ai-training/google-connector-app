@@ -64,7 +64,11 @@ from app.rag.chunking_evaluation import evaluate_chunk_policy
 from app.runs.worker import classify_error, verify_step
 from app.runs.incident import build_incident, completion_from_steps
 from app.tools.base import tool_run_id
-from app.tools.registry import _request_id, list_recent_gmail_senders
+from app.tools.registry import (
+    _request_id,
+    count_gmail_senders,
+    list_recent_gmail_senders,
+)
 from app.tools.result_projection import project_tool_result
 from app.tools.registry import registered_tool_names
 from app.evaluation.replay import replay_case
@@ -2540,6 +2544,67 @@ def test_gmail_sender_listing_uses_metadata_only_and_deduplicates(monkeypatch):
     for call in get_request.call_args_list:
         assert call.kwargs["format"] == "metadata"
         assert call.kwargs["metadataHeaders"] == ["From", "Date"]
+
+
+def test_promotional_sender_count_is_timezone_bounded_and_deterministic():
+    message = "how many senders sent me promotional mails today?"
+    incomplete = classify_request(message)
+    assert incomplete["intent_kind"] == "workspace_action"
+    assert incomplete["required_clarifications"] == [
+        "Which timezone should define today?"
+    ]
+
+    plan, policy = build_plan(message, "Asia/Kolkata")
+    assert policy["required_clarifications"] == []
+    assert plan.services == ["gmail"]
+    assert plan.estimated_max_tokens == 1_500
+    assert plan.steps[0].operation == "sender_count"
+    assert plan.steps[0].read_only is True
+    assert plan.steps[0].arguments["allowed_tools"] == ["count_gmail_senders"]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "category": "promotions",
+        "period": "today",
+        "timezone": "Asia/Kolkata",
+        "max_messages": 500,
+    }
+    assert validate_plan(plan) == []
+
+
+def test_gmail_sender_count_reads_only_from_headers(monkeypatch):
+    service = MagicMock()
+    list_request = service.users.return_value.messages.return_value.list
+    list_request.return_value.execute.return_value = {
+        "messages": [{"id": "m1"}, {"id": "m2"}, {"id": "m3"}],
+    }
+    get_request = service.users.return_value.messages.return_value.get
+    get_request.return_value.execute.side_effect = [
+        {"id": "m1", "payload": {"headers": [
+            {"name": "From", "value": "Alice <alice@example.com>"},
+        ]}},
+        {"id": "m2", "payload": {"headers": [
+            {"name": "From", "value": "Alice Again <ALICE@example.com>"},
+        ]}},
+        {"id": "m3", "payload": {"headers": [
+            {"name": "From", "value": "Bob <bob@example.com>"},
+        ]}},
+    ]
+    monkeypatch.setattr("app.tools.registry.g.gmail_service", service)
+    result = count_gmail_senders.invoke({
+        "category": "promotions",
+        "period": "today",
+        "timezone": "Asia/Kolkata",
+        "max_messages": 500,
+    })
+    assert result["unique_sender_count"] == 2
+    assert result["messages_scanned"] == 3
+    assert result["complete"] is True
+    query = list_request.call_args.kwargs["q"]
+    assert query.startswith("-in:sent category:promotions after:")
+    assert " before:" in query
+    for call in get_request.call_args_list:
+        assert call.kwargs["format"] == "metadata"
+        assert call.kwargs["metadataHeaders"] == ["From"]
+        assert call.kwargs["fields"] == "id,payload/headers"
 
 
 def test_tool_projection_strips_gmail_bodies_and_is_token_bounded():

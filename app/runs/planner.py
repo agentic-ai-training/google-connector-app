@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.runs.schemas import ExecutionPlan, PlanStep
 from app.runs.informational import (
@@ -70,7 +71,11 @@ SERVICE_POSTCONDITIONS = {
 }
 
 SERVICE_OPERATION_PATTERNS = {
-    "gmail": [("trash", r"\b(trash|delete)\b"), ("label", r"\blabel\b"),
+    "gmail": [("sender_count",
+               r"\b(?:count|how many)\b.{0,100}\b(?:senders?|people|persons?)\b|"
+               r"\b(?:senders?|people|persons?)\b.{0,100}\b(?:count|how many)\b"),
+              ("trash", r"\b(trash|delete)\b"),
+              ("label", r"\blabel\b"),
               ("reply", r"\brepl(?:y|ies)\b"), ("send", r"\bsend\b"),
               ("search", r"\b(search|find|latest|recent|last|get|read|list)\b")],
     "calendar": [("delete", r"\b(delete|cancel)\b"), ("update", r"\b(update|move|reschedule)\b"),
@@ -96,6 +101,7 @@ SERVICE_OPERATION_PATTERNS = {
 }
 
 OPERATION_TOOLS = {
+    ("gmail", "sender_count"): ["count_gmail_senders"],
     ("gmail", "recent_senders"): ["list_recent_gmail_senders"],
     ("gmail", "search"): ["search_gmail", "get_gmail_message", "list_gmail_threads"],
     ("gmail", "send"): ["send_gmail"], ("gmail", "reply"): ["get_gmail_message", "reply_gmail"],
@@ -132,7 +138,8 @@ OPERATION_TOOLS = {
     ("meet", "conferences"): ["list_meet_conferences", "get_meet_space"],
     ("meet", "get"): ["get_meet_space"],
 }
-READ_OPERATIONS = {"search", "recent_senders", "get", "read", "list", "availability", "list_spaces",
+READ_OPERATIONS = {"search", "sender_count", "recent_senders", "get", "read", "list",
+                   "availability", "list_spaces",
                    "participants", "conferences"}
 DEFAULT_READ_OPERATION = {
     "gmail": "search", "calendar": "list", "drive": "search", "docs": "read",
@@ -143,6 +150,12 @@ DEFAULT_READ_OPERATION = {
 
 def infer_operation(service: str, message: str, write: bool) -> str:
     text = message.lower()
+    if service == "gmail" and re.search(
+        r"\b(?:count|how many)\b.{0,100}\b(?:senders?|people|persons?)\b|"
+        r"\b(?:senders?|people|persons?)\b.{0,100}\b(?:count|how many)\b",
+        text,
+    ):
+        return "sender_count"
     if service == "gmail" and re.search(
         r"\b(?:people|persons?|senders?|names?)\b.{0,80}\b(?:mail|email)s?\b|"
         r"\b(?:mail|email)s?\b.{0,80}\b(?:people|persons?|senders?|names?)\b",
@@ -167,8 +180,40 @@ def _matches(patterns: tuple[str, ...], text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
-def classify_request(message: str) -> dict:
+TIMEZONE_ALIASES = {
+    "utc": "UTC", "gmt": "UTC", "ist": "Asia/Kolkata",
+    "est": "America/New_York", "edt": "America/New_York",
+    "pst": "America/Los_Angeles", "pdt": "America/Los_Angeles",
+    "cet": "Europe/Paris",
+}
+
+
+def resolve_timezone(message: str, supplied: str | None = None) -> str | None:
+    candidates = [supplied] if supplied else []
+    candidates.extend(re.findall(
+        r"\b(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|"
+        r"Indian|Pacific)/[A-Za-z_+-]+(?:/[A-Za-z_+-]+)?\b",
+        message,
+    ))
+    lowered = message.casefold()
+    candidates.extend(
+        canonical for alias, canonical in TIMEZONE_ALIASES.items()
+        if re.search(rf"\b{alias}\b", lowered)
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            ZoneInfo(candidate)
+            return candidate
+        except ZoneInfoNotFoundError:
+            continue
+    return None
+
+
+def classify_request(message: str, timezone: str | None = None) -> dict:
     text = " ".join(message.lower().split())
+    resolved_timezone = resolve_timezone(message, timezone)
     services = [
         service for service, terms in SERVICES.items()
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
@@ -212,6 +257,13 @@ def classify_request(message: str) -> dict:
             clarifications.append("Which timezone should be used?")
     if "chat" in services and write and "space" not in text:
         clarifications.append("Which Google Chat space should receive the message?")
+    if (
+        "gmail" in services
+        and re.search(r"\b(?:count|how many)\b", text)
+        and re.search(r"\btoday\b", text)
+        and not resolved_timezone
+    ):
+        clarifications.append("Which timezone should define today?")
     if intent_kind != "workspace_action":
         services = ["general"]
         write = False
@@ -231,11 +283,12 @@ def classify_request(message: str) -> dict:
         "informational_intent": intent_evidence.get("product_intent"),
         "sheet_url_is_drive_link": sheet_url_is_drive_link,
         "calendar_adds_meet": calendar_adds_meet,
+        "timezone": resolved_timezone,
     }
 
 
-def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
-    policy = classify_request(message)
+def build_plan(message: str, timezone: str | None = None) -> tuple[ExecutionPlan, dict]:
+    policy = classify_request(message, timezone)
     if policy["intent_kind"] != "workspace_action":
         intent = policy["informational_intent"] or policy["intent_kind"]
         step = PlanStep(
@@ -291,6 +344,21 @@ def build_plan(message: str) -> tuple[ExecutionPlan, dict]:
             dependencies = [produced_data[-1]]
         count_match = re.search(r"\b(?:last|latest|recent)\s+(\d{1,3})\b", message.lower())
         exact_tool_arguments = {}
+        if service == "gmail" and operation == "sender_count":
+            category_match = re.search(
+                r"\b(promotions?|promotional|social|updates?|forums?|primary)\b",
+                message.casefold(),
+            )
+            category = {
+                "promotion": "promotions", "promotional": "promotions",
+                "update": "updates", "forum": "forums",
+            }.get(category_match.group(1), category_match.group(1)) if category_match else None
+            exact_tool_arguments = {
+                "category": category,
+                "period": "today" if re.search(r"\btoday\b", message.casefold()) else "all",
+                "timezone": policy["timezone"],
+                "max_messages": 500,
+            }
         if service == "gmail" and operation == "recent_senders":
             exact_tool_arguments = {
                 "max_results": min(int(count_match.group(1)), 100) if count_match else 20,

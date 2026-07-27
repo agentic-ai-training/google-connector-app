@@ -155,7 +155,7 @@ export function useChat(sessionId:string){
     setError("");setStreaming(true);
     setMessages(m=>[...m,{role:"user",content},{role:"assistant",content:""}]);
     try{
-      const response=await fetch(`${API}/runs`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({message:content,session_id:sessionId,idempotency_key:crypto.randomUUID()})});
+      const response=await fetch(`${API}/runs`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({message:content,session_id:sessionId,idempotency_key:crypto.randomUUID(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})});
       if(!response.ok){
         const detail=await response.json().catch(()=>({detail:`Request failed (${response.status})`}));
         throw new Error(detail.detail??`Request failed (${response.status})`);
