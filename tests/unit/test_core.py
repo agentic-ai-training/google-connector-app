@@ -2507,7 +2507,7 @@ def test_people_sheet_chat_calendar_meet_request_uses_contextual_dag():
     assert "contacts" not in plan.services and "drive" not in plan.services and "meet" not in plan.services
     assert policy["required_clarifications"] == [
         "How long should the event last?", "Which timezone should be used?",
-        "Which Google Chat space should receive the message?",
+        "Which existing Google Chat space or direct-message email should receive the message?",
     ]
     assert validate_plan(plan) == []
     assert [step.operation for step in plan.steps] == [

@@ -42,8 +42,9 @@ from app.config.settings import get_settings
 from app.tools.result_projection import project_tool_result
 from app.tools.result_store import store_private_tool_result
 from app.tools.contracts import (
-    WriteContract, attempted_required_tools, contract_satisfied,
-    missing_required_tools, successful_required_tools,
+    WriteContract, attempted_required_tools, bind_ordered_output_lineage,
+    contract_satisfied, missing_required_tools, next_ordered_required_tool,
+    successful_required_tools,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,29 @@ def recover_rejected_tool_call(exc: Exception) -> AIMessage | None:
             "type": "tool_call",
         }],
     )
+
+
+def safe_write_failure_message(tool_name: str, result: object) -> str:
+    """Return an actionable message without exposing provider payloads or IDs."""
+    error = (
+        str(result.get("error") or "").casefold()
+        if isinstance(result, dict) else ""
+    )
+    if tool_name == "write_google_sheet" and (
+        "requested entity was not found" in error or "404" in error
+    ):
+        return (
+            "Google Sheets could not find the spreadsheet referenced by the "
+            "population operation"
+        )
+    if tool_name == "send_chat_message" and (
+        "does not match the pattern" in error or "spaces/" in error
+    ):
+        return (
+            "Google Chat could not resolve the requested destination to an "
+            "accessible Chat space"
+        )
+    return f"The required {tool_name} operation returned explicit failure evidence"
 
 
 def get_toolsets() -> dict[str, list[BaseTool]]:
@@ -364,6 +388,8 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
 
 def make_service_node(service: str, pool=None):
     async def service_node(state: AgentState):
+        results = []
+        executions = []
         try:
             toolsets = get_toolsets()
             if pool:
@@ -427,8 +453,6 @@ def make_service_node(service: str, pool=None):
                 )),
                 HumanMessage(content=state.get("message", "")),
             ]
-            results = []
-            executions = []
             selection_retries = int(state.get("tool_selection_retry_count") or 0)
             for _ in range(8):
                 used_model = get_model_name(model_choice)
@@ -625,6 +649,24 @@ def make_service_node(service: str, pool=None):
                         "task_complete": True,
                     }
                 for call in calls:
+                    expected = next_ordered_required_tool(contract, executions)
+                    if (
+                        expected and call["name"] in contract.required_tools
+                        and call["name"] != expected
+                    ):
+                        messages.append(ToolMessage(
+                            content=(
+                                f"Deferred by trusted ordered contract: invoke "
+                                f"{expected} before {call['name']}."
+                            ),
+                            tool_call_id=call["id"],
+                            name=call["name"],
+                            status="error",
+                        ))
+                        continue
+                    call, lineage = bind_ordered_output_lineage(
+                        contract, call, executions,
+                    )
                     tool = by_name.get(call["name"])
                     if not tool:
                         message = ToolMessage(
@@ -648,7 +690,10 @@ def make_service_node(service: str, pool=None):
                         "arguments": call.get("args", {}),
                         "result": result,
                         "compact_result": compact_result,
-                        "projection": (envelope.metadata() if tool else {}),
+                        "projection": {
+                            **(envelope.metadata() if tool else {}),
+                            **lineage,
+                        },
                     })
                     if (
                         contract
@@ -659,9 +704,11 @@ def make_service_node(service: str, pool=None):
                             or result.get("success") is False
                         )
                     ):
+                        safe_failure = safe_write_failure_message(
+                            call["name"], result,
+                        )
                         raise ToolExecutionFailure(
-                            "A required write tool returned failure or uncertain evidence; "
-                            "automatic repetition is blocked.",
+                            f"{safe_failure}; automatic repetition is blocked.",
                             evidence={
                                 "service": contract.service,
                                 "operation": contract.operation,
@@ -681,6 +728,8 @@ def make_service_node(service: str, pool=None):
                 "error": str(exc),
                 "output": f"I couldn't complete that request: {exc}",
                 "task_complete": False,
+                "tool_results": results,
+                "tool_executions": executions,
             }
             if hasattr(exc, "category"):
                 failure.update({

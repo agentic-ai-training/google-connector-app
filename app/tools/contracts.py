@@ -120,6 +120,55 @@ def successful_required_tools(
     ]
 
 
+def next_ordered_required_tool(
+    contract: WriteContract | None, executions: list[dict],
+) -> str | None:
+    """Return the only required write currently allowed by an ordered contract."""
+    if contract is None or contract.completion_mode != "ordered":
+        return None
+    successful = successful_required_tools(contract, executions)
+    for index, name in enumerate(contract.required_tools):
+        if index >= len(successful) or successful[index] != name:
+            return name
+    return None
+
+
+def bind_ordered_output_lineage(
+    contract: WriteContract | None, call: dict, executions: list[dict],
+) -> tuple[dict, dict]:
+    """Bind downstream write identifiers to verified upstream tool output.
+
+    The model may select dependent tools in one response, before it has observed
+    the create result. The executor, not the model, owns resource-ID lineage.
+    """
+    if (
+        contract is None
+        or contract.service != "sheets"
+        or contract.operation != "create_and_write"
+        or call.get("name") != "write_google_sheet"
+    ):
+        return call, {}
+    created = next((
+        item.get("result") for item in reversed(executions)
+        if item.get("tool") == "create_google_sheet"
+        and isinstance(item.get("result"), dict)
+        and item["result"].get("spreadsheetId")
+        and not item["result"].get("error")
+    ), None)
+    if not created:
+        return call, {}
+    updated = {**call, "args": {
+        **(call.get("args") or {}),
+        "spreadsheet_id": created["spreadsheetId"],
+    }}
+    return updated, {
+        "lineage_source_tool": "create_google_sheet",
+        "lineage_target_tool": "write_google_sheet",
+        "lineage_field": "spreadsheet_id",
+        "lineage_bound": True,
+    }
+
+
 def missing_required_tools(
     contract: WriteContract, executions: list[dict],
 ) -> list[str]:

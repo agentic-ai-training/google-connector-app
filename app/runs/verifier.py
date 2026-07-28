@@ -206,7 +206,11 @@ def _calendar_verification(tool: str, args: dict, result: dict) -> tuple[bool, d
 def _chat_verification(args: dict, result: dict) -> tuple[bool, dict]:
     resource_name = _first(result, "name", "id")
     value = google.chat_service.spaces().messages().get(name=resource_name).execute()
-    expected_space = args.get("space_id") or args.get("space_name")
+    expected_space = (
+        result.get("resolvedSpace")
+        or args.get("space_id")
+        or args.get("space_name")
+    )
     observed_space = value.get("space")
     if isinstance(observed_space, dict):
         observed_space = observed_space.get("name")

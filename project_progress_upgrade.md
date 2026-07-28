@@ -983,3 +983,80 @@ DP allocation, dual-worker, and Grafana-definition checks pass; the migration
 downgrade/forward-repair guardrail returns to revision 013; secret-history and Compose
 configuration guardrails pass; Next.js lint/build and Flutter analyze/test/debug APK
 build pass; and Docker Desktop rebuilds healthy API and ready worker images.
+
+## Sprint 38 — Runtime lineage, delivery-intent, and partial-write safety
+
+Production runs `54b0c2bb` and `58f895d1` on deployment `7347b96` proved that
+write contracts alone did not establish resource lineage or semantic delivery intent.
+The first run created a Sheet but passed its title as the subsequent spreadsheet ID.
+The second asked for Google Chat, but an address domain invented a Gmail step that sent
+an unintended email; stale clarification keys then invented a Calendar step.
+
+### Epic 38.1 — Current-turn delivery authority
+
+- [x] Remove recipient email addresses before scanning service nouns so `@gmail.com`
+  cannot authorize Gmail.
+- [x] Represent explicit Gmail and Google Chat delivery channels separately and prohibit
+  one delivery channel from being inferred when the current turn explicitly selects the
+  other; multi-channel requests remain possible only when both are stated.
+- [x] Add the exact Chat-only email-recipient request and mixed Gmail/Sheet/Chat/Calendar
+  request to unit, golden, and replay coverage.
+
+### Epic 38.2 — Run-bound clarification integrity
+
+- [x] Accept only answer keys present in the exact run's current clarification-question
+  set; reject stale, cross-run, extra, or changed keys with a structured 422.
+- [x] Clear browser clarification state whenever the run or question set changes.
+- [x] Do not allow clarification question text to create new services unless that
+  question was issued and answered for the same run.
+
+### Epic 38.3 — Verified Chat destination resolution
+
+- [x] Accept an already validated `spaces/...` resource, resolve a direct-message email
+  through Google Chat, or require one unambiguous accessible display name.
+- [x] Bind message idempotency and read-after-write verification to the resolved space,
+  while retaining the user-approved destination in the durable action.
+- [x] Return a sanitized actionable destination error without exposing provider payloads.
+
+### Epic 38.4 — Deterministic Sheet composition and generic ordered lineage
+
+- [x] For recent-Gmail-sender workflows, construct table rows deterministically, create
+  the Sheet, bind the returned `spreadsheetId`, populate it, and read it back without
+  spending Groq tokens or asking a model to copy an identifier.
+- [x] At the general service-agent boundary, enforce the next allowed tool in an ordered
+  contract and bind downstream identifier fields from successful upstream results.
+- [x] Record lineage source, target, field, and binding evidence in the execution ledger.
+
+### Epic 38.5 — Partial side effects, incidents, and reconciliation
+
+- [x] Preserve successful and failed tool executions when a service agent exits through
+  a typed exception so created artifacts are not lost from the ledger.
+- [x] Include a sanitized operation-specific cause beside the no-blind-retry message.
+- [x] Reduce side-effect integrity when a failed step contains successful/attempted writes,
+  and expose the artifact for preserve/cleanup/retry-population decisions.
+- [x] Block ordinary resume when legacy tool-attempt evidence proves a write occurred but
+  its result/artifact lineage was not retained; require explicit reconciliation.
+
+### Epic 38.6 — Candidate-builder and OKF governance compatibility
+
+- [x] Retain the Sprint-30 Groq-only adaptive coding-agent architecture and its bounded
+  repository read/search/stage/diff/validation/rollback tools; no other model credential
+  is introduced.
+- [x] Retain tool-extension drafting as an untrusted candidate capability rather than
+  dynamic runtime authority.
+- [x] Retain independent human gates for candidate publication, production-connected
+  deployment, canary activation, promotion, and trusted OKF publication; approved OKF
+  remains immutable, hash-pinned per run, separately measured, and independently rolled back.
+
+Guardrail: a Chat-only request cannot execute Gmail or Calendar; a Sheet population
+cannot use a title/placeholder as the created resource ID; stale clarification keys are
+rejected; and every successful write remains visible even when a later write fails.
+
+Local implementation evidence on 2026-07-29: 182 default backend tests and all 32
+PostgreSQL integration tests pass; planner golden cases pass 33/33 and workflow replays
+pass 14/14. Python compile and Flake8, Bandit, `pip-audit`, source-aware chunking,
+policy, context-packing, DP-allocation, dual-worker, Grafana-definition, Compose,
+secret-history, and migration downgrade/forward-repair guardrails pass. Next.js lint
+and production build pass; Flutter analyze, test, and debug APK build pass. Production
+deployment and post-deployment smoke evidence are recorded after the reviewed branch
+is merged.

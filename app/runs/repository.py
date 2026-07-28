@@ -21,6 +21,10 @@ class CandidateAssignmentMismatch(RuntimeError):
     pass
 
 
+class InvalidClarificationAnswers(ValueError):
+    """Clarification payload did not match this run's outstanding questions."""
+
+
 def _json(value):
     return json.dumps(value, default=str)
 
@@ -293,6 +297,13 @@ async def clarify_run(pool, run_id, user_id, answers):
         )
         if not run:
             return None
+        requested_questions = set(run["clarification_questions"] or [])
+        supplied_questions = set(answers)
+        unexpected = sorted(supplied_questions - requested_questions)
+        if unexpected:
+            raise InvalidClarificationAnswers(
+                "Clarification answers do not match this run's current questions"
+            )
         combined_answers = {
             **(run["clarification_answers"] or {}),
             **answers,

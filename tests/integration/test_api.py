@@ -175,6 +175,70 @@ def test_contextual_workflow_and_failure_inbox_are_durable():
         client.portal.call(cleanup)
 
 
+def test_chat_delivery_is_channel_safe_and_clarifications_are_run_bound():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"chat-routing-{uuid.uuid4()}@example.com"
+    session_id = f"chat-routing-{uuid.uuid4()}"
+    run_ids = []
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        direct = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": (
+                "Can you send a chat message to achintyat256@gmail.com saying hi?"
+            ),
+        })
+        assert direct.status_code == 202
+        run_ids.append(direct.json()["run_id"])
+        direct_run = client.get(
+            f"/runs/{direct.json()['run_id']}", headers=headers,
+        ).json()
+        assert direct_run["status"] == "awaiting_approval"
+        assert direct_run["plan"]["services"] == ["chat"]
+        assert [
+            (step["service"], step["operation"]) for step in direct_run["steps"]
+        ] == [("chat", "send")]
+
+        missing = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "Send a Google Chat message saying hi",
+        })
+        assert missing.status_code == 202
+        run_ids.append(missing.json()["run_id"])
+        assert missing.json()["status"] == "awaiting_clarification"
+        stale = client.post(
+            f"/runs/{missing.json()['run_id']}/clarify",
+            headers=headers,
+            json={"answers": {
+                "Which existing Google Chat space or direct-message email should "
+                "receive the message?": "spaces/fixture",
+                "How long should the event last?": "15 minutes",
+            }},
+        )
+        assert stale.status_code == 422
+        assert stale.json()["detail"]["reason_code"] == "clarification_keys_mismatch"
+        unchanged = client.get(
+            f"/runs/{missing.json()['run_id']}", headers=headers,
+        ).json()
+        assert unchanged["status"] == "awaiting_clarification"
+        assert unchanged["plan"]["services"] == ["chat"]
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=ANY($1::uuid[])",
+                    [uuid.UUID(run_id) for run_id in run_ids],
+                )
+
+        client.portal.call(cleanup)
+
+
 def test_service_only_reply_resolves_recent_same_session_ambiguity():
     from app.api.main import app
     from app.db.connection import get_pool

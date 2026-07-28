@@ -15,6 +15,7 @@ _IDENTIFIER_KEYS = {
     "spreadsheetId", "eventId", "taskId", "spaceId", "conferenceId",
     "spreadsheetUrl", "documentUrl", "webViewLink", "htmlLink", "meetLink",
     "meetingUri", "url", "link", "status", "trashed",
+    "resolvedSpace",
 }
 _GMAIL_KEYS = {
     "id", "thread_id", "sender", "sender_name", "subject", "snippet",

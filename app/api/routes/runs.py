@@ -18,6 +18,7 @@ from app.db import google_clients as google
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.repository import (
     CandidateAssignmentMismatch,
+    InvalidClarificationAnswers,
     RunLimitExceeded,
     append_event,
     cancel_run,
@@ -173,6 +174,11 @@ async def _reconcile_and_resume(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 AND step_id=$2",
             run_id, step_row["id"],
         )
+        historical_tool_attempts = await conn.fetch(
+            """SELECT tool_name,status,error_category FROM agent_tool_attempts
+               WHERE run_id=$1 AND step_id=$2 ORDER BY attempt_no""",
+            run_id, step_row["id"],
+        )
         await conn.execute(
             """UPDATE agent_runs SET current_phase='reconciling',
                current_step_id=$1 WHERE id=$2""",
@@ -181,6 +187,9 @@ async def _reconcile_and_resume(
 
     run = dict(run_row)
     step = dict(step_row)
+    step["historical_tool_attempts"] = [
+        dict(item) for item in historical_tool_attempts
+    ]
     prior_executions = (
         (step.get("output_data") or {}).get("tool_executions", [])
         if isinstance(step.get("output_data"), dict) else []
@@ -477,9 +486,15 @@ async def submit_clarification(run_id: str, body: RunClarification, request: Req
                 target, f"/runs/{run_id}/clarify", request,
                 body.model_dump(mode="json"),
             )
-    status = await clarify_run(
-        pool, run_id, request.state.user_id, body.answers,
-    )
+    try:
+        status = await clarify_run(
+            pool, run_id, request.state.user_id, body.answers,
+        )
+    except InvalidClarificationAnswers as exc:
+        raise HTTPException(422, {
+            "message": str(exc),
+            "reason_code": "clarification_keys_mismatch",
+        }) from exc
     if not status:
         raise HTTPException(409, "Run is not awaiting clarification")
     return {"run_id": run_id, "status": status}
