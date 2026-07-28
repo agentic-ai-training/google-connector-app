@@ -45,6 +45,12 @@ EMAIL_WRITE_PATTERN = re.compile(
 EMAIL_PATTERN = re.compile(
     r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE,
 )
+DELIVERY_CHANNEL_PATTERNS = {
+    "gmail": re.compile(r"\b(?:gmail|e-?mail|mails?)\b", re.IGNORECASE),
+    "chat": re.compile(
+        r"\b(?:google\s+chat|chat\s+message|chat)\b", re.IGNORECASE,
+    ),
+}
 LOCAL_ANTECEDENT_PATTERN = re.compile(
     r"\b(create|draft|write|compose|find|get|make|build|prepare)\b.+"
     r"(?:\band\b|\bthen\b|[,.;])\s*(?:then\s+)?"
@@ -63,6 +69,8 @@ class RequestStatementAnalysis:
     service_only: str | None = None
     current_authorizes_external_write: bool = False
     email_recipients: list[str] = field(default_factory=list)
+    delivery_channels: list[str] = field(default_factory=list)
+    chat_destination_emails: list[str] = field(default_factory=list)
 
     def classifier_input(self) -> dict:
         """Structured current-turn facts that classification is required to consume."""
@@ -77,6 +85,8 @@ class RequestStatementAnalysis:
                 self.current_authorizes_external_write
             ),
             "email_recipients": self.email_recipients,
+            "delivery_channels": self.delivery_channels,
+            "chat_destination_emails": self.chat_destination_emails,
         }
 
     def diagnostics(self) -> dict:
@@ -92,6 +102,8 @@ class RequestStatementAnalysis:
                 self.current_authorizes_external_write
             ),
             "email_recipient_count": len(self.email_recipients),
+            "delivery_channels": self.delivery_channels,
+            "chat_destination_email_count": len(self.chat_destination_emails),
         }
 
 
@@ -105,13 +117,45 @@ def _service_only(normalized_text: str) -> str | None:
 def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     """Analyze the current statement only; never load conversation history here."""
     normalized = " ".join(message.casefold().strip().split())
+    # Domains such as ``@gmail.com`` identify a recipient, not the user's intended
+    # delivery service. Remove addresses before scanning service nouns so an
+    # explicit Google Chat request cannot silently acquire a Gmail mutation.
+    service_text = EMAIL_PATTERN.sub(" ", normalized)
     services = [
         service for service, aliases in SERVICES.items()
         if any(
-            re.search(rf"\b{re.escape(alias)}\b", normalized)
+            re.search(rf"\b{re.escape(alias)}\b", service_text)
             for alias in aliases
         )
     ]
+    delivery_channels = [
+        channel for channel, pattern in DELIVERY_CHANNEL_PATTERNS.items()
+        if pattern.search(service_text)
+    ]
+    recipients = list(dict.fromkeys(EMAIL_PATTERN.findall(message)))
+    chat_destinations = []
+    chat_matches = list(re.finditer(r"\b(?:google\s+chat|chat)\b", normalized))
+    for recipient in recipients:
+        recipient_match = re.search(re.escape(recipient.casefold()), normalized)
+        if not recipient_match:
+            continue
+        nearest = min(
+            chat_matches,
+            key=lambda match: abs(match.start() - recipient_match.start()),
+            default=None,
+        )
+        if not nearest:
+            continue
+        start, end = sorted((nearest.end(), recipient_match.start()))
+        between = normalized[start:end]
+        if (
+            len(between) <= 100
+            and not re.search(
+                r"\b(?:calendar|calender|event|meet|meeting|invite|schedule)\b",
+                between,
+            )
+        ):
+            chat_destinations.append(recipient)
     contextual = bool(
         (
             REFERENCE_PATTERN.search(normalized)
@@ -143,5 +187,7 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         contextual_reference=contextual,
         service_only=_service_only(normalized),
         current_authorizes_external_write=external_write,
-        email_recipients=EMAIL_PATTERN.findall(message),
+        email_recipients=recipients,
+        delivery_channels=delivery_channels,
+        chat_destination_emails=chat_destinations,
     )

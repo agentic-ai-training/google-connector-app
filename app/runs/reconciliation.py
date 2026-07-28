@@ -73,6 +73,19 @@ async def reconcile_failed_step(
     attempted = attempted_required_tools(contract, executions)
     evidence["attempted_required_tools"] = attempted
     if not attempted:
+        historical_attempts = step.get("historical_tool_attempts") or []
+        historical_writes = [
+            item for item in historical_attempts
+            if item.get("tool_name") in WRITE_TOOLS
+        ]
+        if historical_writes:
+            evidence["historical_write_tools"] = [
+                str(item.get("tool_name")) for item in historical_writes
+            ]
+            return ReconciliationDecision(
+                "manual_required", "legacy_write_evidence_requires_reconciliation",
+                None, evidence,
+            )
         category = step.get("error_category") or run.get("error_category")
         if category == "tool_selection":
             return ReconciliationDecision(

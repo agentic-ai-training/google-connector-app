@@ -15,6 +15,17 @@ def completion_from_steps(steps: list[dict]) -> dict:
     )
     uncertain_writes = 0
     for step in steps:
+        semantic = (step.get("input_data") or {}).get(
+            "semantic_authorization", {}
+        )
+        if (
+            step.get("status") == "completed"
+            and not step.get("read_only", True)
+            and semantic.get("authorized") is False
+        ):
+            # Provider success cannot make an unintended external mutation safe.
+            uncertain_writes += 1
+            continue
         if step.get("status") != "failed" or step.get("read_only", True):
             continue
         if step.get("error_category") == "worker_reconciliation":
@@ -38,6 +49,22 @@ def build_incident(steps: list[dict], error_category: str, error_message: str) -
     completed = [step["title"] for step in completed_steps]
     failed = next((step for step in steps if step.get("status") == "failed"), None)
     pending = [step["title"] for step in steps if step.get("status") == "pending"]
+    unintended_side_effects = [
+        {
+            "step_id": str(step.get("id") or ""),
+            "title": str(step.get("title") or ""),
+            "service": str(step.get("service") or ""),
+            "operation": str(step.get("operation") or ""),
+            "verified": True,
+        }
+        for step in completed_steps
+        if (
+            not step.get("read_only", True)
+            and (step.get("input_data") or {})
+            .get("semantic_authorization", {})
+            .get("authorized") is False
+        )
+    ]
     failed_write_may_exist = bool(
         failed
         and not failed.get("read_only", True)
@@ -56,9 +83,12 @@ def build_incident(steps: list[dict], error_category: str, error_message: str) -
             "Dependent steps were not executed" if pending else None,
             "A high-risk write may require artifact review"
             if failed_write_may_exist else None,
+            "A verified external write did not match the user's requested delivery channel"
+            if unintended_side_effects else None,
         ) if factor],
         "error": error_message,
         "recoverable": error_category in {"rate_limit", "network", "worker"},
         "evidence": [str(failed.get("id"))] if failed else [],
         "pending": pending,
+        "unintended_side_effects": unintended_side_effects,
     }

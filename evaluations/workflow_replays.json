@@ -109,6 +109,13 @@
     ]
   },
   {
+    "id": "chat-direct-message-email-does-not-invent-other-services",
+    "expect": {"artifact_count": 1},
+    "steps": [
+      {"id": "chat", "service": "chat", "operation": "send", "arguments": {"space": "achintyat256@example.com", "text": "safe fixture"}}
+    ]
+  },
+  {
     "id": "uncertain-write-blocks-repeat",
     "uncertain_write_after_acceptance": ["sheets.create_and_write"],
     "expected_status": "failed",

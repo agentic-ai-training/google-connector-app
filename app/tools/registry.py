@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import re
 from datetime import datetime, timedelta
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
@@ -405,8 +406,47 @@ def search_contacts(query:str,max_results:int=10): return g.people_service.peopl
 def get_contact(email:str): return g.people_service.people().searchContacts(query=email,readMask="names,emailAddresses,phoneNumbers,organizations,biographies,photos",pageSize=10).execute().get("results",[])
 @tool("list_chat_spaces", description="Google Workspace operation")
 def list_chat_spaces(): return g.chat_service.spaces().list().execute().get("spaces",[])
-@tool("send_chat_message", description="Google Workspace operation")
-def send_chat_message(space_id:str,text:str): return g.chat_service.spaces().messages().create(parent=space_id,body={"text":text},requestId=_request_id("chat",space_id,text)).execute()
+
+
+def _resolve_chat_space(destination: str) -> str:
+    value = destination.strip()
+    if re.fullmatch(r"spaces/[^/]+", value):
+        return value
+    if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        found = g.chat_service.spaces().findDirectMessage(
+            name=f"users/{value}",
+        ).execute()
+        if found.get("name"):
+            return found["name"]
+        raise ValueError(
+            "No accessible direct-message space exists for that email address"
+        )
+    matches = [
+        item for item in g.chat_service.spaces().list().execute().get("spaces", [])
+        if str(item.get("displayName") or "").casefold() == value.casefold()
+    ]
+    if len(matches) != 1 or not matches[0].get("name"):
+        raise ValueError(
+            "Chat destination must be one accessible space, spaces/... resource, "
+            "or direct-message email"
+        )
+    return matches[0]["name"]
+
+
+@tool(
+    "send_chat_message",
+    description=(
+        "Send a Google Chat message. space_id may be a spaces/... resource, an "
+        "exact accessible space display name, or a direct-message email address."
+    ),
+)
+def send_chat_message(space_id: str, text: str):
+    resolved = _resolve_chat_space(space_id)
+    message = g.chat_service.spaces().messages().create(
+        parent=resolved, body={"text": text},
+        requestId=_request_id("chat", resolved, text),
+    ).execute()
+    return {**message, "resolvedSpace": resolved}
 
 def _meet_space_name(meeting_code_or_name: str) -> str:
     return (meeting_code_or_name if meeting_code_or_name.startswith("spaces/")

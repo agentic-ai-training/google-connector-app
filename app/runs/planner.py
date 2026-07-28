@@ -186,6 +186,32 @@ def _matches(patterns: tuple[str, ...], text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
+def _service_authorization(
+    service: str, statement: RequestStatementAnalysis,
+) -> dict:
+    if service == "composition":
+        authorized = statement.composition_requested
+        basis = "current_turn_composition"
+    elif service == "general":
+        authorized = True
+        basis = "guarded_workspace_conversation"
+    elif service in statement.explicit_services:
+        authorized = True
+        basis = "current_turn_explicit_service"
+    elif (
+        service == "gmail"
+        and statement.email_recipients
+        and "chat" not in statement.delivery_channels
+        and re.search(r"\bsend\b", statement.normalized_text)
+    ):
+        authorized = True
+        basis = "current_turn_recipient_delivery"
+    else:
+        authorized = False
+        basis = "no_current_turn_service_authority"
+    return {"authorized": authorized, "basis": basis}
+
+
 TIMEZONE_ALIASES = {
     "utc": "UTC", "gmt": "UTC", "ist": "Asia/Kolkata",
     "est": "America/New_York", "edt": "America/New_York",
@@ -238,9 +264,25 @@ def classify_request(
     if (
         re.search(r"\bsend\b", authority_text)
         and statement.email_recipients
+        and "chat" not in statement.delivery_channels
     ):
         services.append("gmail")
         authority_services.add("gmail")
+    # Delivery nouns in the current statement are authoritative. Historical
+    # context or an address domain may help resolve a recipient, but cannot add a
+    # different external-write channel.
+    if (
+        "chat" in statement.delivery_channels
+        and "gmail" not in statement.delivery_channels
+    ):
+        services = [service for service in services if service != "gmail"]
+        authority_services.discard("gmail")
+    if (
+        "gmail" in statement.delivery_channels
+        and "chat" not in statement.delivery_channels
+    ):
+        services = [service for service in services if service != "chat"]
+        authority_services.discard("chat")
     # "Space" is a resource noun for both Chat and Meet. Do not invent a Chat
     # step when the user explicitly asks for a Meet space without mentioning Chat.
     if "meet" in services and "chat" in services and not re.search(r"\bchat\b", text):
@@ -311,8 +353,14 @@ def classify_request(
             clarifications.append("How long should the event last?")
         if not re.search(r"\b(?:timezone|utc|gmt|ist|est|edt|pst|pdt|cet|asia/|america/|europe/)\b", text):
             clarifications.append("Which timezone should be used?")
-    if "chat" in services and write and "space" not in text:
-        clarifications.append("Which Google Chat space should receive the message?")
+    if (
+        "chat" in services and write and "space" not in text
+        and not statement.chat_destination_emails
+    ):
+        clarifications.append(
+            "Which existing Google Chat space or direct-message email should "
+            "receive the message?"
+        )
     if (
         "gmail" in services
         and re.search(r"\b(?:count|how many)\b", text)
@@ -460,7 +508,12 @@ def build_plan(
                            "extract_unique_sender_names": service == "gmail" and "people" in message.lower(),
                            "sheet_url_is_drive_link": policy["sheet_url_is_drive_link"],
                            "add_meet_conference": service == "calendar" and policy["calendar_adds_meet"],
-                       }},
+                       },
+                       "semantic_authorization": _service_authorization(
+                           service, request_analysis or analyze_request_statement(
+                               authority_message or message
+                           ),
+                       )},
             read_only=read_only,
             risk_level=policy["risk_level"],
             requires_approval=policy["requires_approval"] and not read_only,
@@ -517,6 +570,11 @@ def validate_plan(plan: ExecutionPlan) -> list[str]:
         if step.read_only and any(tool in WRITE_TOOLS for tool in required):
             errors.append(f"{step.id} is read-only but requires a write tool")
         if not step.read_only:
+            semantic = step.arguments.get("semantic_authorization") or {}
+            if semantic.get("authorized") is False:
+                errors.append(
+                    f"{step.id} lacks current-turn semantic authorization"
+                )
             contract = write_contract_for(step.service, step.operation, allowed)
             if not contract or not required:
                 errors.append(f"{step.id} has no valid required write contract")

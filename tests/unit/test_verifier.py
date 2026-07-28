@@ -141,6 +141,27 @@ def test_chat_destination_text_and_reference(monkeypatch):
     assert not _run([execution], "chat", "send").passed
 
 
+def test_chat_email_destination_verifies_resolved_space(monkeypatch):
+    text = "hi"
+    monkeypatch.setattr(
+        "app.runs.verifier.google.chat_service",
+        _chat_service({
+            "name": "spaces/direct/messages/m",
+            "space": "spaces/direct",
+            "text": text,
+        }),
+    )
+    execution = {
+        "tool": "send_chat_message",
+        "arguments": {"space_id": "person@example.com", "text": text},
+        "result": {
+            "name": "spaces/direct/messages/m",
+            "resolvedSpace": "spaces/direct",
+        },
+    }
+    assert _run([execution], "chat", "send").passed
+
+
 def _drive_service(permission):
     permissions = SimpleNamespace(
         get=lambda **_: Reply(permission),

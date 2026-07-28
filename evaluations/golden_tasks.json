@@ -11,6 +11,7 @@
   {"id":"docs-read","request":"Read Google Doc abc123","services":["docs"],"operations":["read"],"approval":false,"rag":"none"},
   {"id":"chat-missing-space","request":"Send this link in Google Chat","services":["chat"],"operations":["send"],"approval":true,"clarifications":1},
   {"id":"chat-space","request":"Send this link in the Engineering Google Chat space","services":["chat"],"operations":["send"],"approval":true,"clarifications":0},
+  {"id":"chat-direct-message-email","request":"Can you send a chat message to achintyat256@gmail.com saying hi?","services":["chat"],"operations":["send"],"approval":true,"clarifications":0,"rag":"none"},
   {"id":"tasks","request":"List my Google Tasks","services":["tasks"],"operations":["list"],"approval":false,"rag":"none"},
   {"id":"contacts","request":"Search contacts for Ravi","services":["contacts"],"operations":["search"],"approval":false,"rag":"none"},
   {"id":"semantic-history","request":"Find conceptually related historical documents about pricing","services":["docs"],"operations":["read"],"approval":false,"rag":"hybrid"},

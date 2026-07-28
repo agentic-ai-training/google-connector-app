@@ -8,7 +8,9 @@ from contextlib import suppress
 
 from app.config.settings import get_settings
 from app.agents.errors import ExecutionFailure
-from app.agents.supervisor import execute_tool_call, get_toolsets
+from app.agents.supervisor import (
+    execute_tool_call, get_toolsets, safe_write_failure_message,
+)
 from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
@@ -326,6 +328,122 @@ def _persistable_executions(executions: list[dict]) -> list[dict]:
     } for item in executions]
 
 
+def _recent_sender_rows(dependencies: list[dict]) -> list[list[str]] | None:
+    """Project a recent-sender dependency into deterministic Sheet rows."""
+    for dependency in dependencies:
+        output = dependency.get("output_data") or {}
+        if not isinstance(output, dict):
+            continue
+        for execution in output.get("tool_executions") or []:
+            if execution.get("tool") != "list_recent_gmail_senders":
+                continue
+            result = execution.get("result") or {}
+            senders = result.get("senders") if isinstance(result, dict) else None
+            if not isinstance(senders, list):
+                continue
+            rows = [["Name", "Email"]]
+            rows.extend([
+                [
+                    str(item.get("sender_name") or item.get("sender_email") or ""),
+                    str(item.get("sender_email") or ""),
+                ]
+                for item in senders if isinstance(item, dict)
+            ])
+            return rows
+    return None
+
+
+async def _create_recent_senders_sheet(pool, run, step, dependencies):
+    """Create and populate a Sheet without asking a model to copy resource IDs."""
+    rows = _recent_sender_rows(dependencies)
+    if rows is None:
+        return None
+    tools = {tool.name: tool for tool in get_toolsets()["sheets"]}
+    for tool in tools.values():
+        if isinstance(tool, GoogleWorkspaceBaseTool):
+            tool.db_pool = pool
+    state = {
+        "session_id": run["session_id"], "user_id": run["user_id"],
+        "run_id": str(run["id"]), "step_id": str(step["id"]),
+    }
+    title = f"Recent Gmail Senders - {str(run['id'])[:8]}"
+    create_call = {
+        "id": f"deterministic-create-{uuid.uuid4()}",
+        "name": "create_google_sheet", "args": {"title": title},
+    }
+    _, create_result, create_envelope = await execute_tool_call(
+        tools["create_google_sheet"], create_call, state, pool,
+    )
+    executions = [{
+        "tool": create_call["name"], "arguments": create_call["args"],
+        "result": create_result, "compact_result": create_envelope.compact_result,
+        "projection": create_envelope.metadata(),
+    }]
+    if not isinstance(create_result, dict) or create_result.get("error"):
+        return {
+            "output": "", "tool_results": [create_envelope.compact_result],
+            "tool_executions": executions, "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message('create_google_sheet', create_result)}; "
+                "automatic repetition is blocked."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_sheet_workflow",
+            "error_boundary": "sheet_create",
+        }
+    spreadsheet_id = create_result.get("spreadsheetId")
+    write_call = {
+        "id": f"deterministic-write-{uuid.uuid4()}",
+        "name": "write_google_sheet",
+        "args": {
+            "spreadsheet_id": spreadsheet_id,
+            "range": f"Sheet1!A1:B{len(rows)}",
+            "values": rows,
+        },
+    }
+    _, write_result, write_envelope = await execute_tool_call(
+        tools["write_google_sheet"], write_call, state, pool,
+    )
+    executions.append({
+        "tool": write_call["name"], "arguments": write_call["args"],
+        "result": write_result, "compact_result": write_envelope.compact_result,
+        "projection": {
+            **write_envelope.metadata(),
+            "lineage_source_tool": "create_google_sheet",
+            "lineage_target_tool": "write_google_sheet",
+            "lineage_field": "spreadsheet_id",
+            "lineage_bound": True,
+        },
+    })
+    tool_results = [
+        create_envelope.compact_result, write_envelope.compact_result,
+    ]
+    if not isinstance(write_result, dict) or write_result.get("error"):
+        return {
+            "output": "", "tool_results": tool_results,
+            "tool_executions": executions, "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message('write_google_sheet', write_result)}; "
+                "automatic repetition is blocked."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_sheet_workflow",
+            "error_boundary": "sheet_population",
+            "error_evidence": {
+                "create_succeeded": True, "population_succeeded": False,
+                "lineage_bound": True,
+            },
+        }
+    url = create_result.get("spreadsheetUrl") or (
+        f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
+    )
+    return {
+        "output": f"Created and populated the sender Sheet: {url}",
+        "tool_results": tool_results, "tool_executions": executions,
+        "task_complete": True,
+    }
+
+
 async def _store_artifacts(conn, run, step, artifacts):
     for index, artifact in enumerate(artifacts):
         external_id = artifact.get("external_id") or f"url-{index}"
@@ -353,6 +471,21 @@ async def _execute_step(app, pool, run, step, dependencies):
                        phase="execution", message=step["title"])
     step_started = time.perf_counter()
     input_data = step.get("input_data") or {}
+    semantic_authorization = input_data.get("semantic_authorization") or {}
+    if (
+        not step.get("read_only", True)
+        and semantic_authorization.get("authorized") is False
+    ):
+        raise ExecutionFailure(
+            "The planned external write lacks current-turn service authority.",
+            category="policy_violation", component="durable_worker",
+            boundary="semantic_write_authorization",
+            evidence={
+                "service": step.get("service"),
+                "operation": step.get("operation"),
+                "authorization_basis": semantic_authorization.get("basis"),
+            },
+        )
     if step.get("operation") in {"answer_information", "answer_workspace_chat"}:
         if step.get("operation") == "answer_information":
             output = informational_answer(
@@ -447,6 +580,14 @@ async def _execute_step(app, pool, run, step, dependencies):
         }
     else:
         result = None
+    if (
+        result is None
+        and step.get("service") == "sheets"
+        and step.get("operation") == "create_and_write"
+    ):
+        result = await _create_recent_senders_sheet(
+            pool, run, step, dependencies,
+        )
     dependency_text = json.dumps(dependencies, default=str)
     planning_request = input_data.get("request") or run["request"]
     scoped_message = (
