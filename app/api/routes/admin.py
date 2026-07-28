@@ -182,6 +182,13 @@ def _candidate_build_view(row) -> dict:
         "retry_reason": decision.reason_code,
         "resume_point": decision.resume_point,
         "models_used": models_used,
+        "new_policy_retry_available": bool(
+            item.get("status") in {"failed", "cancelled"}
+            and (
+                item.get("model_policy_version") != MODEL_POLICY_VERSION
+                or item.get("tool_policy_version") != TOOL_POLICY_VERSION
+            )
+        ),
     }
 
 
