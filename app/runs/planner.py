@@ -214,6 +214,8 @@ def _service_authorization(
 
 TIMEZONE_ALIASES = {
     "utc": "UTC", "gmt": "UTC", "ist": "Asia/Kolkata",
+    "india": "Asia/Kolkata", "indian": "Asia/Kolkata",
+    "indian standard time": "Asia/Kolkata",
     "est": "America/New_York", "edt": "America/New_York",
     "pst": "America/Los_Angeles", "pdt": "America/Los_Angeles",
     "cet": "Europe/Paris",

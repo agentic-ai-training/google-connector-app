@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from app.config.settings import get_settings
 from app.runs.context import analyze_conversation_context
 from app.runs.planner import action_hash, build_plan, validate_plan
-from app.runs.request_analysis import RequestStatementAnalysis
+from app.runs.request_analysis import EMAIL_PATTERN, RequestStatementAnalysis
 from app.runs.request_analysis import analyze_request_statement
+from app.tools.calendar_normalization import normalize_timezone
 from app.mlops.metrics import approval_requests, run_transitions
 from app.improvements.failure_intelligence import record_failure_incident
 from app.improvements.routing import resolve_executor_assignment
@@ -23,6 +24,72 @@ class CandidateAssignmentMismatch(RuntimeError):
 
 class InvalidClarificationAnswers(ValueError):
     """Clarification payload did not match this run's outstanding questions."""
+
+    def __init__(self, message: str, *, reason_code: str = "invalid_clarification",
+                 suggested_value: str | None = None):
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.suggested_value = suggested_value
+
+
+def _edit_distance(left: str, right: str) -> int:
+    previous = list(range(len(right) + 1))
+    for left_index, left_character in enumerate(left, 1):
+        current = [left_index]
+        for right_index, right_character in enumerate(right, 1):
+            current.append(min(
+                current[-1] + 1,
+                previous[right_index] + 1,
+                previous[right_index - 1]
+                + (left_character != right_character),
+            ))
+        previous = current
+    return previous[-1]
+
+
+def _normalize_clarification_answers(run, answers: dict) -> dict:
+    normalized = dict(answers)
+    original_emails = [
+        value.casefold() for value in EMAIL_PATTERN.findall(run["request"])
+    ]
+    for question, raw_answer in answers.items():
+        answer = str(raw_answer or "").strip()
+        lowered_question = question.casefold()
+        if "timezone" in lowered_question:
+            try:
+                normalized[question] = normalize_timezone(answer)
+            except ValueError as exc:
+                raise InvalidClarificationAnswers(
+                    str(exc), reason_code="invalid_timezone",
+                ) from exc
+        if (
+            "chat" not in lowered_question
+            or ("email" not in lowered_question and "destination" not in lowered_question)
+        ):
+            continue
+        answer_emails = EMAIL_PATTERN.findall(answer)
+        if "@" in answer and len(answer_emails) != 1:
+            raise InvalidClarificationAnswers(
+                "Enter one valid direct-message email or an accessible spaces/... "
+                "Google Chat resource",
+                reason_code="invalid_chat_destination",
+            )
+        if len(answer_emails) != 1:
+            continue
+        supplied = answer_emails[0].casefold()
+        close = min(
+            original_emails,
+            key=lambda candidate: _edit_distance(supplied, candidate),
+            default=None,
+        )
+        if close and supplied != close and _edit_distance(supplied, close) <= 2:
+            raise InvalidClarificationAnswers(
+                f"The Chat recipient looks mistyped. Did you mean {close}?",
+                reason_code="recipient_typo_suspected",
+                suggested_value=close,
+            )
+        normalized[question] = supplied
+    return normalized
 
 
 def _json(value):
@@ -302,8 +369,10 @@ async def clarify_run(pool, run_id, user_id, answers):
         unexpected = sorted(supplied_questions - requested_questions)
         if unexpected:
             raise InvalidClarificationAnswers(
-                "Clarification answers do not match this run's current questions"
+                "Clarification answers do not match this run's current questions",
+                reason_code="clarification_keys_mismatch",
             )
+        answers = _normalize_clarification_answers(run, answers)
         combined_answers = {
             **(run["clarification_answers"] or {}),
             **answers,

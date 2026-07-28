@@ -25,8 +25,8 @@ from app.mlops.metrics import (
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_POLICY_VERSION = "adaptive-roles-v2-review-remediation"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v7-review-remediation"
+MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v8-null-safe-expanded-authority"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8

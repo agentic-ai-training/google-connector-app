@@ -32,7 +32,7 @@ class BoundedRepositoryTools:
     """Expose bounded reads and in-memory proposals; never execute or write code."""
 
     def __init__(
-        self, root: Path, *, max_calls: int = 30, max_read_bytes: int = 120_000,
+        self, root: Path, *, max_calls: int = 60, max_read_bytes: int = 120_000,
         max_files: int = 12, max_elapsed_seconds: int = 180,
     ):
         self.root = root.resolve()
@@ -87,7 +87,7 @@ class BoundedRepositoryTools:
             }, ["name", "service", "purpose"]),
         ]
 
-    def execute(self, name: str, arguments: dict) -> Any:
+    def execute(self, name: str, arguments: dict | None) -> Any:
         self._charge()
         handlers = {
             "list_repository_files": self.list_files,
@@ -103,6 +103,10 @@ class BoundedRepositoryTools:
         }
         if name not in handlers:
             raise ValueError(f"Unknown builder tool: {name}")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise ValueError("Candidate builder tool arguments must be an object")
         return handlers[name](**arguments)
 
     def restore_counters(self, *, calls: int, read_bytes: int) -> None:

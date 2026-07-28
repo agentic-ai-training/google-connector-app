@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
+from app.tools.calendar_normalization import (
+    normalize_calendar_datetime, normalize_calendar_window, normalize_timezone,
+)
 from app.tools.base import instrument_tool, tool_run_id
 
 
@@ -271,6 +274,9 @@ def list_calendar_events(start_date:str,end_date:str,calendar_id:str="primary"):
 def get_calendar_event(event_id:str,calendar_id:str="primary"): return g.calendar_service.events().get(calendarId=calendar_id,eventId=event_id).execute()
 @tool("create_calendar_event", description="Google Workspace operation")
 def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True,calendar_id:str="primary",timezone:str|None=None):
+    start_datetime, end_datetime, timezone = normalize_calendar_window(
+        start_datetime, end_datetime, timezone
+    )
     request_id = _request_id('calendar',calendar_id,title,start_datetime,end_datetime,attendees,description,timezone)
     existing = g.calendar_service.events().list(
         calendarId=calendar_id, privateExtendedProperty=f"agentRequestId={request_id}",
@@ -283,6 +289,12 @@ def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendee
     return g.calendar_service.events().insert(calendarId=calendar_id,body=body,conferenceDataVersion=1,sendUpdates="all").execute()
 @tool("update_calendar_event", description="Google Workspace operation")
 def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None,calendar_id:str="primary",timezone:str|None=None,attendees:list[str]|None=None,add_meet:bool|None=None):
+    if start_datetime is not None or end_datetime is not None or timezone is not None:
+        timezone = normalize_timezone(timezone)
+    if start_datetime is not None:
+        start_datetime = normalize_calendar_datetime(start_datetime, timezone)
+    if end_datetime is not None:
+        end_datetime = normalize_calendar_datetime(end_datetime, timezone)
     body={};
     if title is not None: body["summary"]=title
     if start_datetime is not None: body["start"]={"dateTime":start_datetime,**({"timeZone":timezone} if timezone else {})}

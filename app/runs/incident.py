@@ -34,7 +34,17 @@ def completion_from_steps(steps: list[dict]) -> dict:
             uncertain_writes += 4
             continue
         executions = (step.get("output_data") or {}).get("tool_executions") or []
-        if executions:
+        possible_side_effects = [
+            item for item in executions
+            if (
+                not isinstance(item.get("result"), dict)
+                or (
+                    not item["result"].get("error")
+                    and item["result"].get("success") is not False
+                )
+            )
+        ]
+        if possible_side_effects:
             uncertain_writes += 1
     return {
         "technical_completion": technical,
