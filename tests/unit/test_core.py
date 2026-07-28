@@ -1479,9 +1479,22 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
     assert view["active_role"] == "author"
     assert view["next_round"] == 2
     assert view["models_used"] == ["quality", "openai/gpt-oss-120b"]
+    assert view["new_policy_retry_available"] is False
     assert "checkpoint" not in view
     assert "sanitized_input" not in view
     assert "messages" not in json.dumps(view, default=str)
+
+    terminal = _candidate_build_view({
+        "id": "old", "proposal_key": "old", "title": "Old",
+        "mode": "multi_role", "status": "failed", "model_name": "quality",
+        "model_policy_version": "old-model-policy",
+        "tool_policy_version": "old-tool-policy",
+        "tokens_used": 0, "token_budget": 1_000,
+        "created_at": updated, "updated_at": updated, "file_count": 0,
+        "checkpoint": {},
+    })
+    assert terminal["retryable"] is False
+    assert terminal["new_policy_retry_available"] is True
 
 
 def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
