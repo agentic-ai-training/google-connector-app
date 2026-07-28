@@ -1562,7 +1562,7 @@ def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
                 "candidate_version": "abcdef2",
                 "exact_diff": "--- app/example.py\n+++ app/example.py\n+VALUE = 2",
                 "files": [{
-                    "path": "app/example.py", "change_type": "create",
+                        "path": "app/example.py", "change_type": "replace",
                     "content": "VALUE = 2\n",
                 }],
                 "validation_report": {

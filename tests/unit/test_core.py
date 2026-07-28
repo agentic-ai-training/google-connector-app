@@ -75,7 +75,7 @@ from app.evaluation.replay import replay_case
 from app.improvements.analyzer import assess_canary, dispatch_retryable_candidate_builds
 from app.improvements.publisher import proposal_markdown
 from app.improvements.candidates import (
-    candidate_digest, validate_candidate_files,
+    candidate_digest, validate_candidate_adoption, validate_candidate_files,
 )
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
@@ -1245,11 +1245,11 @@ def test_candidate_builder_corrects_invalid_python_before_review(monkeypatch, tm
             requests.append(kwargs)
             usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
             content = json.dumps({
-                "files": [{
-                    "path": "app/generated.py",
-                    "change_type": "create",
-                    "content": "if:\n" if len(requests) == 1 else "value = 1\n",
-                }],
+                    "files": [{
+                        "path": "app/generated.py",
+                        "change_type": "replace",
+                        "content": "if:\n" if len(requests) == 1 else "value = 1\n",
+                    }],
                 "rollback_plan": {"action": "remove candidate"},
                 "validation_commands": ["pytest -q tests/unit"],
             })
@@ -1263,6 +1263,8 @@ def test_candidate_builder_corrects_invalid_python_before_review(monkeypatch, tm
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
     monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "generated.py").write_text("value = 0\n")
     get_settings.cache_clear()
     try:
         candidate, _, _ = asyncio.run(_groq_tool_json(
@@ -2445,6 +2447,34 @@ def test_implementation_candidate_requires_safe_concrete_files():
     assert any("credentials" in error or "secret-like" in error for error in errors)
 
 
+def test_candidate_rejects_disconnected_new_application_module():
+    disconnected = [
+        {"path": "app/tool_execution_failure.py", "change_type": "create",
+         "content": "def classify():\n    return 'tool_failure'\n"},
+        {"path": "tests/test_tool_execution_failure.py", "change_type": "create",
+         "content": "def test_classify():\n    assert True\n"},
+    ]
+    errors = validate_candidate_adoption(disconnected)
+    assert any("must be integrated" in error for error in errors)
+    assert "runtime_integration_required" in candidate_contract_errors({
+        "files": disconnected,
+        "rollback_plan": {"action": "route to control"},
+        "validation_commands": ["pytest -q"],
+    })
+
+
+def test_candidate_accepts_new_module_wired_into_existing_runtime():
+    integrated = [
+        {"path": "app/tool_execution_failure.py", "change_type": "create",
+         "content": "def classify():\n    return 'tool_failure'\n"},
+        {"path": "app/agents/supervisor.py", "change_type": "replace",
+         "content": "from app.tool_execution_failure import classify\n"},
+        {"path": "tests/test_tool_execution_failure.py", "change_type": "create",
+         "content": "def test_classify():\n    assert True\n"},
+    ]
+    assert validate_candidate_adoption(integrated) == []
+
+
 def test_candidate_routing_and_builder_mode_are_stable_and_bounded():
     first = stable_bucket("canary-1", "person@example.com")
     assert first == stable_bucket("canary-1", "person@example.com")
@@ -2814,6 +2844,25 @@ def test_candidate_builder_tools_are_read_bounded_and_stage_only_in_memory(tmp_p
     })
     assert source.read_text() == "VALUE = 1\n"
     assert "+VALUE = 2" in tools.execute("inspect_candidate_diff", {})["diff"]
+
+
+def test_candidate_builder_change_type_must_match_base_tree(tmp_path):
+    (tmp_path / "app").mkdir()
+    existing = tmp_path / "app" / "existing.py"
+    existing.write_text("VALUE = 1\n")
+    tools = BoundedRepositoryTools(tmp_path)
+
+    with pytest.raises(ValueError, match="create requires"):
+        tools.stage("app/existing.py", "create", "VALUE = 2\n")
+    with pytest.raises(ValueError, match="replace requires"):
+        tools.stage("app/missing.py", "replace", "VALUE = 2\n")
+    with pytest.raises(ValueError, match="delete requires"):
+        tools.stage("app/missing.py", "delete")
+
+    assert tools.stage("app/new.py", "create", "VALUE = 1\n")["staged"] == "app/new.py"
+    assert tools.stage("app/existing.py", "replace", "VALUE = 2\n")["staged"] == (
+        "app/existing.py"
+    )
 
 
 def test_candidate_builder_tools_enforce_paths_calls_and_tool_authority(tmp_path):

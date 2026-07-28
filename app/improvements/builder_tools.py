@@ -233,7 +233,14 @@ class BoundedRepositoryTools:
         return {"path": path, "start_line": start, "end_line": end, "content": content}
 
     def stage(self, path: str, change_type: str, content: str = "") -> dict:
-        self._safe_path(path)
+        target = self._safe_path(path)
+        exists = target.is_file()
+        if change_type == "create" and exists:
+            raise ValueError("create requires a path absent from the base repository")
+        if change_type in {"replace", "delete"} and not exists:
+            raise ValueError(
+                f"{change_type} requires a file present in the base repository"
+            )
         if change_type != "delete" and PROJECTED_STAGED_BODY.fullmatch(content.strip()):
             raise ValueError(
                 "Projected staged-file provenance cannot become candidate source",
