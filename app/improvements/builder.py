@@ -16,7 +16,7 @@ from groq import APIStatusError, AsyncGroq, RateLimitError
 from app.config.settings import get_settings
 from app.improvements.candidates import (
     ALLOWED_ROOTS, candidate_digest, file_digest, infer_candidate_kind,
-    validate_candidate_files,
+    validate_candidate_adoption, validate_candidate_files,
 )
 from app.improvements.builder_tools import BoundedRepositoryTools
 from app.mlops.metrics import (
@@ -26,7 +26,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v8-null-safe-expanded-authority"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v9-runtime-adoption-gate"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -606,13 +606,18 @@ def candidate_contract_errors(candidate: dict) -> list[str]:
             continue
         structurally_valid.append(item)
     if structurally_valid:
-        for detail in validate_candidate_files(structurally_valid):
+        for detail in (
+            validate_candidate_files(structurally_valid)
+            + validate_candidate_adoption(structurally_valid)
+        ):
             if detail.startswith("Duplicate candidate path"):
                 errors.append("duplicate_path")
             elif "outside approved roots" in detail or "Unsafe candidate path" in detail:
                 errors.append("path_outside_approved_roots")
             elif "credentials" in detail or "secret-like" in detail:
                 errors.append("secret_like_content")
+            elif "must be integrated" in detail:
+                errors.append("runtime_integration_required")
             else:
                 errors.append("candidate_file_policy_rejected")
     if not isinstance(candidate.get("rollback_plan"), dict):

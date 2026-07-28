@@ -37,6 +37,28 @@ def validate_candidate_files(files: list[dict]) -> list[str]:
     return errors
 
 
+def validate_candidate_adoption(files: list[dict]) -> list[str]:
+    """Reject code that is tested in isolation but cannot affect a runtime path."""
+    created_app_code = [
+        item.get("path", "") for item in files
+        if item.get("change_type") == "create"
+        and item.get("path", "").startswith("app/")
+        and item.get("path", "").endswith(".py")
+    ]
+    adopted_by_existing_runtime = any(
+        item.get("change_type") in {"replace", "delete"}
+        and item.get("path", "").startswith("app/")
+        and item.get("path", "").endswith(".py")
+        for item in files
+    )
+    if created_app_code and not adopted_by_existing_runtime:
+        return [
+            "New application code must be integrated by changing at least one "
+            "existing application runtime file"
+        ]
+    return []
+
+
 def candidate_digest(
     base_version: str, files: list[dict], validation_report: dict, *,
     candidate_kind: str | None = None, candidate_version: str | None = None,

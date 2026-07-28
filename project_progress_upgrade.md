@@ -1117,6 +1117,9 @@ tool authority, misleading retry controls, and incomplete model-chain reporting.
   fallbacks, separately from the configured primary model.
 - [x] Hide the retry action when the backend says a terminal build has no safe/current
   retry path.
+- [x] Reject disconnected code candidates that create an isolated application module
+  and tests without changing an existing runtime path that adopts the new module;
+  reject create/replace/delete declarations that disagree with the frozen base tree.
 
 ### Epic 39.5 — Remaining-roadmap truthfulness
 

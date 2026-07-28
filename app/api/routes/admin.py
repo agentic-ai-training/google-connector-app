@@ -31,7 +31,7 @@ from app.improvements.publisher import (
 from app.improvements.candidates import (
     candidate_digest, candidate_runtime_surfaces, file_digest,
     unsupported_candidate_surfaces, valid_candidate_frontend_url,
-    validate_candidate_files,
+    validate_candidate_adoption, validate_candidate_files,
 )
 from app.improvements.builder import (
     MODEL_POLICY_VERSION,
@@ -804,7 +804,7 @@ async def register_improvement_candidate(
     proposal_key: str, body: ImprovementCandidateRegistration, request: Request,
 ):
     files = [item.model_dump() for item in body.files]
-    errors = validate_candidate_files(files)
+    errors = validate_candidate_files(files) + validate_candidate_adoption(files)
     if body.validation_report.get("passed") is not True:
         errors.append("Validation report must explicitly record passed=true")
     if not body.validation_report.get("commands"):
