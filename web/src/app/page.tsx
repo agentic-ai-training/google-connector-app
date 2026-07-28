@@ -12,6 +12,14 @@ function StepMark({status}:{status:string}){
   return <span aria-label={status}>{status==="completed"?"✓":status==="failed"?"✗":status==="running"?"◉":"○"}</span>;
 }
 
+const COMMON_TIMEZONES=[
+  "Asia/Kolkata","UTC","Europe/London","Europe/Paris","Asia/Dubai",
+  "Asia/Singapore","Asia/Tokyo","America/New_York","America/Chicago",
+  "America/Denver","America/Los_Angeles","Australia/Sydney",
+];
+const isTimezoneQuestion=(question:string)=>question.toLocaleLowerCase().includes("timezone");
+const browserTimezone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";
+
 function ArtifactActions({run,artifact,onRefresh}:{
   run:AgentRun;artifact:RunArtifact;onRefresh:()=>Promise<void>;
 }){
@@ -113,6 +121,13 @@ export default function Home(){
   const {messages,sendMessage,streaming,error,currentRun,decide,clarify,cancel,resume,refreshRun}=chat;
   const clarifications=currentRun?.id===clarificationDraft.runId
     ?clarificationDraft.answers:{};
+  const clarificationValue=(question:string)=>clarifications[question]
+    ??(isTimezoneQuestion(question)?browserTimezone():"");
+  const clarificationAnswers=Object.fromEntries(
+    (currentRun?.clarification_questions??[]).map(
+      question=>[question,clarificationValue(question)],
+    ),
+  );
   useEffect(()=>{
     if(!user?.admin)return;
     let active=true;
@@ -161,7 +176,7 @@ export default function Home(){
       {currentRun.recent_events?.some(event=>event.event_type==="fallback_model_used")&&<p className="mt-2 text-xs text-amber-600">A validated fallback model was used for a safe step.</p>}
       <ol className="mt-3 space-y-1">{currentRun.steps.map(step=><li key={step.id}><StepMark status={step.status}/> {step.title}</li>)}</ol>
       {currentRun.artifacts?.length>0&&<div className="mt-3 rounded-lg border p-3"><strong>Verified artifacts and recovery</strong><ul className="mt-1 space-y-3">{currentRun.artifacts.map(artifact=><li key={artifact.id}>{artifact.url?.startsWith("https://")?<a className="text-blue-600 underline" href={artifact.url} target="_blank" rel="noreferrer">{artifact.artifact_type}: {artifact.external_id}</a>:<span>{artifact.artifact_type}: {artifact.external_id}</span>} <span className="text-zinc-500">({artifact.verification_status}; {artifact.cleanup_state})</span><ArtifactActions run={currentRun} artifact={artifact} onRefresh={refreshRun}/></li>)}</ul></div>}
-      {currentRun.status==="awaiting_clarification"&&<div className="mt-4 rounded-xl border border-blue-400 bg-blue-50 p-3 text-blue-950"><strong>More information required</strong>{currentRun.clarification_questions?.map(question=><label key={question} className="mt-3 block"><span>{question}</span><input className="mt-1 w-full rounded border bg-white p-2" value={clarifications[question]??""} onChange={event=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[question]:event.target.value}}))}/></label>)}<button onClick={()=>void clarify(clarifications)} disabled={currentRun.clarification_questions?.some(question=>!clarifications[question]?.trim())} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">Apply answers</button></div>}
+      {currentRun.status==="awaiting_clarification"&&<div className="mt-4 rounded-xl border border-blue-400 bg-blue-50 p-3 text-blue-950"><strong>More information required</strong>{currentRun.clarification_questions?.map(question=><label key={question} className="mt-3 block"><span>{question}</span>{isTimezoneQuestion(question)?<select aria-label={question} className="mt-1 w-full rounded border bg-white p-2" value={clarificationValue(question)} onChange={event=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[question]:event.target.value}}))}>{[browserTimezone(),...COMMON_TIMEZONES].filter((value,index,values)=>values.indexOf(value)===index).map(value=><option key={value} value={value}>{value}</option>)}</select>:<input className="mt-1 w-full rounded border bg-white p-2" value={clarificationValue(question)} onChange={event=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[question]:event.target.value}}))}/>}</label>)}<button onClick={()=>void clarify(clarificationAnswers)} disabled={currentRun.clarification_questions?.some(question=>!clarificationValue(question).trim())} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">Apply answers</button></div>}
       {currentRun.status==="awaiting_approval"&&<div className="mt-4 rounded-xl border border-amber-400 bg-amber-50 p-3 text-amber-950"><strong>Confirmation required</strong><p className="mt-1">Review the exact high-risk external write before continuing.</p><div className="mt-3 flex gap-2"><button onClick={()=>void decide(true)} className="rounded-lg bg-amber-600 px-4 py-2 text-white">Approve and continue</button><button onClick={()=>void decide(false)} className="rounded-lg border px-4 py-2">Reject</button></div></div>}
       {["queued","running"].includes(currentRun.status)&&<button onClick={()=>void cancel()} className="mt-3 rounded-lg border px-3 py-2">Cancel run</button>}
       {["failed","partial"].includes(currentRun.status)&&<button onClick={()=>void resume()} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-white">Resume from failed step</button>}

@@ -1468,6 +1468,7 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
             "generation_checkpoint": {
                 "phase": "role_in_progress", "active_role": "author",
                 "next_round": 2, "messages": [{"content": "not returned"}],
+                "models_used": ["quality", "openai/gpt-oss-120b"],
             },
         },
     })
@@ -1477,6 +1478,7 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
     assert view["generation_phase"] == "role_in_progress"
     assert view["active_role"] == "author"
     assert view["next_round"] == 2
+    assert view["models_used"] == ["quality", "openai/gpt-oss-120b"]
     assert "checkpoint" not in view
     assert "sanitized_input" not in view
     assert "messages" not in json.dumps(view, default=str)
@@ -2813,6 +2815,15 @@ def test_candidate_builder_tools_enforce_paths_calls_and_tool_authority(tmp_path
     fresh = BoundedRepositoryTools(tmp_path)
     with pytest.raises(ValueError):
         fresh.read("../outside.txt")
+
+
+def test_candidate_builder_accepts_null_for_empty_schema_tools(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path)
+    assert tools.execute("inspect_candidate_manifest", None) == {
+        "file_count": 0, "files": [],
+    }
+    with pytest.raises(ValueError, match="arguments must be an object"):
+        tools.execute("inspect_candidate_manifest", [])
 
 
 def test_candidate_builder_can_validate_hash_and_rollback_staged_files(tmp_path):

@@ -493,7 +493,8 @@ async def submit_clarification(run_id: str, body: RunClarification, request: Req
     except InvalidClarificationAnswers as exc:
         raise HTTPException(422, {
             "message": str(exc),
-            "reason_code": "clarification_keys_mismatch",
+            "reason_code": exc.reason_code,
+            "suggested_value": exc.suggested_value,
         }) from exc
     if not status:
         raise HTTPException(409, "Run is not awaiting clarification")

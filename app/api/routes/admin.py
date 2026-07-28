@@ -117,6 +117,15 @@ def _candidate_build_view(row) -> dict:
     next_retry_at = None
     if item.get("status") == "queued" and retryable and item.get("updated_at"):
         next_retry_at = item["updated_at"] + timedelta(seconds=retry_after)
+    models_used = list(dict.fromkeys(
+        str(value) for value in (
+            generation.get("models_used")
+            or generation.get("role_models_used")
+            or []
+        ) if value
+    ))
+    if item.get("model_name") and item["model_name"] not in models_used:
+        models_used.insert(0, item["model_name"])
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
@@ -172,6 +181,7 @@ def _candidate_build_view(row) -> dict:
         "progress_gate": generation.get("progress_gate"),
         "retry_reason": decision.reason_code,
         "resume_point": decision.resume_point,
+        "models_used": models_used,
     }
 
 

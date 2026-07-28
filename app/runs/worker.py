@@ -308,12 +308,37 @@ async def _dependency_context(conn, step):
     projected = []
     for row in rows:
         value = dict(row)
-        envelope = project_tool_result(
-            "dependency_output", value.get("output_data") or {},
-            max_tokens=get_settings().groq_tool_result_max_tokens,
-        )
-        value["output_data"] = envelope.compact_result
-        value["projection"] = envelope.metadata()
+        output = value.get("output_data") or {}
+        executions = output.get("tool_executions") if isinstance(output, dict) else None
+        recent_senders = next((
+            execution for execution in executions or []
+            if execution.get("tool") == "list_recent_gmail_senders"
+        ), None)
+        if recent_senders:
+            envelope = project_tool_result(
+                "list_recent_gmail_senders", recent_senders.get("result") or {},
+                max_tokens=get_settings().groq_tool_result_max_tokens,
+            )
+            value["output_data"] = {
+                "output": output.get("output", ""),
+                "tool_executions": [{
+                    "tool": "list_recent_gmail_senders",
+                    "arguments": recent_senders.get("arguments") or {},
+                    "result": envelope.compact_result,
+                    "projection": envelope.metadata(),
+                }],
+            }
+            value["projection"] = {
+                **envelope.metadata(),
+                "dependency_projection": "gmail_recent_senders_v1",
+            }
+        else:
+            envelope = project_tool_result(
+                "dependency_output", output,
+                max_tokens=get_settings().groq_tool_result_max_tokens,
+            )
+            value["output_data"] = envelope.compact_result
+            value["projection"] = envelope.metadata()
         projected.append(value)
     return projected
 
@@ -432,6 +457,23 @@ async def _create_recent_senders_sheet(pool, run, step, dependencies):
             "error_evidence": {
                 "create_succeeded": True, "population_succeeded": False,
                 "lineage_bound": True,
+            },
+        }
+    updated_rows = (write_result.get("updatedRows")
+                    or (write_result.get("updates") or {}).get("updatedRows"))
+    if updated_rows is not None and int(updated_rows) != len(rows):
+        return {
+            "output": "", "tool_results": tool_results,
+            "tool_executions": executions, "task_complete": False,
+            "error": (
+                "Google Sheets reported a row count that does not match the "
+                f"expected {len(rows)} rows; automatic repetition is blocked."
+            ),
+            "error_category": "verification",
+            "error_component": "deterministic_sheet_workflow",
+            "error_boundary": "sheet_row_count",
+            "error_evidence": {
+                "expected_rows": len(rows), "reported_rows": int(updated_rows),
             },
         }
     url = create_result.get("spreadsheetUrl") or (

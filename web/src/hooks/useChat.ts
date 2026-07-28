@@ -20,6 +20,15 @@ export type AgentRun={
   steps:RunStep[];artifacts:RunArtifact[];recent_events?:RunEvent[];approval?:RunApproval|null;
 };
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
+
+function errorDetail(value:unknown,fallback:string){
+  if(typeof value==="string")return value;
+  if(value&&typeof value==="object"&&"message" in value){
+    const message=(value as {message?:unknown}).message;
+    if(typeof message==="string")return message;
+  }
+  return fallback;
+}
 export const CONTROL_FRONTEND_URL=process.env.NEXT_PUBLIC_CONTROL_FRONTEND_URL??"";
 export const IS_CANDIDATE_FRONTEND=process.env.NEXT_PUBLIC_CANDIDATE_FRONTEND==="true";
 
@@ -192,7 +201,12 @@ export function useChat(sessionId:string){
       method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},
       body:JSON.stringify({answers}),
     });
-    if(!response.ok){const data=await response.json();throw new Error(data.detail??"Clarification failed");}
+    if(!response.ok){
+      const data=await response.json();
+      const message=errorDetail(data.detail,"Clarification failed");
+      setError(message);
+      return;
+    }
     const run=await loadRun(currentRun.id);setCurrentRun(run);
     if(!["awaiting_clarification","awaiting_approval"].includes(run.status)){
       setStreaming(true);await monitor(currentRun.id);

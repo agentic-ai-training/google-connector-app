@@ -4,12 +4,17 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from app.agents.supervisor import make_service_node
+from datetime import datetime
+
+from app.agents.supervisor import make_service_node, safe_write_failure_message
 from app.runs.incident import build_incident, completion_from_steps
 from app.runs.planner import build_plan, validate_plan
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
-from app.runs.worker import _create_recent_senders_sheet
+from app.runs.worker import _create_recent_senders_sheet, _dependency_context
+from app.tools.calendar_normalization import (
+    normalize_calendar_datetime, normalize_calendar_window, normalize_timezone,
+)
 from app.tools.registry import _resolve_chat_space
 
 
@@ -41,6 +46,36 @@ def test_chat_email_is_recipient_not_gmail_service_or_calendar_context():
         "basis": "current_turn_explicit_service",
     }
     assert validate_plan(plan) == []
+
+
+def test_calendar_natural_language_is_normalized_with_india_alias():
+    assert normalize_timezone("India") == "Asia/Kolkata"
+    now = datetime.fromisoformat("2026-07-29T02:00:00+05:30")
+    assert normalize_calendar_datetime(
+        "tomorrow 10:00 AM India", "Asia/Kolkata", now=now,
+    ) == "2026-07-30T10:00:00+05:30"
+    start, end, timezone = normalize_calendar_window(
+        "2026-07-30T10:00:00+05:30",
+        "2026-07-30T10:15:00+05:30",
+        "Indian",
+    )
+    assert (start, end, timezone) == (
+        "2026-07-30T10:00:00+05:30",
+        "2026-07-30T10:15:00+05:30",
+        "Asia/Kolkata",
+    )
+
+
+def test_chat_api_disabled_error_is_actionable_and_sanitized():
+    value = safe_write_failure_message("send_chat_message", {
+        "error": (
+            "403 Google Chat API has not been used in project 351387763928 "
+            "before or it is disabled. Enable it at a private console URL."
+        ),
+    })
+    assert "chat.googleapis.com" in value
+    assert "351387763928" not in value
+    assert "console" not in value
 
 
 def test_explicit_email_delivery_still_routes_gmail():
@@ -260,6 +295,53 @@ async def test_recent_senders_sheet_is_deterministic_and_lineage_bound(monkeypat
         ["grace@example.com", "grace@example.com"],
     ]
     assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_recent_sender_dependency_projection_preserves_structured_rows():
+    class _Connection:
+        async def fetch(self, *_args):
+            return [{
+                "step_key": "gmail-1", "service": "gmail",
+                "output_data": {
+                    "output": "15 senders",
+                    "tool_executions": [{
+                        "tool": "list_recent_gmail_senders",
+                        "arguments": {"max_results": 20},
+                        "result": {"senders": [
+                            {
+                                "sender_name": "Ada",
+                                "sender_email": "ada@example.com",
+                                "received_at": "2026-07-29T00:00:00Z",
+                            },
+                        ], "returned": 1},
+                    }],
+                },
+            }]
+
+    projected = await _dependency_context(_Connection(), {
+        "run_id": "run-1", "dependencies": ["gmail-1"],
+    })
+    sender = projected[0]["output_data"]["tool_executions"][0]["result"][
+        "senders"
+    ][0]
+    assert sender["sender_name"] == "Ada"
+    assert sender["sender_email"] == "ada@example.com"
+    assert projected[0]["projection"]["dependency_projection"] == (
+        "gmail_recent_senders_v1"
+    )
+
+
+def test_explicit_failed_write_does_not_reduce_side_effect_integrity():
+    completion = completion_from_steps([{
+        "status": "failed", "read_only": False, "weight": 1,
+        "error_category": "tool_failure",
+        "output_data": {"tool_executions": [{
+            "tool": "send_chat_message",
+            "result": {"error": "403 service disabled"},
+        }]},
+    }])
+    assert completion["side_effect_integrity"] == 100
 
 
 @pytest.mark.asyncio

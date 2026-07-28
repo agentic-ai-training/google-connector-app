@@ -239,6 +239,74 @@ def test_chat_delivery_is_channel_safe_and_clarifications_are_run_bound():
         client.portal.call(cleanup)
 
 
+def test_multi_service_clarification_rejects_recipient_typo_and_normalizes_timezone():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"clarification-safety-{uuid.uuid4()}@example.com"
+    session_id = f"clarification-safety-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": (
+                "Create a sheet of the last 20 Gmail senders, Google Chat its "
+                "link, and schedule a Calendar Meet tomorrow at 10 AM to "
+                "achintyat256@gmail.com"
+            ),
+        })
+        assert created.status_code == 202
+        run_id = created.json()["run_id"]
+        run = client.get(f"/runs/{run_id}", headers=headers).json()
+        questions = run["clarification_questions"]
+        answers = {
+            next(value for value in questions if "long" in value): "15 minutes",
+            next(value for value in questions if "timezone" in value): "India",
+            next(value for value in questions if "Chat" in value):
+                "achnityat256@gmail.com",
+        }
+        rejected = client.post(
+            f"/runs/{run_id}/clarify", headers=headers,
+            json={"answers": answers},
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"] == {
+            "message": (
+                "The Chat recipient looks mistyped. Did you mean "
+                "achintyat256@gmail.com?"
+            ),
+            "reason_code": "recipient_typo_suspected",
+            "suggested_value": "achintyat256@gmail.com",
+        }
+        answers[next(value for value in questions if "Chat" in value)] = (
+            "achintyat256@gmail.com"
+        )
+        accepted = client.post(
+            f"/runs/{run_id}/clarify", headers=headers,
+            json={"answers": answers},
+        )
+        assert accepted.status_code == 200
+        rebuilt = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert rebuilt["status"] == "awaiting_approval"
+        timezone_answers = {
+            key: value for key, value in rebuilt["clarification_answers"].items()
+            if "timezone" in key.casefold()
+        }
+        assert list(timezone_answers.values()) == ["Asia/Kolkata"]
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id),
+                )
+
+        client.portal.call(cleanup)
+
+
 def test_service_only_reply_resolves_recent_same_session_ambiguity():
     from app.api.main import app
     from app.db.connection import get_pool

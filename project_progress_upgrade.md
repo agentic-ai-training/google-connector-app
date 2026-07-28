@@ -1060,3 +1060,90 @@ secret-history, and migration downgrade/forward-repair guardrails pass. Next.js 
 and production build pass; Flutter analyze, test, and debug APK build pass. Production
 deployment and post-deployment smoke evidence are recorded after the reviewed branch
 is merged.
+
+## Sprint 39 — Production multi-service completion and candidate reliability
+
+Production run `6e72e786` on deployment `3652da8` exposed three independent
+boundaries in one Gmail → Sheets → Chat/Calendar DAG: generic dependency projection
+removed structured Gmail sender records, Chat returned an API-disabled 403, and
+Calendar received natural-language date/time arguments with `India` instead of an
+IANA timezone. Candidate builds `failure-2827094a7e87` and
+`failure-c4e36d93d227` additionally exposed null tool arguments, exhausted cumulative
+tool authority, misleading retry controls, and incomplete model-chain reporting.
+
+### Epic 39.1 — Structured sender lineage and exact Sheet verification
+
+- [x] Preserve the bounded `list_recent_gmail_senders` schema through dependency
+  projection instead of recursively replacing sender records with omitted placeholders.
+- [x] Populate header plus every returned sender row using the verified created Sheet
+  ID, and fail closed when Google reports a different updated-row count.
+- [x] Retain exact range/content read-after-write comparison, expected/observed shapes,
+  and content hashes in verification evidence.
+
+### Epic 39.2 — Calendar normalization and guided timezone input
+
+- [x] Normalize accepted aliases such as India/Indian/IST to `Asia/Kolkata`, validate
+  IANA zones, convert supported relative times to offset-bearing RFC3339, and reject
+  invalid/end-before-start values before calling Google.
+- [x] Apply the same normalization at the Calendar tool boundary for every planner or
+  fallback path, not only the reported workflow.
+- [x] Render timezone clarifications as a populated browser-aware dropdown rather than
+  a blank text field, while retaining common global IANA choices.
+
+### Epic 39.3 — Chat diagnosis, recipient safety, and side-effect truthfulness
+
+- [x] Detect a disabled `chat.googleapis.com` response and return an actionable
+  sanitized cause without project IDs, provider payloads, or private console URLs.
+- [x] Reject malformed Chat destinations and near-match recipient typos with a
+  structured correction before approval/execution; never silently change recipients.
+- [x] Keep side-effect integrity at 100% for explicit failed provider writes that
+  created nothing, while retaining uncertainty for missing results, successful partial
+  writes, and lost-worker boundaries.
+- [!] Enable Google Chat API for Cloud project `351387763928`; this is an external
+  Google Cloud control-plane action and requires authenticated project-owner/service-
+  usage authority not present in the application OAuth credentials.
+
+### Epic 39.4 — Candidate-builder resumability and transparent evidence
+
+- [x] Accept null arguments only as an empty object for empty-schema bounded tools and
+  reject every other non-object argument deterministically.
+- [x] Expand bounded repository tool-call authority for the full author/reviewer/
+  remediation lifecycle while retaining byte, file, elapsed-time, token, path, secret,
+  no-network, and trusted-CI limits.
+- [x] Version the corrected model/tool policies so older terminal builds become
+  eligible for an explicit current-policy clone instead of a misleading same-policy
+  retry.
+- [x] Display the complete observed builder model chain, including Groq-hosted
+  fallbacks, separately from the configured primary model.
+- [x] Hide the retry action when the backend says a terminal build has no safe/current
+  retry path.
+
+### Epic 39.5 — Remaining-roadmap truthfulness
+
+- [x] Re-audit every roadmap item that does not require future labelled evidence,
+  production sample sizes, real pilot users, or separately approved external
+  publication credentials.
+- [~] Keep source chunk-policy winners, query-transformation winners, production RAG
+  quality, policy/prompt winners, and the first offline-policy promotion data-gated;
+  their evaluation infrastructure is complete and fabricating evidence is prohibited.
+- [!] Keep staged 5–90-user pilot expansion blocked on real consenting users and
+  measured traffic.
+- [~] Keep external email/GitHub improvement notifications credential- and explicit-
+  publication-approval-gated; admin and Grafana notification ledgers remain complete.
+
+Guardrail: no failed provider call is reported as an uncertain side effect without
+evidence; no typo is silently substituted; no Calendar write reaches Google with an
+unvalidated timezone/window; no sender row can disappear through generic dependency
+projection; and no candidate portal can imply that only the primary model ran.
+
+Local implementation evidence on 2026-07-29: 187 unit tests and 33 PostgreSQL
+integration tests pass; the focused Sprint-39 suite passes; planner golden cases pass
+33/33 and workflow replays pass 14/14. Python compilation and Flake8 pass; Bandit has
+no medium/high findings; `pip-audit` and production `npm audit` report no known
+vulnerabilities. Source-aware chunking, policy, greedy/DP packing, DP allocation,
+dual-worker, Grafana-definition, Compose, secret-history, and migration
+downgrade/forward-repair guardrails pass. Next.js lint and production build pass.
+Docker Desktop builds the API and worker images successfully after explicitly placing
+Docker Desktop's credential helper on the non-login command path. Flutter analyze and
+tests pass, and the debug APK builds successfully. GitHub CI and production deployment
+evidence are recorded after publication.

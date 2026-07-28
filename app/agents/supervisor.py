@@ -108,11 +108,35 @@ def safe_write_failure_message(tool_name: str, result: object) -> str:
             "population operation"
         )
     if tool_name == "send_chat_message" and (
+        "chat api has not been used" in error
+        or "chat.googleapis.com" in error
+        or "service_disabled" in error
+        or "accessnotconfigured" in error
+    ):
+        return (
+            "Google Chat API is disabled for the configured Google Cloud "
+            "project; enable chat.googleapis.com, wait for propagation, and retry"
+        )
+    if tool_name == "send_chat_message" and (
         "does not match the pattern" in error or "spaces/" in error
     ):
         return (
             "Google Chat could not resolve the requested destination to an "
             "accessible Chat space"
+        )
+    if tool_name == "send_chat_message" and (
+        "permission" in error or "forbidden" in error or "403" in error
+    ):
+        return (
+            "Google Chat denied access; reconnect Google if scopes changed and "
+            "confirm the signed-in user can access the destination"
+        )
+    if tool_name in {"create_calendar_event", "update_calendar_event"} and (
+        "invalid" in error or "400" in error
+    ):
+        return (
+            "Google Calendar rejected the normalized date, timezone, attendee, "
+            "or event arguments"
         )
     return f"The required {tool_name} operation returned explicit failure evidence"
 
