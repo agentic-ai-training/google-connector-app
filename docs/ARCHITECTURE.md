@@ -239,6 +239,13 @@ postcondition failure rather than a successful answer. Tool-free composition and
 trusted product-information steps remain valid because their plans deliberately carry
 an empty tool allowlist.
 
+Read evidence may be a structured mapping or a collection. Search/list operations
+such as `search_gmail` legitimately return lists, so the verifier does not infer
+failure merely from that result shape. An absent result or explicit provider error
+still fails closed. Write operations have a stricter contract: they must return a
+structured mapping and then pass operation-specific postconditions and, where
+required, read-after-write verification.
+
 Knowledge RAG is opt-in per user and is never implied by OAuth consent. The authenticated
 index action creates a durable `rag_source_sync_jobs` record and returns immediately.
 A leased worker reads a bounded set of that user's Gmail, Drive, and Calendar resources,

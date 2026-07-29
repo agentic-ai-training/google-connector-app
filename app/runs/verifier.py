@@ -397,11 +397,24 @@ async def verify_executions_detailed(
     operation: str | None = None,
 ) -> VerificationOutcome:
     artifacts = extract_artifacts(executions)
+    # Collection-style reads such as search_gmail legitimately return a list.
+    # Only explicit provider error evidence (or an absent result) is a failure
+    # at this boundary. Write tools remain constrained to structured mappings
+    # and are verified separately below.
     failures = [
         item for item in executions
-        if not isinstance(item.get("result"), dict)
-        or item["result"].get("error")
-        or item["result"].get("success") is False
+        if item.get("result") is None
+        or (
+            isinstance(item.get("result"), dict)
+            and (
+                item["result"].get("error")
+                or item["result"].get("success") is False
+            )
+        )
+        or (
+            item.get("tool") in WRITE_TOOLS
+            and not isinstance(item.get("result"), dict)
+        )
     ]
     if failures:
         return VerificationOutcome(
