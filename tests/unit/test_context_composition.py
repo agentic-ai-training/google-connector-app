@@ -430,3 +430,21 @@ def test_oversized_multilingual_word_gloss_is_clarified_before_model_call():
     ]
     assert contract["visible_output_budget"] == 4000
     assert len(plan.required_clarifications) == 2
+
+
+def test_word_gloss_grammar_accepts_translated_participle_in_either_order():
+    requests = [
+        (
+            "Write one passage in Cantonese, Japanese, Korean, Hebrew, Russian, "
+            "Spanish and French, with every word translated."
+        ),
+        (
+            "Translate each individual word in a Cantonese, Japanese, Korean, "
+            "Hebrew, Russian, Spanish and French passage."
+        ),
+    ]
+
+    for request in requests:
+        plan, policy = build_plan(request)
+        assert policy["content_contract"]["translation_granularity"] == "word"
+        assert len(plan.required_clarifications) == 2

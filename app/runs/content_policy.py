@@ -60,7 +60,10 @@ INTERACTIVE_CONTENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 WORD_TRANSLATION_PATTERN = re.compile(
-    r"\b(?:each|every|all)\s+words?['’]?\s+translations?\b|"
+    r"\b(?:each|every|all)\s+(?:individual\s+)?words?"
+    r"(?:['’]?\s+translations?|\b.{0,30}\btranslat(?:e|ed|ion|ions))\b|"
+    r"\btranslat(?:e|ed|ion|ions)\b.{0,30}"
+    r"\b(?:each|every|all)\s+(?:individual\s+)?words?\b|"
     r"\bword[- ]by[- ]word\b",
     re.IGNORECASE,
 )
