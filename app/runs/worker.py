@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import socket
 import time
 import uuid
@@ -19,6 +20,7 @@ from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.repository import append_event
+from app.runs.typed_execution import decide_typed_execution
 from app.runs.informational import informational_answer, workspace_chat_answer
 from app.improvements.failure_intelligence import record_failure_incident
 from app.runs.verifier import verify_executions_detailed
@@ -396,6 +398,16 @@ async def _create_recent_senders_sheet(pool, run, step, dependencies):
     rows = _recent_sender_rows(dependencies)
     if rows is None:
         return None
+    await append_event(
+        pool, run["id"], run["user_id"], "typed_execution_selected",
+        step_id=step["id"], phase="execution",
+        message="Verified sender rows selected the typed Sheet workflow",
+        payload={
+            "service": "sheets", "operation": "create_and_write",
+            "reason_code": "verified_dependency_rows",
+            "external_attempts_before_selection": 0,
+        },
+    )
     tools = {tool.name: tool for tool in get_toolsets()["sheets"]}
     for tool in tools.values():
         if isinstance(tool, GoogleWorkspaceBaseTool):
@@ -499,6 +511,155 @@ async def _create_recent_senders_sheet(pool, run, step, dependencies):
     }
 
 
+def _verified_sheet_url(dependencies: list[dict]) -> str | None:
+    """Read only a completed dependency's persisted Sheet URL/ID."""
+    for dependency in dependencies:
+        if dependency.get("service") != "sheets":
+            continue
+        output = dependency.get("output_data") or {}
+        if not isinstance(output, dict):
+            continue
+        for execution in output.get("tool_executions") or []:
+            if execution.get("tool") != "create_google_sheet":
+                continue
+            result = execution.get("result") or {}
+            if not isinstance(result, dict) or result.get("error"):
+                continue
+            url = result.get("spreadsheetUrl")
+            if isinstance(url, str) and url.startswith(
+                "https://docs.google.com/spreadsheets/"
+            ):
+                return url
+            spreadsheet_id = result.get("spreadsheetId")
+            if spreadsheet_id:
+                return (
+                    "https://docs.google.com/spreadsheets/d/"
+                    f"{spreadsheet_id}/edit"
+                )
+        match = re.search(
+            r"https://docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]+(?:/edit)?",
+            str(output.get("output") or ""),
+        )
+        if match:
+            return match.group(0)
+    return None
+
+
+async def _send_deterministic_chat_message(
+    pool, run, step, dependencies,
+):
+    """Resolve a DM and send a verified dependency URL without an LLM turn."""
+    input_data = step.get("input_data") or {}
+    destination = str(
+        (input_data.get("tool_arguments") or {}).get("destination") or ""
+    ).strip()
+    sheet_url = _verified_sheet_url(dependencies)
+    if not destination or not sheet_url:
+        return None
+    await append_event(
+        pool, run["id"], run["user_id"], "typed_execution_selected",
+        step_id=step["id"], phase="execution",
+        message="Recipient and verified Sheet URL selected the typed Chat workflow",
+        payload={
+            "service": "chat", "operation": "send",
+            "reason_code": "complete_ordered_chat_inputs",
+            "external_attempts_before_selection": 0,
+        },
+    )
+    tools = {tool.name: tool for tool in get_toolsets()["chat"]}
+    for tool in tools.values():
+        if isinstance(tool, GoogleWorkspaceBaseTool):
+            tool.db_pool = pool
+    state = {
+        "session_id": run["session_id"], "user_id": run["user_id"],
+        "run_id": str(run["id"]), "step_id": str(step["id"]),
+    }
+    resolve_call = {
+        "id": f"deterministic-chat-resolve-{uuid.uuid4()}",
+        "name": "resolve_chat_destination",
+        "args": {"destination": destination},
+    }
+    _, resolve_result, resolve_envelope = await execute_tool_call(
+        tools["resolve_chat_destination"], resolve_call, state, pool,
+    )
+    executions = [{
+        "tool": resolve_call["name"], "arguments": resolve_call["args"],
+        "result": resolve_result,
+        "compact_result": resolve_envelope.compact_result,
+        "projection": resolve_envelope.metadata(),
+    }]
+    if (
+        not isinstance(resolve_result, dict)
+        or resolve_result.get("error")
+        or not re.fullmatch(
+            r"spaces/[^/]+", str(resolve_result.get("name") or ""),
+        )
+    ):
+        return {
+            "output": "", "tool_results": [resolve_envelope.compact_result],
+            "tool_executions": executions, "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message(resolve_call['name'], resolve_result)}; "
+                "no Chat message was attempted."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_chat_workflow",
+            "error_boundary": "chat_destination_resolution",
+            "error_evidence": {
+                "resolver_attempted": True, "message_attempted": False,
+            },
+        }
+    send_call = {
+        "id": f"deterministic-chat-send-{uuid.uuid4()}",
+        "name": "send_chat_message",
+        "args": {
+            "space_id": resolve_result["name"],
+            "text": sheet_url,
+        },
+    }
+    _, send_result, send_envelope = await execute_tool_call(
+        tools["send_chat_message"], send_call, state, pool,
+    )
+    executions.append({
+        "tool": send_call["name"], "arguments": send_call["args"],
+        "result": send_result, "compact_result": send_envelope.compact_result,
+        "projection": {
+            **send_envelope.metadata(),
+            "lineage_source_tool": "resolve_chat_destination",
+            "lineage_target_tool": "send_chat_message",
+            "lineage_field": "space_id",
+            "lineage_bound": True,
+            "content_source": "verified_sheet_dependency",
+        },
+    })
+    if not isinstance(send_result, dict) or send_result.get("error"):
+        return {
+            "output": "", "tool_results": [
+                resolve_envelope.compact_result, send_envelope.compact_result,
+            ],
+            "tool_executions": executions, "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message(send_call['name'], send_result)}; "
+                "automatic repetition is blocked."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_chat_workflow",
+            "error_boundary": "chat_message_send",
+            "error_evidence": {
+                "resolver_succeeded": True,
+                "message_outcome_requires_verification": True,
+            },
+        }
+    return {
+        "output": f"Sent the verified Sheet link in Google Chat: {sheet_url}",
+        "tool_results": [
+            resolve_envelope.compact_result, send_envelope.compact_result,
+        ],
+        "tool_executions": executions,
+        "task_complete": True,
+    }
+
+
 async def _create_deterministic_calendar_event(pool, run, step):
     """Create a fully specified Calendar/Meet event without an LLM round trip."""
     input_data = step.get("input_data") or {}
@@ -532,6 +693,16 @@ async def _create_deterministic_calendar_event(pool, run, step):
         ).isoformat()
     except (TypeError, ValueError):
         return None
+    await append_event(
+        pool, run["id"], run["user_id"], "typed_execution_selected",
+        step_id=step["id"], phase="execution",
+        message="Complete normalized event arguments selected typed Calendar execution",
+        payload={
+            "service": "calendar", "operation": "create",
+            "reason_code": "complete_calendar_arguments",
+            "external_attempts_before_selection": 0,
+        },
+    )
     tools = {tool.name: tool for tool in get_toolsets()["calendar"]}
     tool = tools["create_calendar_event"]
     if isinstance(tool, GoogleWorkspaceBaseTool):
@@ -717,6 +888,16 @@ async def _execute_step(app, pool, run, step, dependencies):
         )
         return output
     if step.get("operation") in {"recent_senders", "sender_count"}:
+        await append_event(
+            pool, run_id, user_id, "typed_execution_selected",
+            step_id=step["id"], phase="execution",
+            message="Exact Gmail metadata operation selected typed execution",
+            payload={
+                "service": "gmail", "operation": step.get("operation"),
+                "reason_code": "exact_metadata_operation",
+                "external_attempts_before_selection": 0,
+            },
+        )
         tools = {tool.name: tool for tool in get_toolsets()["gmail"]}
         tool_name = (
             "list_recent_gmail_senders"
@@ -791,6 +972,95 @@ async def _execute_step(app, pool, run, step, dependencies):
         result = await _create_deterministic_calendar_event(
             pool, run, step,
         )
+    if (
+        result is None
+        and step.get("service") == "chat"
+        and step.get("operation") == "send"
+    ):
+        result = await _send_deterministic_chat_message(
+            pool, run, step, dependencies,
+        )
+    execution_path = "typed_deterministic" if result is not None else None
+    fallback_reason = None
+    if result is None and step.get("service") in get_toolsets():
+        service_tools = {
+            tool.name: tool for tool in get_toolsets()[step["service"]]
+        }
+        decision = decide_typed_execution(step, service_tools)
+        if decision.status == "eligible":
+            tool = service_tools[decision.tool_name]
+            if isinstance(tool, GoogleWorkspaceBaseTool):
+                tool.db_pool = pool
+            state = {
+                "session_id": run["session_id"], "user_id": user_id,
+                "run_id": str(run_id), "step_id": str(step["id"]),
+            }
+            call = {
+                "id": f"typed-{uuid.uuid4()}",
+                "name": decision.tool_name,
+                "args": decision.arguments,
+            }
+            await append_event(
+                pool, run_id, user_id, "typed_execution_selected",
+                step_id=step["id"], phase="execution",
+                message="Complete typed arguments selected the deterministic adapter",
+                payload={
+                    "tool": decision.tool_name,
+                    "reason_code": decision.reason_code,
+                    "external_attempts_before_selection": 0,
+                },
+            )
+            _, raw_result, envelope = await execute_tool_call(
+                tool, call, state, pool,
+            )
+            execution = {
+                "tool": tool.name,
+                "arguments": decision.arguments,
+                "result": raw_result,
+                "compact_result": envelope.compact_result,
+                "projection": envelope.metadata(),
+            }
+            failed = (
+                not isinstance(raw_result, dict)
+                or bool(raw_result.get("error"))
+                or raw_result.get("success") is False
+            )
+            result = {
+                "output": (
+                    safe_write_failure_message(tool.name, raw_result)
+                    if failed else f"{tool.name} completed."
+                ),
+                "tool_results": [envelope.compact_result],
+                "tool_executions": [execution],
+                "task_complete": not failed,
+                "error": (
+                    safe_write_failure_message(tool.name, raw_result)
+                    if failed else None
+                ),
+                "error_category": "tool_failure" if failed else None,
+                "error_component": tool.name if failed else None,
+                "error_boundary": "typed_tool_execution" if failed else None,
+                "error_evidence": (
+                    {"tool": tool.name, "automatic_model_fallback": False}
+                    if failed else None
+                ),
+            }
+            execution_path = "typed_deterministic"
+        else:
+            fallback_reason = decision.reason_code
+            execution_path = "guarded_agent_fallback"
+            await append_event(
+                pool, run_id, user_id, "guarded_agent_fallback_selected",
+                step_id=step["id"], phase="execution",
+                message="Typed preflight was incomplete; bounded agent planning selected",
+                payload={
+                    "reason_code": decision.reason_code,
+                    "external_attempts_before_fallback": 0,
+                    "allowed_tools": len(
+                        (step.get("input_data") or {}).get("allowed_tools", [])
+                    ),
+                },
+            )
     dependency_text = json.dumps(dependencies, default=str)
     planning_request = input_data.get("request") or run["request"]
     scoped_message = (
@@ -880,7 +1150,9 @@ async def _execute_step(app, pool, run, step, dependencies):
             "completed" if verified else "failed",
             json.dumps({"output": output, "tool_results": result.get("tool_results", []),
                         "tool_executions": persisted_executions,
-                        "verification": evidence}, default=str),
+                        "verification": evidence,
+                        "execution_path": execution_path or "guarded_agent_fallback",
+                        "fallback_reason": fallback_reason}, default=str),
             elapsed_ms, None if verified else (error_category or "verification"),
             None if verified else evidence, step["id"],
         )

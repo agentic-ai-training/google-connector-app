@@ -163,3 +163,21 @@ The active candidate policies are `adaptive-roles-v3-model-chain-evidence` and
 and every actually used Groq-hosted fallback. Finalization rejects files whose declared
 create/replace/delete operation disagrees with the base tree and rejects new modules
 that are not adopted by an existing runtime path.
+## Durable hybrid execution
+
+Every durable step passes through one execution boundary. The worker first checks
+whether the selected operation has one registered tool/contract and whether the
+persisted arguments validate against that tool's Pydantic schema. Complete arguments
+use the typed deterministic adapter; specialized ordered workflows such as Chat
+resolution/send and Sheet creation/population retain explicit output-to-input lineage.
+Incomplete, ambiguous, or multi-tool preflight is handed to the existing bounded
+service agent with only the step's allowlisted tools.
+
+This is a pre-attempt fallback, not a blind retry mechanism. Once any tool call has
+been attempted—especially an external write—a provider failure, uncertain result, or
+verification failure cannot fall through to a model. It is persisted for deterministic
+readback, reconciliation, or explicit resume. Both paths share immutable approval
+hashes, idempotency, tool-result projection, verification, artifacts, incidents, and
+durable run events. Steps persist `execution_path` and `fallback_reason`, and emit
+`typed_execution_selected` or `guarded_agent_fallback_selected` without sensitive
+arguments.

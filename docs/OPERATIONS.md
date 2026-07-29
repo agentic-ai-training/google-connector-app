@@ -252,3 +252,17 @@ and exhausted authority are terminal. Provider quota/network errors may resume f
 valid checkpoint; an `uncheckpointed_timeout` does not claim resumable progress.
 Checkpoint messages, file bodies, raw provider responses, and Workspace content must
 never appear in the portal.
+## Hybrid execution diagnosis
+
+Inspect `agent_run_steps.output_data->>'execution_path'` to distinguish
+`typed_deterministic` from `guarded_agent_fallback`. For fallback steps,
+`fallback_reason` explains why exact preflight was not eligible. The matching
+append-only event records that zero external attempts occurred before handoff.
+
+Do not manually convert a typed tool failure into a model retry. For reads, correct
+invalid planning arguments and resume only when the durable retry policy permits it.
+For writes, reconcile provider evidence and artifacts first; resume is allowed only
+when the operation is proven absent or its idempotency contract makes repetition safe.
+The approval card lists the service, operation, targets, times and resource identifiers
+that are safe to display. Message bodies and document contents are represented only by
+presence and size.
