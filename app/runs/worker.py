@@ -14,6 +14,7 @@ from app.agents.supervisor import (
 from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
+from app.runs.reconciliation import reconcile_failed_step
 from app.runs.repository import append_event
 from app.runs.informational import informational_answer, workspace_chat_answer
 from app.improvements.failure_intelligence import record_failure_incident
@@ -27,6 +28,11 @@ from app.tools.result_projection import project_tool_result
 from app.tools.contracts import write_contract_for
 
 logger = logging.getLogger(__name__)
+
+
+def _remaining_unresolved_steps(steps: list[dict]) -> list[dict]:
+    """A run is complete only when every durable step is complete."""
+    return [step for step in steps if step.get("status") != "completed"]
 
 
 def classify_error(exc: Exception) -> str:
@@ -506,6 +512,58 @@ async def _store_artifacts(conn, run, step, artifacts):
         )
 
 
+async def _reconcile_verified_failed_siblings(pool, run) -> int:
+    """Mark only already-verified failed siblings complete; never retry them."""
+    async with pool.acquire() as conn:
+        failed_steps = [
+            dict(row) for row in await conn.fetch(
+                """SELECT * FROM agent_run_steps
+                   WHERE run_id=$1 AND status='failed' ORDER BY sequence_no""",
+                run["id"],
+            )
+        ]
+    reconciled = 0
+    for step in failed_steps:
+        if step.get("read_only"):
+            continue
+        output = step.get("output_data") or {}
+        if not isinstance(output, dict) or not output.get("tool_executions"):
+            continue
+        async with pool.acquire() as conn:
+            artifacts = [
+                dict(row) for row in await conn.fetch(
+                    """SELECT * FROM agent_artifacts
+                       WHERE run_id=$1 AND step_id=$2""",
+                    run["id"], step["id"],
+                )
+            ]
+        decision = await reconcile_failed_step(run, step, artifacts)
+        if decision.state != "already_completed":
+            continue
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """UPDATE agent_run_steps SET status='completed',
+                   error_category=NULL,error_message=NULL,
+                   completed_at=COALESCE(completed_at,now())
+                   WHERE id=$1 AND run_id=$2 AND status='failed'""",
+                step["id"], run["id"],
+            )
+        if result != "UPDATE 1":
+            continue
+        reconciled += 1
+        await append_event(
+            pool, run["id"], run["user_id"], "step_reconciled",
+            step_id=step["id"], phase="reconciliation",
+            message="Previously completed write passed deterministic readback",
+            payload={
+                "state": decision.state,
+                "reason_code": decision.reason_code,
+                "automatic_retry": False,
+            },
+        )
+    return reconciled
+
+
 async def _execute_step(app, pool, run, step, dependencies):
     run_id = run["id"]
     user_id = run["user_id"]
@@ -808,6 +866,7 @@ async def execute_run(app, pool, run):
             if failure:
                 raise failure
 
+        await _reconcile_verified_failed_siblings(pool, run)
         final_output = "\n\n".join(output for output in final_outputs if output)
         async with pool.acquire() as conn:
             steps = [dict(row) for row in await conn.fetch(
@@ -821,19 +880,59 @@ async def execute_run(app, pool, run):
                    FROM agent_model_calls WHERE run_id=$1""",
                 run_id,
             )
-            await conn.execute(
-                """UPDATE agent_runs SET status='completed',current_phase='completed',
-                   result=$1::jsonb,incident_summary='{}'::jsonb,
-                   technical_completion=$2,functional_completion=$3,
-                   user_visible_completion=$4,side_effect_integrity=$5,
-                   error_category=NULL,error_message=NULL,completed_at=now(),heartbeat_at=now(),
-                   current_step_id=NULL,lease_owner=NULL,lease_expires_at=NULL,
-                   models_used=$6,input_tokens=$7,output_tokens=$8 WHERE id=$9""",
-                json.dumps({"output": final_output}, default=str),
-                completion["technical_completion"], completion["functional_completion"],
-                completion["user_visible_completion"], completion["side_effect_integrity"],
-                usage["models"], usage["input_tokens"], usage["output_tokens"], run_id,
+            unresolved = _remaining_unresolved_steps(steps)
+            if unresolved:
+                first = unresolved[0]
+                category = first.get("error_category") or "verification"
+                message = (
+                    first.get("error_message")
+                    or "A previously failed step remains unresolved after reconciliation."
+                )
+                incident = build_incident(steps, category, message)
+                await conn.execute(
+                    """UPDATE agent_runs SET status='partial',current_phase='partial',
+                       incident_summary=$1::jsonb,technical_completion=$2,
+                       functional_completion=$3,user_visible_completion=$4,
+                       side_effect_integrity=$5,error_category=$6,error_message=$7,
+                       completed_at=now(),heartbeat_at=now(),current_step_id=$8,
+                       lease_owner=NULL,lease_expires_at=NULL,models_used=$9,
+                       input_tokens=$10,output_tokens=$11 WHERE id=$12""",
+                    json.dumps(incident, default=str),
+                    completion["technical_completion"],
+                    completion["functional_completion"],
+                    completion["user_visible_completion"],
+                    completion["side_effect_integrity"],
+                    category, message, first["id"], usage["models"],
+                    usage["input_tokens"], usage["output_tokens"], run_id,
+                )
+                partial = (category, message)
+            else:
+                partial = None
+            if not partial:
+                await conn.execute(
+                    """UPDATE agent_runs SET status='completed',current_phase='completed',
+                       result=$1::jsonb,incident_summary='{}'::jsonb,
+                       technical_completion=$2,functional_completion=$3,
+                       user_visible_completion=$4,side_effect_integrity=$5,
+                       error_category=NULL,error_message=NULL,completed_at=now(),
+                       heartbeat_at=now(),current_step_id=NULL,lease_owner=NULL,
+                       lease_expires_at=NULL,models_used=$6,input_tokens=$7,
+                       output_tokens=$8 WHERE id=$9""",
+                    json.dumps({"output": final_output}, default=str),
+                    completion["technical_completion"], completion["functional_completion"],
+                    completion["user_visible_completion"],
+                    completion["side_effect_integrity"], usage["models"],
+                    usage["input_tokens"], usage["output_tokens"], run_id,
+                )
+        if partial:
+            await append_event(
+                pool, run_id, user_id, "run_partial", phase="partial",
+                message=partial[1], payload={"category": partial[0]},
             )
+            await record_run_evaluation(pool, run_id)
+            run_transitions.labels("partial").inc()
+            run_duration.labels("partial").observe(time.perf_counter() - started)
+            return
         await append_event(pool, run_id, user_id, "run_completed", phase="completed",
                            message=final_output, payload={"task_complete": True})
         await record_run_evaluation(pool, run_id)

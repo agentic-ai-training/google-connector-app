@@ -131,6 +131,12 @@ failed exact step -> reconciling
   -> manual_required: block external repetition and retain evidence
 ```
 
+After an explicitly selected failed step resumes, the worker also rechecks any failed
+sibling that already contains successful write evidence. A sibling is marked complete
+only when deterministic provider readback still passes; the worker never retries that
+sibling automatically. If any sibling remains failed, the run stays `partial` and can
+never be falsely finalized as `completed`.
+
 Completed dependencies and verified artifacts never reset. Reconciliation performs no
 external call while holding a long database transaction.
 
