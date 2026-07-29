@@ -20,7 +20,10 @@ GMAIL_DELIVERY_PATTERN = re.compile(
     r"\b(send|reply|mail it|mail them)\b|"
     r"\bemail\s+(it|them|this|that|the|my|our|[A-Za-z0-9._%+-]+@)\b"
 )
-CHAT_DELIVERY_PATTERN = re.compile(r"\b(send|post|message them|chat them)\b")
+CHAT_DELIVERY_PATTERN = re.compile(
+    r"\b(send|post|message them|chat them)\b|"
+    r"\bsend\s*(?:on\s+)?(?:google\s+)?chat\b"
+)
 
 WRITE_PATTERNS = (
     r"\bsend\b", r"\breply\b", r"\bcreate\b", r"\bwrite\b", r"\bappend\b",
@@ -309,6 +312,11 @@ def classify_request(
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
     ]
     authority_services = set(statement.explicit_services)
+    # Current-turn analysis is the service authority. This also recognizes
+    # normalized forms such as "sendchat" which should not require the prior
+    # context string to contain a separately tokenized Chat noun.
+    services.extend(authority_services)
+    services = list(dict.fromkeys(services))
     if (
         re.search(r"\bsend\b", authority_text)
         and statement.email_recipients
@@ -354,8 +362,15 @@ def classify_request(
     if calendar_adds_meet:
         services.remove("meet")
     intent_kind, intent_evidence = classify_workspace_intent(message, services)
+    # Context can establish that "it" refers to prior Workspace content, but
+    # only the current turn is allowed to choose executable services.
+    if statement.contextual_reference:
+        services = [
+            service for service in services
+            if service in authority_services
+        ]
     composition_requested = statement.composition_requested
-    if intent_kind == "workspace_action" and composition_requested and services:
+    if intent_kind == "workspace_action" and composition_requested:
         services = [
             service for service in services
             if service in authority_services
@@ -373,15 +388,21 @@ def classify_request(
         if "chat" in services and not CHAT_DELIVERY_PATTERN.search(authority_text):
             services.remove("chat")
         services.insert(0, "composition")
-    write = _matches(WRITE_PATTERNS, authority_text) and any(
+    write = (
+        _matches(WRITE_PATTERNS, authority_text)
+        or statement.current_authorizes_external_write
+    ) and any(
         service != "composition" for service in services
     )
     high_risk = _matches(HIGH_RISK_PATTERNS, authority_text)
     if (
         any(service in services for service in ("gmail", "chat", "calendar"))
-        and re.search(
-            r"\b(send|email|reply|post|invite|schedule|cancel)\b",
-            authority_text,
+        and (
+            re.search(
+                r"\b(send|email|reply|post|invite|schedule|cancel)\b",
+                authority_text,
+            )
+            or ("chat" in services and "chat" in statement.delivery_channels)
         )
     ):
         high_risk = True
@@ -448,6 +469,7 @@ def build_plan(
     *,
     authority_message: str | None = None,
     request_analysis: RequestStatementAnalysis | None = None,
+    referenced_output: str | None = None,
 ) -> tuple[ExecutionPlan, dict]:
     statement = request_analysis or analyze_request_statement(
         authority_message or message
@@ -497,7 +519,10 @@ def build_plan(
     produced_data = []
     for service in ordered:
         step_id = f"execute_{service}"
-        operation = infer_operation(service, message, policy["write"])
+        operation_source = (
+            message if statement.service_only else statement.normalized_text
+        )
+        operation = infer_operation(service, operation_source, policy["write"])
         read_only = operation in READ_OPERATIONS
         postconditions = SERVICE_POSTCONDITIONS.get(service, [
             "The response contains deterministic evidence for every claimed result"
@@ -546,6 +571,8 @@ def build_plan(
                     statement.chat_destination_emails or statement.email_recipients
                 )[0],
             }
+            if statement.contextual_reference and referenced_output:
+                exact_tool_arguments["text"] = referenced_output
         if service == "calendar" and operation == "create":
             exact_tool_arguments = calendar_create_arguments(
                 message,

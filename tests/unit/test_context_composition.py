@@ -98,6 +98,8 @@ async def test_referential_request_gets_only_one_same_session_turn():
     assert "A long roadmap" in result.effective_message
     assert result.diagnostics()["prior_context_included"] is True
     assert result.diagnostics()["relevance_reason"] == "referential_action"
+    assert result.referenced_output == "A long roadmap"
+    assert "A long roadmap" not in str(result.diagnostics())
     assert pool.connection.fetches == 1
 
 
@@ -138,6 +140,30 @@ def test_combined_composition_and_delivery_has_typed_dependency_and_approval():
     assert validate_plan(plan) == []
 
 
+def test_sendchat_composition_uses_chat_not_ordinary_space_or_meet():
+    message = (
+        "write a short paragraph about getting a job in engineering space "
+        "today with suggestions and sendchat it to dhruvtyagi1905@gmail.com"
+    )
+    analysis = analyze_request_statement(message)
+    plan, policy = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+
+    assert analysis.explicit_services == ["chat"]
+    assert analysis.delivery_channels == ["chat"]
+    assert analysis.chat_destination_emails == ["dhruvtyagi1905@gmail.com"]
+    assert policy["services"] == ["composition", "chat"]
+    assert policy["write"] is True
+    assert policy["requires_approval"] is True
+    assert [(step.service, step.operation) for step in plan.steps] == [
+        ("composition", "compose"),
+        ("chat", "send"),
+    ]
+    assert plan.steps[1].dependencies == ["execute_composition"]
+    assert validate_plan(plan) == []
+
+
 def test_contextual_rewrite_uses_prior_content_without_inheriting_prior_write():
     effective = """Current request (the only authority for new external actions):
 Make it shorter
@@ -174,6 +200,39 @@ Previous assistant result: A complete roadmap"""
     assert policy["write"] is True
     assert policy["requires_approval"] is True
     assert plan.steps[0].operation == "send"
+
+
+def test_contextual_chat_uses_prior_text_but_never_inherits_meet_service():
+    effective = """Current request (the only authority for new external actions):
+chat the paragraph you sent me in the above message to dhruv@example.com
+
+Prior same-user, same-session context (reference only):
+Previous user request: Write an engineering paragraph
+Previous assistant result: Networking and meeting peers can improve your search."""
+    current = (
+        "chat the paragraph you sent me in the above message "
+        "to dhruv@example.com"
+    )
+    prior_output = "Networking and meeting peers can improve your search."
+    analysis = analyze_request_statement(current)
+    plan, policy = build_plan(
+        effective,
+        authority_message=current,
+        request_analysis=analysis,
+        referenced_output=prior_output,
+    )
+
+    assert policy["services"] == ["chat"]
+    assert policy["write"] is True
+    assert policy["requires_approval"] is True
+    assert [(step.service, step.operation) for step in plan.steps] == [
+        ("chat", "send"),
+    ]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "destination": "dhruv@example.com",
+        "text": prior_output,
+    }
+    assert validate_plan(plan) == []
 
 
 @pytest.mark.asyncio

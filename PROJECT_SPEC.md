@@ -1980,3 +1980,19 @@ time for both active and terminal durable runs. It must also show input/output/t
 token use grouped by the actual LLM recorded in `agent_model_calls`, including
 fallbacks. A deterministic run with no model calls must explicitly display zero LLM
 tokens, while historical aggregate-only records must be labelled as such.
+
+## Addendum — Conversation-context authority and composition delivery
+
+Conversation history is selectively loaded only for a current-turn reference or
+service clarification. It is data, never execution authority: only services and write
+intent present in the current statement may enter the durable plan. Ordinary words
+such as `space` must not imply Google Chat, while natural delivery forms including
+`sendchat`, `send chat`, and `send on Google Chat` must be normalized consistently.
+
+A combined content-generation and delivery request creates an ordered composition
+dependency followed by the authorized Workspace write. A Chat write binds either the
+completed composition output, an explicitly referenced prior assistant result, or
+another verified dependency as exact typed content. It then uses the existing
+destination-resolution, approval, idempotency, verification, and no-blind-retry
+contract without another model planning call. Structured backend failures must be
+decoded into readable messages by clients and must never render as `[object Object]`.

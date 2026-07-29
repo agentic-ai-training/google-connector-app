@@ -1585,6 +1585,58 @@ def test_get_run_reports_duration_and_tokens_grouped_by_actual_model():
         assert stored["active_duration_ms"] >= 0
 
 
+def test_contextual_chat_run_persists_exact_prior_output_without_inventing_services():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run, get_run
+    from app.runs.request_analysis import analyze_request_statement
+
+    current = (
+        "chat the paragraph you sent me in the above message "
+        "to dhruv@example.com"
+    )
+    prior_output = (
+        "Networking and meeting peers in the engineering space can improve "
+        "your job search."
+    )
+    effective = f"""Current request (the only authority for new external actions):
+{current}
+
+Prior same-user, same-session context (reference only):
+Previous user request: Write a paragraph about an engineering job search
+Previous assistant result: {prior_output}"""
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            marker = f"context-chat-{uuid.uuid4()}"
+            run, created = await create_run(
+                pool,
+                "context-chat@example.com",
+                current,
+                marker,
+                marker,
+                planning_message=effective,
+                request_analysis=analyze_request_statement(current),
+                referenced_output=prior_output,
+            )
+            stored = await get_run(pool, run["id"], "context-chat@example.com")
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run["id"])
+            return created, stored
+
+        created, stored = client.portal.call(exercise)
+        assert created is True
+        assert stored["status"] == "awaiting_approval"
+        assert stored["plan"]["services"] == ["chat"]
+        assert len(stored["steps"]) == 1
+        assert stored["steps"][0]["service"] == "chat"
+        assert stored["steps"][0]["operation"] == "send"
+        assert stored["steps"][0]["input_data"]["tool_arguments"] == {
+            "destination": "dhruv@example.com",
+            "text": prior_output,
+        }
+
+
 def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
     from app.api.main import app
     from app.db.connection import get_pool

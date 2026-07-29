@@ -19,6 +19,10 @@ class ContextAnalysis:
     context_turn_count: int = 0
     relevance_reason: str = "self_contained"
     current_authorizes_external_write: bool = False
+    # This content is deliberately omitted from diagnostics. It is passed only
+    # to the typed planner so a referential delivery can bind the exact prior
+    # assistant result without granting that result service authority.
+    referenced_output: str | None = None
 
     def diagnostics(self) -> dict:
         return {
@@ -119,4 +123,5 @@ async def analyze_conversation_context(
         context_turn_count=1,
         relevance_reason=relevance_reason,
         current_authorizes_external_write=external_write,
+        referenced_output=prior_output or None,
     )

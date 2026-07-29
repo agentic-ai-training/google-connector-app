@@ -1333,3 +1333,41 @@ tests pass; planner goldens pass 33/33 and no-network workflow replays pass 14/1
 Python compilation and Flake8 pass, Bandit reports no medium/high findings, the
 version-controlled Grafana dashboards validate, and Next.js lint, production build,
 and the critical-severity audit gate pass.
+
+## Sprint 45 — Context-authorized composition delivery and safe API errors
+
+Production session `de7c74d0-fef3-4595-b69a-76d53e871340` exposed two connected
+failures. A combined composition-and-Chat request containing `sendchat` was completed
+as composition-only, and referential retries inherited the word `meeting` from the
+paragraph as an unauthorized Meet service. The resulting structured API error was
+rendered by the browser as `[object Object]`.
+
+- [x] Recognize joined and natural Chat delivery wording such as `sendchat`,
+  `send chat`, and `send on Google Chat`.
+- [x] Stop treating the ordinary noun `space` as sufficient Chat intent; retain
+  explicit Chat resource and channel recognition.
+- [x] Make the current request the sole authority for service selection and external
+  writes. Prior same-session output may resolve referenced content but cannot add a
+  Gmail, Chat, Calendar, Meet, or other operation.
+- [x] Keep bounded prior output outside content-free diagnostics and bind it only to
+  the typed step authorized by the current request.
+- [x] Plan combined writing-and-delivery as an ordered `composition -> Chat` DAG with
+  the existing high-risk human approval.
+- [x] Send the exact completed composition dependency or referenced prior assistant
+  output through the deterministic Chat resolver/send contract without another model
+  planning turn.
+- [x] Preserve Chat destination resolution, idempotency, verification, artifact
+  evidence, no-blind-retry behavior, and approval hashing.
+- [x] Decode nested API `message`, `reason`, and `detail` objects into safe readable
+  frontend errors so no user path displays `[object Object]`.
+- [x] Add exact production-wording, contextual service-authority, content-lineage,
+  deterministic Chat, and durable persistence regression tests.
+
+Guardrail: conversation history supplies data only when a current-turn reference
+requires it. It never supplies permission or silently expands the current action set.
+
+Local evidence on 2026-07-29: 218 unit tests and 35 PostgreSQL-backed integration
+tests pass; planner goldens pass 34/34 and no-network workflow replays pass 14/14.
+Python compilation and Flake8 pass, Bandit reports no medium/high findings, all
+offline chunking/policy/DP and dual-worker gates pass, Grafana dashboards validate,
+and the Next.js lint, production build, and critical-severity audit gate pass.

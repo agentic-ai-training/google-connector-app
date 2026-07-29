@@ -349,6 +349,7 @@ async def start_run(body: RunCreate, request: Request):
             planning_message=effective_message,
             context_diagnostics=context_analysis.diagnostics(),
             request_analysis=request_analysis,
+            referenced_output=context_analysis.referenced_output,
         )
     except RunLimitExceeded as exc:
         try:

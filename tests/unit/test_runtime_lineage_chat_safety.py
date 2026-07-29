@@ -21,6 +21,7 @@ from app.runs.request_analysis import analyze_request_statement
 from app.runs.worker import (
     _create_deterministic_calendar_event,
     _create_recent_senders_sheet,
+    _chat_message_content,
     _dependency_context,
     _reconcile_verified_failed_siblings,
     _remaining_unresolved_steps,
@@ -125,6 +126,21 @@ def test_verified_sheet_url_reads_completed_dependency_evidence():
     }]) == "https://docs.google.com/spreadsheets/d/sheet-1/edit"
 
 
+def test_chat_content_prefers_explicit_reference_then_composition_dependency():
+    dependencies = [{
+        "service": "composition",
+        "output_data": {"output": "Freshly composed paragraph"},
+    }]
+    assert _chat_message_content(
+        {"input_data": {"tool_arguments": {"text": "Referenced paragraph"}}},
+        dependencies,
+    ) == ("Referenced paragraph", "referenced_prior_assistant_output")
+    assert _chat_message_content(
+        {"input_data": {"tool_arguments": {}}},
+        dependencies,
+    ) == ("Freshly composed paragraph", "completed_composition_dependency")
+
+
 @pytest.mark.asyncio
 async def test_complete_chat_workflow_resolves_then_sends_verified_sheet(
     monkeypatch,
@@ -193,6 +209,64 @@ async def test_complete_chat_workflow_resolves_then_sends_verified_sheet(
     }
     assert result["task_complete"] is True
     assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_complete_chat_workflow_sends_composition_dependency_exactly(
+    monkeypatch,
+):
+    calls = []
+
+    @tool(description="Resolve DM")
+    def resolve_chat_destination(destination: str):
+        return {}
+
+    @tool(description="Send Chat")
+    def send_chat_message(space_id: str, text: str):
+        return {}
+
+    class _Envelope:
+        def __init__(self, result):
+            self.compact_result = result
+
+        def metadata(self):
+            return {"truncated": False}
+
+    async def execute(_tool, call, _state, _pool):
+        calls.append(call)
+        result = (
+            {"name": "spaces/dm-1"}
+            if call["name"] == "resolve_chat_destination"
+            else {"name": "spaces/dm-1/messages/message-1"}
+        )
+        return None, result, _Envelope(result)
+
+    monkeypatch.setattr(
+        "app.runs.worker.get_toolsets",
+        lambda: {"chat": [resolve_chat_destination, send_chat_message]},
+    )
+    monkeypatch.setattr("app.runs.worker.execute_tool_call", execute)
+    result = await _send_deterministic_chat_message(
+        object(),
+        {"id": "run-1", "session_id": "s", "user_id": "u"},
+        {
+            "id": "chat-step",
+            "input_data": {
+                "tool_arguments": {"destination": "person@example.com"},
+            },
+        },
+        [{
+            "service": "composition",
+            "output_data": {"output": "Exact composed paragraph"},
+        }],
+    )
+
+    assert calls[1]["args"]["text"] == "Exact composed paragraph"
+    assert (
+        result["tool_executions"][1]["projection"]["content_source"]
+        == "completed_composition_dependency"
+    )
+    assert result["output"] == "Sent the requested content in Google Chat."
 
 
 @pytest.mark.asyncio
@@ -876,6 +950,31 @@ async def test_recent_sender_dependency_projection_preserves_structured_rows():
     assert sender["sender_email"] == "ada@example.com"
     assert projected[0]["projection"]["dependency_projection"] == (
         "gmail_recent_senders_v1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_composition_dependency_projection_preserves_chat_content_lineage():
+    class _Connection:
+        async def fetch(self, *_args):
+            return [{
+                "step_key": "composition-1", "service": "composition",
+                "output_data": {
+                    "output": "Exact short paragraph for the recipient.",
+                    "task_complete": True,
+                },
+            }]
+
+    projected = await _dependency_context(_Connection(), {
+        "run_id": "run-1", "dependencies": ["composition-1"],
+    })
+
+    assert _chat_message_content(
+        {"input_data": {"tool_arguments": {}}},
+        projected,
+    ) == (
+        "Exact short paragraph for the recipient.",
+        "completed_composition_dependency",
     )
 
 

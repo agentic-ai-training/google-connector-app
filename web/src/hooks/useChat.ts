@@ -27,11 +27,16 @@ export type AgentRun={
 };
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
 
-function errorDetail(value:unknown,fallback:string){
+function errorDetail(value:unknown,fallback:string):string{
   if(typeof value==="string")return value;
-  if(value&&typeof value==="object"&&"message" in value){
-    const message=(value as {message?:unknown}).message;
-    if(typeof message==="string")return message;
+  if(value&&typeof value==="object"){
+    const record=value as Record<string,unknown>;
+    for(const key of ["message","reason","detail"]){
+      if(key in record){
+        const resolved=errorDetail(record[key],"");
+        if(resolved)return resolved;
+      }
+    }
   }
   return fallback;
 }
@@ -173,7 +178,7 @@ export function useChat(sessionId:string){
       const response=await fetch(`${API}/runs`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({message:content,session_id:sessionId,idempotency_key:crypto.randomUUID(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})});
       if(!response.ok){
         const detail=await response.json().catch(()=>({detail:`Request failed (${response.status})`}));
-        throw new Error(detail.detail??`Request failed (${response.status})`);
+        throw new Error(errorDetail(detail.detail,`Request failed (${response.status})`));
       }
       const created=await response.json() as {run_id:string};
       localStorage.setItem(storageKey,created.run_id);
@@ -190,7 +195,7 @@ export function useChat(sessionId:string){
       method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},
       body:JSON.stringify({approved,action_hash:currentRun.approval.action_hash}),
     });
-    if(!response.ok){const data=await response.json();throw new Error(data.detail??"Approval failed");}
+    if(!response.ok){const data=await response.json();throw new Error(errorDetail(data.detail,"Approval failed"));}
     if(approved){setStreaming(true);await monitor(currentRun.id);}
     else{const run=await loadRun(currentRun.id);setCurrentRun(run);showFinal(run);localStorage.removeItem(storageKey);}
   };
@@ -225,7 +230,7 @@ export function useChat(sessionId:string){
       method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},
       body:JSON.stringify({retry_failed_step:true}),
     });
-    if(!response.ok){const data=await response.json();throw new Error(data.detail??"Resume failed");}
+    if(!response.ok){const data=await response.json();throw new Error(errorDetail(data.detail,"Resume failed"));}
     setStreaming(true);await monitor(currentRun.id);
   };
   const refreshRun=async()=>{

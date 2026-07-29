@@ -545,24 +545,47 @@ def _verified_sheet_url(dependencies: list[dict]) -> str | None:
     return None
 
 
+def _chat_message_content(step: dict, dependencies: list[dict]) -> tuple[str, str] | None:
+    """Bind Chat text to an explicit reference or one completed dependency."""
+    tool_arguments = ((step.get("input_data") or {}).get("tool_arguments") or {})
+    referenced_text = str(tool_arguments.get("text") or "").strip()
+    if referenced_text:
+        return referenced_text, "referenced_prior_assistant_output"
+    sheet_url = _verified_sheet_url(dependencies)
+    if sheet_url:
+        return sheet_url, "verified_sheet_dependency"
+    for dependency in dependencies:
+        if dependency.get("service") != "composition":
+            continue
+        output = dependency.get("output_data") or {}
+        if not isinstance(output, dict):
+            continue
+        composed_text = str(output.get("output") or "").strip()
+        if composed_text:
+            return composed_text, "completed_composition_dependency"
+    return None
+
+
 async def _send_deterministic_chat_message(
     pool, run, step, dependencies,
 ):
-    """Resolve a DM and send a verified dependency URL without an LLM turn."""
+    """Resolve a DM and send explicitly bound content without an LLM turn."""
     input_data = step.get("input_data") or {}
     destination = str(
         (input_data.get("tool_arguments") or {}).get("destination") or ""
     ).strip()
-    sheet_url = _verified_sheet_url(dependencies)
-    if not destination or not sheet_url:
+    content = _chat_message_content(step, dependencies)
+    if not destination or not content:
         return None
+    message_text, content_source = content
     await append_event(
         pool, run["id"], run["user_id"], "typed_execution_selected",
         step_id=step["id"], phase="execution",
-        message="Recipient and verified Sheet URL selected the typed Chat workflow",
+        message="Recipient and verified content selected the typed Chat workflow",
         payload={
             "service": "chat", "operation": "send",
             "reason_code": "complete_ordered_chat_inputs",
+            "content_source": content_source,
             "external_attempts_before_selection": 0,
         },
     )
@@ -614,7 +637,7 @@ async def _send_deterministic_chat_message(
         "name": "send_chat_message",
         "args": {
             "space_id": resolve_result["name"],
-            "text": sheet_url,
+            "text": message_text,
         },
     }
     _, send_result, send_envelope = await execute_tool_call(
@@ -629,7 +652,7 @@ async def _send_deterministic_chat_message(
             "lineage_target_tool": "send_chat_message",
             "lineage_field": "space_id",
             "lineage_bound": True,
-            "content_source": "verified_sheet_dependency",
+            "content_source": content_source,
         },
     })
     if not isinstance(send_result, dict) or send_result.get("error"):
@@ -651,7 +674,11 @@ async def _send_deterministic_chat_message(
             },
         }
     return {
-        "output": f"Sent the verified Sheet link in Google Chat: {sheet_url}",
+        "output": (
+            f"Sent the verified Sheet link in Google Chat: {message_text}"
+            if content_source == "verified_sheet_dependency"
+            else "Sent the requested content in Google Chat."
+        ),
         "tool_results": [
             resolve_envelope.compact_result, send_envelope.compact_result,
         ],
