@@ -197,11 +197,12 @@ def get_toolsets() -> dict[str, list[BaseTool]]:
 
 
 async def retrieve_context_node(state: AgentState):
-    policy = classify_request(state.get("message", ""))
+    retrieval_query = state.get("retrieval_query") or state.get("message", "")
+    policy = classify_request(retrieval_query)
     operational = []
     try:
         operational = await retrieve_operational_knowledge(
-            state.get("message", ""), run_id=state.get("run_id"),
+            retrieval_query, run_id=state.get("run_id"),
             step_id=state.get("step_id"),
         )
     except Exception:
@@ -231,7 +232,7 @@ async def retrieve_context_node(state: AgentState):
             )
             if rag_enabled:
                 docs = await hybrid_retrieve(
-                    state.get("message", ""), pool=pool,
+                    retrieval_query, pool=pool,
                     user_id=state.get("user_id"),
                     diagnostics=retrieval_diagnostics,
                 )
@@ -266,7 +267,7 @@ async def retrieve_context_node(state: AgentState):
                         state.get("user_id"), effective_mode,
                         retrieval_reason,
                         hashlib.sha256(
-                            state.get("message", "").encode()
+                            retrieval_query.encode()
                         ).hexdigest(),
                         int((time.perf_counter() - started) * 1000),
                     )
@@ -297,7 +298,7 @@ async def retrieve_context_node(state: AgentState):
                        VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9)""",
                     state["run_id"], state.get("step_id"), state.get("user_id"),
                     effective_mode, retrieval_reason,
-                    hashlib.sha256(state.get("message", "").encode()).hexdigest(),
+                    hashlib.sha256(retrieval_query.encode()).hexdigest(),
                     len(docs), int((time.perf_counter() - started) * 1000),
                     list(dict.fromkeys(str(doc.get("source", "unknown")) for doc in docs)),
                 )

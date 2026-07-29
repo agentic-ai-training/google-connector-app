@@ -1535,6 +1535,7 @@ async def _execute_step(app, pool, run, step, dependencies):
     )
     initial = {
         "message": scoped_message, "session_id": run["session_id"],
+        "retrieval_query": planning_request,
         "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
         "forced_service": step["service"], "messages": [],
         "allowed_tools": (step.get("input_data") or {}).get("allowed_tools", []),

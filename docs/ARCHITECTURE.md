@@ -259,3 +259,6 @@ For semantic request wrappers with an explicit `about`, `concerning`, or `regard
 topic, the keyword channel searches that topic rather than requiring every instruction
 word to occur in the indexed content. The transformation strategy and token count are
 recorded without copying the query into high-cardinality telemetry.
+The durable worker passes that authoritative request separately as `retrieval_query`.
+The agent's service-scoped execution prompt and serialized dependency outputs are never
+used as the knowledge-search query.
