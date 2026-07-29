@@ -14,7 +14,7 @@
   {"id":"chat-direct-message-email","request":"Can you send a chat message to achintyat256@gmail.com saying hi?","services":["chat"],"operations":["send"],"approval":true,"clarifications":0,"rag":"none"},
   {"id":"tasks","request":"List my Google Tasks","services":["tasks"],"operations":["list"],"approval":false,"rag":"none"},
   {"id":"contacts","request":"Search contacts for Ravi","services":["contacts"],"operations":["search"],"approval":false,"rag":"none"},
-  {"id":"semantic-history","request":"Find conceptually related historical documents about pricing","services":["composition"],"operations":["compose"],"approval":false,"rag":"hybrid"},
+  {"id":"semantic-history","request":"Find conceptually related historical documents about pricing","services":["composition"],"operations":["compose"],"approval":false,"rag":"hybrid","max_tokens":3000},
   {"id":"multi-service","request":"Find Gmail senders, create a Sheet, and send its link in the Finance Chat space","services":["gmail","sheets","chat"],"operations":["search","create_and_write","send"],"approval":true,"rag":"none"},
   {"id":"misspelling","request":"Create a calender event at 10 AM IST for 30 minutes","services":["calendar"],"operations":["create"],"approval":true},
   {"id":"delete-drive","request":"Delete the Drive file","services":["drive"],"operations":["trash"],"approval":true,"rag":"none"},
