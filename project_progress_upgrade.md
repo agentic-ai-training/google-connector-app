@@ -1479,7 +1479,7 @@ as a successful live read despite recording zero tool attempts.
 - [x] Add exact production wording to current-turn context, deferred authorization,
   planner, postcondition, PostgreSQL persistence, golden-task, and workflow-replay
   regression coverage.
-- [ ] Publish, deploy, and verify the immutable release without approving or executing
+- [x] Publish, deploy, and verify the immutable release without approving or executing
   a real Gmail-copy run; production verification must stop at approval/cancellation.
 
 Guardrails: the current statement alone grants a new external write. Pronouns first
@@ -1493,3 +1493,18 @@ Python compilation, Flake8, Bandit, and dependency audit pass; offline
 chunking/policy/context-packing/DP and dual-worker gates pass; Grafana dashboards
 validate; Next.js lint/build and the critical-severity audit gate pass; Flutter
 analyze/test/debug APK pass.
+
+Production evidence on 2026-07-29:
+
+- PR [#105](https://github.com/agentic-ai-training/google-connector-app/pull/105)
+  passed two independent CI/attestation runs and merged as immutable commit
+  `eb801a68c58b9b449fc3a3004452d299c9668f57`.
+- Deployment workflow
+  [30448969879](https://github.com/agentic-ai-training/google-connector-app/actions/runs/30448969879)
+  deployed and attested that exact commit on the Railway API/worker and Vercel
+  frontend.
+- Approval-gated production proof run
+  `32f8d46f-682e-4bea-be66-b7732725d3a0` stored standalone context and the typed
+  Gmail `search -> send` DAG with the exact source query and destination.
+  It recorded zero tool attempts and zero artifacts and was cancelled before
+  approval; no Gmail message was read or sent.
