@@ -1972,3 +1972,11 @@ resume rules. Typed and agent paths have the same approval hash, authorization,
 idempotency, projection, postconditions, artifact ledger, incident generation and
 tenant isolation. Approval UI must preview sanitized concrete actions and must never
 display complete private message/document content.
+
+## Addendum — Active-session timing and model accounting
+
+The main session progress card must show total elapsed request time and recorded step
+time for both active and terminal durable runs. It must also show input/output/total
+token use grouped by the actual LLM recorded in `agent_model_calls`, including
+fallbacks. A deterministic run with no model calls must explicitly display zero LLM
+tokens, while historical aggregate-only records must be labelled as such.

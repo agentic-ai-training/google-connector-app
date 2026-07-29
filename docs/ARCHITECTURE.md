@@ -186,3 +186,11 @@ A failed step that reconciliation proves safe to retry is re-pinned to the curre
 deployed immutable executor version before it is queued. This permits a production
 repair to resume an older run. A write with uncertain acceptance is never re-pinned or
 queued automatically.
+
+## Active-session accounting
+
+`GET /runs/{run_id}` derives total elapsed time from the durable queued/completed
+timestamps and recorded step time from step duration evidence. It also groups the
+append-only `agent_model_calls` ledger by actual model, returning calls plus
+input/output token totals. The session UI uses these fields for live and terminal
+progress; configured model names are never treated as proof that a model was called.

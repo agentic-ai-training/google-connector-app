@@ -459,6 +459,35 @@ async def get_run(pool, run_id, user_id):
         result["steps"] = [dict(item) for item in await conn.fetch(
             "SELECT * FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no", run_id
         )]
+        model_usage = await conn.fetch(
+            """SELECT model,count(*)::integer AS calls,
+                      coalesce(sum(input_tokens),0)::bigint AS input_tokens,
+                      coalesce(sum(output_tokens),0)::bigint AS output_tokens
+               FROM agent_model_calls
+               WHERE run_id=$1
+               GROUP BY model
+               ORDER BY coalesce(sum(input_tokens),0)
+                        + coalesce(sum(output_tokens),0) DESC, model""",
+            run_id,
+        )
+        result["model_usage"] = [dict(item) for item in model_usage]
+        result["model_call_count"] = sum(item["calls"] for item in model_usage)
+        now = datetime.now(timezone.utc)
+        elapsed_start = result.get("queued_at") or result.get("started_at")
+        elapsed_end = result.get("completed_at") or now
+        result["elapsed_duration_ms"] = (
+            max(0, int((elapsed_end - elapsed_start).total_seconds() * 1000))
+            if elapsed_start else 0
+        )
+        active_duration_ms = 0
+        for step in result["steps"]:
+            if step.get("duration_ms") is not None:
+                active_duration_ms += max(0, int(step["duration_ms"]))
+            elif step.get("status") == "running" and step.get("started_at"):
+                active_duration_ms += max(
+                    0, int((now - step["started_at"]).total_seconds() * 1000)
+                )
+        result["active_duration_ms"] = active_duration_ms
         result["artifacts"] = [dict(item) for item in await conn.fetch(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 ORDER BY created_at", run_id
         )]

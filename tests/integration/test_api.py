@@ -1522,8 +1522,67 @@ def test_durable_informational_run_completes_without_graph_or_model_calls():
         assert completed["functional_completion"] == 100
         assert completed["user_visible_completion"] == 100
         assert "Google Workspace Agent" in completed["result"]["output"]
+        assert completed["model_usage"] == []
+        assert completed["model_call_count"] == 0
+        assert completed["elapsed_duration_ms"] >= 0
+        assert completed["active_duration_ms"] >= 0
         assert model_calls == 0
         assert tool_calls == 0
+
+
+def test_get_run_reports_duration_and_tokens_grouped_by_actual_model():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run, get_run
+
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            marker = f"usage-{uuid.uuid4()}"
+            run, _ = await create_run(
+                pool, "usage@example.com", "what can you do?", marker, marker,
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE agent_runs
+                       SET status='completed',queued_at=now()-interval '3 seconds',
+                           started_at=now()-interval '3 seconds',
+                           completed_at=now(),input_tokens=175,output_tokens=75,
+                           models_used=ARRAY['primary-model','fallback-model']
+                       WHERE id=$1""",
+                    run["id"],
+                )
+                await conn.execute(
+                    """INSERT INTO agent_model_calls
+                       (run_id,component,model,status,input_tokens,output_tokens)
+                       VALUES($1,'planner','primary-model','completed',100,40),
+                             ($1,'verifier','primary-model','completed',25,10),
+                             ($1,'recovery','fallback-model','completed',50,25)""",
+                    run["id"],
+                )
+            stored = await get_run(pool, run["id"], "usage@example.com")
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run["id"])
+            return stored
+
+        stored = client.portal.call(exercise)
+        assert stored["model_call_count"] == 3
+        assert stored["model_usage"] == [
+            {
+                "model": "primary-model",
+                "calls": 2,
+                "input_tokens": 125,
+                "output_tokens": 50,
+            },
+            {
+                "model": "fallback-model",
+                "calls": 1,
+                "input_tokens": 50,
+                "output_tokens": 25,
+            },
+        ]
+        assert stored["elapsed_duration_ms"] >= 2900
+        assert stored["active_duration_ms"] >= 0
 
 
 def test_diagnosis_only_proposal_cannot_be_approved_for_canary():

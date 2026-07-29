@@ -271,3 +271,15 @@ When an older run is resumed, inspect the `run_reconciled` event. A safe retry r
 both `previous_executor_version` and `resume_executor_version`; the current worker can
 then claim it. `manual_required` decisions retain their original pin and never enter
 the queue.
+
+## Verify session timing and model usage
+
+Open an authenticated active run and confirm that its main progress card updates
+`Elapsed time` while the run is non-terminal. Once terminal, it must display `Total
+time` fixed at the durable completion timestamp. `Recorded step time` is separately
+labelled and can differ because total time includes queue and human-wait intervals.
+
+For a model-backed run, compare each displayed model/call/token row with
+`agent_model_calls` grouped by `model`. For a deterministic terminal run, the card
+must explicitly report zero tokens and no LLM calls. Older runs with only aggregate
+fields are labelled as legacy rather than receiving inferred per-model attribution.
