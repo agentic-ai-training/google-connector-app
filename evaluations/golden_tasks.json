@@ -32,5 +32,6 @@
   {"id":"workspace-draft-only","request":"Draft a polite email asking for a meeting","services":["composition"],"operations":["compose"],"approval":false,"rag":"none","max_tokens":3000},
   {"id":"workspace-compose-send","request":"Write an application and send it by Gmail to user@example.com","services":["composition","gmail"],"operations":["compose","send"],"approval":true,"rag":"none","max_tokens":4500},
   {"id":"workspace-compose-doc","request":"Brainstorm a roadmap and create it in Google Docs","services":["composition","docs"],"operations":["compose","create"],"approval":false,"rag":"none","max_tokens":4500},
-  {"id":"workspace-compose-sendchat","request":"write a short paragraph about getting a job in engineering space today with suggestions and sendchat it to dhruvtyagi1905@gmail.com","services":["composition","chat"],"operations":["compose","send"],"approval":true,"rag":"none","max_tokens":4500}
+  {"id":"workspace-compose-sendchat","request":"write a short paragraph about getting a job in engineering space today with suggestions and sendchat it to dhruvtyagi1905@gmail.com","services":["composition","chat"],"operations":["compose","send"],"approval":true,"rag":"none","max_tokens":4500},
+  {"id":"contextual-paragraph-chat-delivery","request":"now send this above paragraph as chat message to dhruvtyagi1905@gmail.com","services":["chat"],"operations":["send"],"approval":true,"rag":"none","max_tokens":1500}
 ]

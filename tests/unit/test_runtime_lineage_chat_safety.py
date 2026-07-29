@@ -160,9 +160,32 @@ def test_verified_write_never_retains_pending_verification_message():
         "Required Google Workspace write operations completed; "
         "read-after-write verification is pending."
     )
-    assert _verified_terminal_output({"service": "chat"}, pending) == (
+    assert _verified_terminal_output({"service": "chat"}, pending, {}) == (
         "Sent the requested content in Google Chat and verified the message."
     )
+
+
+def test_verified_gmail_receipt_names_recipient_body_subject_and_message():
+    receipt = _verified_terminal_output(
+        {"service": "gmail"},
+        "Completed and verified the requested Gmail write.",
+        {
+            "tool_executions": [{
+                "tool": "send_gmail",
+                "arguments": {
+                    "to": "person@example.com",
+                    "subject": "Engineering role",
+                    "body": "This is the exact paragraph that was sent.",
+                },
+                "result": {"id": "gmail-message-1"},
+            }],
+        },
+    )
+
+    assert "person@example.com" in receipt
+    assert "Subject: Engineering role" in receipt
+    assert "This is the exact paragraph that was sent." in receipt
+    assert "Gmail message ID: gmail-message-1" in receipt
 
 
 @pytest.mark.asyncio
@@ -291,6 +314,12 @@ async def test_complete_chat_workflow_sends_composition_dependency_exactly(
         == "completed_composition_dependency"
     )
     assert result["output"] == "Sent the requested content in Google Chat."
+    receipt = _verified_terminal_output(
+        {"service": "chat"}, result["output"], result,
+    )
+    assert "person@example.com" in receipt
+    assert "Exact composed paragraph" in receipt
+    assert "spaces/dm-1/messages/message-1" in receipt
 
 
 @pytest.mark.asyncio

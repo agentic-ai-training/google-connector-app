@@ -140,6 +140,37 @@ def test_combined_composition_and_delivery_has_typed_dependency_and_approval():
     assert validate_plan(plan) == []
 
 
+def test_prior_content_cannot_reclassify_current_chat_delivery_as_capabilities():
+    current = (
+        "now send this above paragraph as chat message to "
+        "dhruvtyagi1905@gmail.com"
+    )
+    prior = (
+        "A portfolio demonstrates your capabilities to potential employers."
+    )
+    effective = (
+        f"Current request (the only authority for new external actions):\n{current}\n\n"
+        f"Prior same-user, same-session context (reference only):\n"
+        f"Previous assistant result: {prior}"
+    )
+    analysis = analyze_request_statement(current)
+    plan, policy = build_plan(
+        effective,
+        authority_message=current,
+        request_analysis=analysis,
+        referenced_output=prior,
+    )
+
+    assert policy["intent_kind"] == "workspace_action"
+    assert policy["informational_intent"] is None
+    assert [(step.service, step.operation) for step in plan.steps] == [
+        ("chat", "send"),
+    ]
+    assert plan.steps[0].arguments["tool_arguments"]["text"] == prior
+    assert plan.steps[0].requires_approval is True
+    assert validate_plan(plan) == []
+
+
 def test_sendchat_composition_uses_chat_not_ordinary_space_or_meet():
     message = (
         "write a short paragraph about getting a job in engineering space "

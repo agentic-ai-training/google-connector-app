@@ -365,7 +365,30 @@ def classify_request(
     )
     if calendar_adds_meet:
         services.remove("meet")
-    intent_kind, intent_evidence = classify_workspace_intent(message, services)
+    # Historical content can supply a referenced body, but it must not classify
+    # the current command. For example, a prior paragraph containing the words
+    # "your capabilities" must not turn "send the above paragraph on Chat" into
+    # a product-capabilities answer. A service-only clarification is the sole
+    # case that intentionally needs the combined effective message.
+    intent_message = message if statement.service_only else (
+        authority_message or message
+    )
+    intent_kind, intent_evidence = classify_workspace_intent(
+        intent_message, services,
+    )
+    if (
+        statement.current_authorizes_external_write
+        and authority_services
+        and intent_kind in {"ambiguous", "out_of_scope"}
+    ):
+        intent_kind = "workspace_action"
+        intent_evidence = {
+            **intent_evidence,
+            "product_intent": None,
+            "basis": "structured current-turn external-write authority",
+            "confidence": "high",
+            "ambiguous": False,
+        }
     # Context can establish that "it" refers to prior Workspace content, but
     # only the current turn is allowed to choose executable services.
     if statement.contextual_reference:
