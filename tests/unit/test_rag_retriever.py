@@ -27,8 +27,9 @@ class _Pool:
 
 
 class _LexicalConnection:
-    async def fetch(self, query, *_):
+    async def fetch(self, query, *arguments):
         assert "websearch_to_tsquery" in query
+        assert arguments[0] == "Google evidence"
         return [{
             "id": uuid.uuid4(),
             "source": "gmail",
@@ -53,7 +54,7 @@ async def test_hybrid_retrieval_falls_back_to_keyword_with_bounded_embedding(mon
     started = time.perf_counter()
 
     results = await retriever.hybrid_retrieve(
-        "historical Google evidence",
+        "Find conceptually related historical documents about Google evidence",
         pool=_Pool(_LexicalConnection()),
         user_id="tenant@example.com",
         diagnostics=diagnostics,
@@ -65,3 +66,5 @@ async def test_hybrid_retrieval_falls_back_to_keyword_with_bounded_embedding(mon
     assert diagnostics["dense_status"] == "timeout"
     assert diagnostics["effective_mode"] == "keyword"
     assert diagnostics["lexical_candidates"] == 1
+    assert diagnostics["lexical_query_strategy"] == "explicit_topic_tail"
+    assert diagnostics["lexical_query_token_count"] == 2

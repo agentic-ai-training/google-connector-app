@@ -1,11 +1,26 @@
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timezone
 
 from app.config.settings import get_settings
 from app.mlops.metrics import empty_context
 from app.rag.embedder import NomicEmbedder
+
+_TOPIC_TAIL = re.compile(
+    r"\b(?:about|concerning|regarding)\s+(.+?)\s*[?.!]*$",
+    re.IGNORECASE,
+)
+
+
+def _lexical_query(query: str) -> tuple[str, str]:
+    """Project semantic instruction wrappers to their explicit search topic."""
+    match = _TOPIC_TAIL.search(query.strip())
+    if not match:
+        return query, "original"
+    topic = " ".join(match.group(1).split()).strip(" .?!")
+    return (topic, "explicit_topic_tail") if topic else (query, "original")
 
 
 def _recency_bonus(item: dict) -> float:
@@ -66,6 +81,7 @@ async def hybrid_retrieve(
         diagnostics["query_embedding_duration_ms"] = int(
             (time.perf_counter() - embedding_started) * 1000
         )
+    lexical_query, lexical_strategy = _lexical_query(query)
     async with pool.acquire() as conn:
         dense_rows = []
         if vector is not None:
@@ -91,9 +107,11 @@ async def hybrid_retrieve(
                  AND ($3::text IS NULL OR source_type=$3)
                  AND to_tsvector('english',content) @@ websearch_to_tsquery('english',$1)
                ORDER BY score DESC LIMIT $4""",
-            query, user_id, filters.get("source"), top_k * 3,
+            lexical_query, user_id, filters.get("source"), top_k * 3,
         )
     if diagnostics is not None:
+        diagnostics["lexical_query_strategy"] = lexical_strategy
+        diagnostics["lexical_query_token_count"] = len(lexical_query.split())
         diagnostics["dense_candidates"] = len(dense_rows)
         diagnostics["lexical_candidates"] = len(lexical_rows)
         diagnostics["effective_mode"] = (
