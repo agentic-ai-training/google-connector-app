@@ -1371,3 +1371,52 @@ tests pass; planner goldens pass 34/34 and no-network workflow replays pass 14/1
 Python compilation and Flake8 pass, Bandit reports no medium/high findings, all
 offline chunking/policy/DP and dual-worker gates pass, Grafana dashboards validate,
 and the Next.js lint, production build, and critical-severity audit gate pass.
+
+## Sprint 46 — Same-service exact-copy DAG and tenant RAG activation
+
+Production run `6ad2c09b` proved that a single Gmail service may still require multiple
+ordered operations. The planner searched and fetched the source message but had excluded
+`send_gmail`, then reported a generic tool failure. Production also contained 14,521
+embedded legacy chunks owned by another tenant, zero retrieval events, and two
+dead-letter Gmail embedding jobs for the affected user because an ISO timestamp string
+reached an asyncpg timestamp column.
+
+- [x] Expand explicit same-service read-then-write requests into separate durable DAG
+  steps without allowing prior conversation text to add an operation.
+- [x] Implement exact Gmail-copy lineage: sent-mail lookup, exact source fetch, encrypted
+  tenant/run-scoped result reference, recipient-bound send, and no model-memory transfer.
+- [x] Keep the Gmail write behind the high-risk approval policy and prevent a missing,
+  truncated, or tenant-mismatched source from reaching `send_gmail`.
+- [x] Verify the new Gmail message ID, exact recipient, subject, and body through
+  read-after-write; store hashes and identifiers rather than private contents.
+- [x] Preserve sanitized underlying tool/provider evidence instead of collapsing every
+  failure into “at least one tool failed.”
+- [x] Distinguish a current-request antecedent from a prior-turn reference so “fetch and
+  send the same mail” does not load an unrelated paragraph.
+- [x] Normalize source timestamps from ISO strings to timezone-aware datetimes before
+  source-aware parent/chunk persistence.
+- [x] Add explicit authenticated per-user indexing consent and a durable leased
+  `rag_source_sync_jobs` queue that survives browser/API disconnects.
+- [x] Bound Gmail/Drive/Calendar collection, enqueue only tenant-owned source-aware
+  chunks, suppress duplicate active syncs, and retry only the known timestamp dead
+  letters automatically.
+- [x] Make run/UI telemetry distinguish conversation context, knowledge-RAG gating and
+  returned/used evidence, and private index readiness/sync status.
+- [x] Add the exact production request to planner goldens and no-network replay, add
+  endpoint/worker/verification isolation tests, and run every repository guardrail.
+- [ ] Deploy migration, API/worker, and web changes; enqueue the consenting production
+  user's bounded backfill; verify source-aware chunks, retrieval evidence, exact-copy
+  completion, and actionable errors without duplicating the already-sent artifact.
+
+Guardrails: OAuth access alone is not training/indexing consent; indexed content remains
+tenant-scoped. Knowledge RAG is not used to locate current Gmail state or execute writes.
+The source and destination messages are separate artifacts, and a failed write is never
+blindly retried.
+
+Local evidence on 2026-07-29: 229 unit tests and 36 PostgreSQL-backed integration
+tests pass; planner goldens pass 36/36 and no-network workflow replays pass 15/15.
+Migration 014 downgrades to 013 and repairs forward to 014. Python compilation,
+Flake8, Bandit, and dependency audit pass; offline chunking/policy/context-packing/DP
+and dual-worker gates pass; Grafana dashboards and Compose validate; Next.js
+lint/build/audit pass; Flutter analyze/test/debug APK pass; and the API and worker
+Docker images build successfully.

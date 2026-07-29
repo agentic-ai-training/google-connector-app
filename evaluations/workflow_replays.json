@@ -123,5 +123,13 @@
     "steps": [
       {"id": "sheet", "service": "sheets", "operation": "create_and_write", "arguments": {"rows": [["Name"], ["Ada"]]}}
     ]
+  },
+  {
+    "id": "gmail-exact-source-to-destination-lineage",
+    "expect": {"artifact_count": 2},
+    "steps": [
+      {"id": "source", "service": "gmail", "operation": "search", "arguments": {"recipient": "achintyat256@gmail.com", "subject": "Exact fixture", "body": "Exact private fixture"}},
+      {"id": "copy", "service": "gmail", "operation": "send", "dependencies": ["source"], "arguments": {"to": "dhruvvtyagi1905@gmail.com", "subject": "${source.subject}", "body": "${source.body}"}}
+    ]
   }
 ]

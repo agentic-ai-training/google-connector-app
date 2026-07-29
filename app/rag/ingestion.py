@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from datetime import datetime
 
 from app.rag.chunking import chunks_for_source
 
@@ -21,6 +22,18 @@ CHUNKER_VERSIONS = {
     "contacts": "contacts-v2", "tasks": "tasks-v2", "meet": "meet-v2",
     "pdf": "pdf-layout-v2", "meet_transcript": "meet-transcript-v2",
 }
+
+
+def _timestamp(value):
+    """Normalize provider metadata for asyncpg ``timestamptz`` arguments."""
+    if value is None or isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _items(result):
@@ -124,7 +137,10 @@ async def index_tool_result(name, args, result, pool, embedder, user_id):
             user_id, source_type, source_id, chunk.parent_id, chunk.index, chunk.heading,
             chunk.content, chunk.content_hash, json.dumps(chunk.metadata, default=str),
             json.dumps({"owner": user_id}), vector, "nomic-embed-text", chunker_version,
-            chunk.metadata.get("received_at") or chunk.metadata.get("modified_time"),
+            _timestamp(
+                chunk.metadata.get("received_at")
+                or chunk.metadata.get("modified_time")
+            ),
         ))
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute(
@@ -167,7 +183,7 @@ async def index_tool_result(name, args, result, pool, embedder, user_id):
                     parent["content"], parent["content_hash"],
                     json.dumps(parent["metadata"], default=str),
                     json.dumps({"owner": user_id}), chunker_version,
-                    parent["metadata"].get("source_modified_at"),
+                    _timestamp(parent["metadata"].get("source_modified_at")),
                 ) for (source_id, parent_id), parent in parents.items()],
             )
         if rows:

@@ -16,6 +16,15 @@ export type RagRetrieval={
   mode:string;reason?:string;returned_count:number;used_count:number;
   duration_ms?:number;source_types?:string[];
 };
+export type RagIndexStatus={
+  ready:boolean;parent_sections:number;pending_embedding_jobs:number;
+  dead_letter_embedding_jobs:number;
+  sources:{source_type:string;chunks:number;embedded_chunks:number;chunker_versions:string[]}[];
+  latest_sync?:{
+    id:string;status:string;sources:string[];max_items_per_source:number;
+    result?:Record<string,unknown>|null;error_message?:string|null;
+  }|null;
+};
 export type PlanningDiagnostics={
   conversation_context?:{
     mode?:string;prior_context_included?:boolean;source_run_ids?:string[];
@@ -31,6 +40,7 @@ export type AgentRun={
   elapsed_duration_ms?:number;active_duration_ms?:number;
   model_call_count?:number;model_usage?:ModelUsage[];
   planning_diagnostics?:PlanningDiagnostics;rag_retrievals?:RagRetrieval[];
+  rag_index_status?:RagIndexStatus;
   error_category?:string;deployment_version?:string;
   result?:{output?:string};incident_summary?:{breaking_point?:string;primary_cause?:string;error?:string};
   clarification_questions?:string[];

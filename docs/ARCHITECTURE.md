@@ -203,3 +203,47 @@ timestamps and recorded step time from step duration evidence. It also groups th
 append-only `agent_model_calls` ledger by actual model, returning calls plus
 input/output token totals. The session UI uses these fields for live and terminal
 progress; configured model names are never treated as proof that a model was called.
+
+## Exact same-service lineage and private RAG readiness
+
+One service may contribute more than one operation to a run. The planner expands only
+an explicit current-turn read-then-write instruction into separate durable steps. For
+example, copying the latest sent Gmail message is:
+
+```text
+search sent Gmail -> fetch exact source message -> encrypted result reference
+                  -> send exact subject/body -> verify ID, recipient, subject, body
+```
+
+The write step depends on the read step. It does not ask a model to remember the body,
+and it does not expose the body in ordinary step/event evidence. The complete provider
+result is encrypted in expiring, tenant-scoped private storage; downstream code resolves
+that opaque reference only for the same user and run. A missing or truncated source
+blocks the send. The source message and newly sent message are distinct artifacts.
+
+Current-turn lineage is also distinct from conversation context. “Fetch a message and
+send the same message” resolves inside the current DAG and does not load an unrelated
+prior assistant answer. “Send the paragraph above” may load a bounded exact prior
+assistant result. Neither mechanism is knowledge RAG.
+
+Knowledge RAG is opt-in per user and is never implied by OAuth consent. The authenticated
+index action creates a durable `rag_source_sync_jobs` record and returns immediately.
+A leased worker reads a bounded set of that user's Gmail, Drive, and Calendar resources,
+enqueues source-aware embedding jobs, survives browser disconnects/restarts, and records
+completion or sanitized failure. Duplicate active syncs are suppressed per tenant.
+Timestamp strings from Google are normalized to timezone-aware datetimes before asyncpg
+writes; only dead letters matching the historical timestamp defect are automatically
+requeued.
+
+The UI reports three independent facts:
+
+```text
+Conversation context: used / not used
+Knowledge RAG: not requested / hybrid with returned-and-used evidence
+Private index: sources, chunker versions, pending/dead-letter jobs, latest sync
+```
+
+`RAG: none` is therefore correct for live reads and writes. A semantic/historical request
+may report hybrid retrieval only when a tenant-owned indexed corpus exists and a durable
+retrieval event records what was returned and used. Another user's legacy chunks are
+never evidence that RAG is ready for the current user.

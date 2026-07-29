@@ -30,6 +30,7 @@ from app.mlops.metrics import (
 from app.evaluation.collector import record_run_evaluation
 from app.tools.base import GoogleWorkspaceBaseTool
 from app.tools.result_projection import project_tool_result
+from app.tools.result_store import load_private_tool_result
 from app.tools.contracts import write_contract_for
 from app.tools.calendar_normalization import (
     normalize_calendar_datetime,
@@ -448,6 +449,10 @@ async def _dependency_context(conn, step):
             execution for execution in executions or []
             if execution.get("tool") == "list_recent_gmail_senders"
         ), None)
+        gmail_message = next((
+            execution for execution in executions or []
+            if execution.get("tool") == "get_gmail_message"
+        ), None)
         if recent_senders:
             envelope = project_tool_result(
                 "list_recent_gmail_senders", recent_senders.get("result") or {},
@@ -465,6 +470,30 @@ async def _dependency_context(conn, step):
             value["projection"] = {
                 **envelope.metadata(),
                 "dependency_projection": "gmail_recent_senders_v1",
+            }
+        elif gmail_message:
+            envelope = project_tool_result(
+                "get_gmail_message", gmail_message.get("result") or {},
+                max_tokens=get_settings().groq_tool_result_max_tokens,
+            )
+            original_projection = gmail_message.get("projection") or {}
+            value["output_data"] = {
+                "output": output.get("output", ""),
+                "tool_executions": [{
+                    "tool": "get_gmail_message",
+                    "arguments": gmail_message.get("arguments") or {},
+                    "result": envelope.compact_result,
+                    "projection": {
+                        **envelope.metadata(),
+                        "full_result_reference": original_projection.get(
+                            "full_result_reference"
+                        ),
+                    },
+                }],
+            }
+            value["projection"] = {
+                **envelope.metadata(),
+                "dependency_projection": "gmail_message_v1",
             }
         else:
             envelope = project_tool_result(
@@ -806,6 +835,280 @@ async def _send_deterministic_chat_message(
     }
 
 
+async def _gmail_dependency_message(pool, user_id: str, dependencies: list[dict]):
+    """Load the exact tenant-scoped Gmail payload produced by a completed read."""
+    for dependency in dependencies:
+        if dependency.get("service") != "gmail":
+            continue
+        output = dependency.get("output_data") or {}
+        if not isinstance(output, dict):
+            continue
+        for execution in output.get("tool_executions") or []:
+            if execution.get("tool") != "get_gmail_message":
+                continue
+            result = execution.get("result") or {}
+            projection = execution.get("projection") or {}
+            reference = projection.get("full_result_reference")
+            if reference:
+                try:
+                    result = await load_private_tool_result(
+                        pool, reference, user_id,
+                    )
+                except ValueError:
+                    if projection.get("truncated"):
+                        return None
+            if not isinstance(result, dict):
+                return None
+            subject = result.get("subject")
+            body = result.get("body_plain")
+            if body is None:
+                body = result.get("body_excerpt")
+            if subject is None or body is None:
+                return None
+            return {
+                "message_id": result.get("id"),
+                "subject": str(subject),
+                "body": str(body),
+            }
+    return None
+
+
+async def _read_deterministic_gmail_copy_source(pool, run, step):
+    """Find and fetch the one source message required by a Gmail copy DAG."""
+    input_data = step.get("input_data") or {}
+    hints = input_data.get("workflow_hints") or {}
+    arguments = input_data.get("tool_arguments") or {}
+    if (
+        not hints.get("copy_gmail_dependency")
+        or not arguments.get("query")
+        or arguments.get("max_results") != 1
+    ):
+        return None
+    await append_event(
+        pool, run["id"], run["user_id"], "typed_execution_selected",
+        step_id=step["id"], phase="execution",
+        message="Exact Gmail source lookup selected typed execution",
+        payload={
+            "service": "gmail",
+            "operation": "search",
+            "reason_code": "gmail_copy_source_lookup",
+            "external_attempts_before_selection": 0,
+        },
+    )
+    tools = {tool.name: tool for tool in get_toolsets()["gmail"]}
+    for tool in tools.values():
+        if isinstance(tool, GoogleWorkspaceBaseTool):
+            tool.db_pool = pool
+    state = {
+        "session_id": run["session_id"],
+        "user_id": run["user_id"],
+        "run_id": str(run["id"]),
+        "step_id": str(step["id"]),
+    }
+    search_call = {
+        "id": f"deterministic-gmail-search-{uuid.uuid4()}",
+        "name": "search_gmail",
+        "args": arguments,
+    }
+    _, search_result, search_envelope = await execute_tool_call(
+        tools["search_gmail"], search_call, state, pool,
+    )
+    executions = [{
+        "tool": "search_gmail",
+        "arguments": arguments,
+        "result": search_result,
+        "compact_result": search_envelope.compact_result,
+        "projection": search_envelope.metadata(),
+    }]
+    first = (
+        search_result[0]
+        if isinstance(search_result, list) and search_result else None
+    )
+    message_id = first.get("id") if isinstance(first, dict) else None
+    if not message_id:
+        return {
+            "output": "",
+            "tool_results": [search_envelope.compact_result],
+            "tool_executions": executions,
+            "task_complete": False,
+            "error": (
+                "No sent Gmail message matched the requested source recipient; "
+                "no new email was attempted."
+            ),
+            "error_category": "not_found",
+            "error_component": "deterministic_gmail_copy",
+            "error_boundary": "gmail_source_search",
+            "error_evidence": {
+                "source_found": False,
+                "message_attempted": False,
+            },
+        }
+    get_call = {
+        "id": f"deterministic-gmail-get-{uuid.uuid4()}",
+        "name": "get_gmail_message",
+        "args": {"message_id": message_id},
+    }
+    _, source_result, source_envelope = await execute_tool_call(
+        tools["get_gmail_message"], get_call, state, pool,
+    )
+    executions.append({
+        "tool": "get_gmail_message",
+        "arguments": get_call["args"],
+        "result": source_result,
+        "compact_result": source_envelope.compact_result,
+        "projection": source_envelope.metadata(),
+    })
+    if (
+        not isinstance(source_result, dict)
+        or source_result.get("error")
+        or source_result.get("subject") is None
+        or source_result.get("body_plain") is None
+    ):
+        return {
+            "output": "",
+            "tool_results": [
+                search_envelope.compact_result,
+                source_envelope.compact_result,
+            ],
+            "tool_executions": executions,
+            "task_complete": False,
+            "error": (
+                "The matching Gmail message did not provide an exact subject/body; "
+                "no new email was attempted."
+            ),
+            "error_category": "lineage",
+            "error_component": "deterministic_gmail_copy",
+            "error_boundary": "gmail_source_fetch",
+            "error_evidence": {
+                "source_found": True,
+                "source_content_complete": False,
+                "message_attempted": False,
+            },
+        }
+    return {
+        "output": "Located and verified the source Gmail message.",
+        "tool_results": [
+            search_envelope.compact_result,
+            source_envelope.compact_result,
+        ],
+        "tool_executions": executions,
+        "task_complete": True,
+    }
+
+
+async def _send_deterministic_gmail_copy(pool, run, step, dependencies):
+    """Copy a verified Gmail read through typed lineage without model memory."""
+    input_data = step.get("input_data") or {}
+    hints = input_data.get("workflow_hints") or {}
+    if not hints.get("copy_gmail_dependency"):
+        return None
+    destination = str(
+        (input_data.get("tool_arguments") or {}).get("to") or ""
+    ).strip()
+    source = await _gmail_dependency_message(
+        pool, run["user_id"], dependencies,
+    )
+    if not destination or not source:
+        return {
+            "output": "",
+            "tool_results": [],
+            "tool_executions": [],
+            "task_complete": False,
+            "error": (
+                "The verified source Gmail subject/body is unavailable or expired; "
+                "no email was sent."
+            ),
+            "error_category": "lineage",
+            "error_component": "deterministic_gmail_copy",
+            "error_boundary": "gmail_source_lineage",
+            "error_evidence": {
+                "destination_present": bool(destination),
+                "source_payload_present": bool(source),
+                "message_attempted": False,
+            },
+        }
+    await append_event(
+        pool, run["id"], run["user_id"], "typed_execution_selected",
+        step_id=step["id"], phase="execution",
+        message="Verified Gmail source selected the typed copy workflow",
+        payload={
+            "service": "gmail",
+            "operation": "send",
+            "reason_code": "verified_gmail_dependency",
+            "source_message_id_present": bool(source.get("message_id")),
+            "external_attempts_before_selection": 0,
+        },
+    )
+    tools = {tool.name: tool for tool in get_toolsets()["gmail"]}
+    tool = tools["send_gmail"]
+    if isinstance(tool, GoogleWorkspaceBaseTool):
+        tool.db_pool = pool
+    state = {
+        "session_id": run["session_id"],
+        "user_id": run["user_id"],
+        "run_id": str(run["id"]),
+        "step_id": str(step["id"]),
+    }
+    arguments = {
+        "to": destination,
+        "subject": source["subject"],
+        "body": source["body"],
+    }
+    call = {
+        "id": f"deterministic-gmail-copy-{uuid.uuid4()}",
+        "name": "send_gmail",
+        "args": arguments,
+    }
+    _, raw_result, envelope = await execute_tool_call(
+        tool, call, state, pool,
+    )
+    execution = {
+        "tool": "send_gmail",
+        "arguments": arguments,
+        "result": raw_result,
+        "compact_result": envelope.compact_result,
+        "projection": {
+            **envelope.metadata(),
+            "lineage_source_tool": "get_gmail_message",
+            "lineage_target_tool": "send_gmail",
+            "lineage_fields": ["subject", "body"],
+            "lineage_source_message_id": source.get("message_id"),
+            "lineage_bound": True,
+        },
+    }
+    if (
+        not isinstance(raw_result, dict)
+        or raw_result.get("error")
+        or raw_result.get("success") is False
+    ):
+        return {
+            "output": "",
+            "tool_results": [envelope.compact_result],
+            "tool_executions": [execution],
+            "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message('send_gmail', raw_result)}; "
+                "automatic repetition is blocked."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_gmail_copy",
+            "error_boundary": "gmail_copy_send",
+            "error_evidence": {
+                "source_lineage_bound": True,
+                "message_outcome_requires_verification": True,
+            },
+        }
+    return {
+        "output": (
+            f"Copied and sent the verified Gmail message to {destination}. "
+            f"Subject: {source['subject']}"
+        ),
+        "tool_results": [envelope.compact_result],
+        "tool_executions": [execution],
+        "task_complete": True,
+    }
+
+
 async def _create_deterministic_calendar_event(pool, run, step):
     """Create a fully specified Calendar/Meet event without an LLM round trip."""
     input_data = step.get("input_data") or {}
@@ -1104,6 +1407,14 @@ async def _execute_step(app, pool, run, step, dependencies):
         result = None
     if (
         result is None
+        and step.get("service") == "gmail"
+        and step.get("operation") == "search"
+    ):
+        result = await _read_deterministic_gmail_copy_source(
+            pool, run, step,
+        )
+    if (
+        result is None
         and step.get("service") == "sheets"
         and step.get("operation") == "create_and_write"
     ):
@@ -1117,6 +1428,14 @@ async def _execute_step(app, pool, run, step, dependencies):
     ):
         result = await _create_deterministic_calendar_event(
             pool, run, step,
+        )
+    if (
+        result is None
+        and step.get("service") == "gmail"
+        and step.get("operation") == "send"
+    ):
+        result = await _send_deterministic_gmail_copy(
+            pool, run, step, dependencies,
         )
     if (
         result is None

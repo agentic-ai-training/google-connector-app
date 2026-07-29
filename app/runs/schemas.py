@@ -58,6 +58,16 @@ class RunClarification(BaseModel):
     answers: dict[str, str]
 
 
+class RagSyncRequest(BaseModel):
+    sources: list[Literal["gmail", "drive", "calendar"]] = Field(
+        default_factory=lambda: ["gmail", "drive", "calendar"],
+        min_length=1,
+        max_length=3,
+    )
+    max_items_per_source: int = Field(default=25, ge=1, le=100)
+    requeue_known_failures: bool = True
+
+
 class ArtifactCleanupRequest(BaseModel):
     action: Literal[
         "preserve", "delete", "cancel_event", "retry_population",

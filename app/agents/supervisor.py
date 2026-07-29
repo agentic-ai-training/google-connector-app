@@ -216,18 +216,24 @@ async def retrieve_context_node(state: AgentState):
         }
     started = time.perf_counter()
     packing_strategy = "greedy"
+    pool = None
+    retrieval_reason = "semantic historical request"
     try:
         # Railway's small Ollama service can take over a minute to cold-start.
         # RAG is optional context, so never let a cold embedding model block chat.
         async with asyncio.timeout(20):
             from app.db.connection import get_pool
             pool = await get_pool()
-            if await feature_enabled(pool, "new_rag", state.get("user_id")):
+            rag_enabled = await feature_enabled(
+                pool, "new_rag", state.get("user_id"),
+            )
+            if rag_enabled:
                 docs = await hybrid_retrieve(
                     state.get("message", ""), pool=pool, user_id=state.get("user_id")
                 )
             else:
                 docs = []
+                retrieval_reason = "new_rag feature disabled for user"
             packing_strategy = (
                 "dp" if await feature_enabled(
                     pool, "dp_context_packing", state.get("user_id")
@@ -235,8 +241,36 @@ async def retrieve_context_node(state: AgentState):
             )
     except Exception as exc:
         docs = []
-        return {"retrieved_context": "", "operational_context": pack_operational_knowledge(operational),
-                "tool_results": [], "error": str(exc)}
+        retrieval_reason = f"retrieval_failed:{type(exc).__name__}"
+        if state.get("run_id") and pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        """INSERT INTO rag_retrieval_events
+                           (run_id,step_id,user_id,mode,reason,query_hash,
+                            returned_count,used_count,duration_ms,source_types)
+                           VALUES($1,$2,$3,$4,$5,$6,0,0,$7,'{}')""",
+                        state["run_id"], state.get("step_id"),
+                        state.get("user_id"), policy["rag_mode"],
+                        retrieval_reason,
+                        hashlib.sha256(
+                            state.get("message", "").encode()
+                        ).hexdigest(),
+                        int((time.perf_counter() - started) * 1000),
+                    )
+            except Exception:
+                pass
+        return {
+            "retrieved_context": "",
+            "operational_context": pack_operational_knowledge(operational),
+            "tool_results": [],
+            "error": retrieval_reason,
+            "rag_decision": {
+                "mode": policy["rag_mode"],
+                "reason": retrieval_reason,
+                "packing_strategy": packing_strategy,
+            },
+        }
     if state.get("run_id"):
         try:
             from app.db.connection import get_pool
@@ -248,7 +282,7 @@ async def retrieve_context_node(state: AgentState):
                         used_count,duration_ms,source_types)
                        VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9)""",
                     state["run_id"], state.get("step_id"), state.get("user_id"),
-                    policy["rag_mode"], "semantic historical request",
+                    policy["rag_mode"], retrieval_reason,
                     hashlib.sha256(state.get("message", "").encode()).hexdigest(),
                     len(docs), int((time.perf_counter() - started) * 1000),
                     list(dict.fromkeys(str(doc.get("source", "unknown")) for doc in docs)),
@@ -259,7 +293,7 @@ async def retrieve_context_node(state: AgentState):
             "operational_context": pack_operational_knowledge(operational),
             "tool_results": docs,
             "rag_decision": {"mode": policy["rag_mode"],
-                             "reason": "semantic historical request",
+                             "reason": retrieval_reason,
                              "packing_strategy": packing_strategy}}
 
 

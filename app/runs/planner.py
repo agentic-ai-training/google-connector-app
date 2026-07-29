@@ -188,6 +188,54 @@ def infer_operation(service: str, message: str, write: bool) -> str:
     return "execute_and_verify" if write else DEFAULT_READ_OPERATION.get(service, "read")
 
 
+def infer_operation_sequence(
+    service: str,
+    message: str,
+    write: bool,
+    *,
+    allow_same_service_expansion: bool = True,
+) -> list[str]:
+    """Return a conservative read→write sequence for an explicitly chained request.
+
+    A service is usually represented by one step.  When the current turn clearly
+    asks for a read followed by a write on that same service, collapsing both into
+    the nearest verb silently removes one half of the request.  Only a forward
+    read→write pair connected by explicit chaining language is expanded here; all
+    ambiguous or write→read cases keep the established single-operation planner.
+    """
+    default = infer_operation(service, message, write)
+    text = message.casefold()
+    if not allow_same_service_expansion or not write or not re.search(
+        r"\b(?:and(?:\s+then)?|then|after(?:wards)?|same)\b", text,
+    ):
+        return [default]
+    matches: list[tuple[int, int, str]] = []
+    for priority, (operation, pattern) in enumerate(
+        SERVICE_OPERATION_PATTERNS.get(service, [])
+    ):
+        for match in re.finditer(pattern, text):
+            matches.append((match.start(), priority, operation))
+    ordered = []
+    for _, _, operation in sorted(matches):
+        if operation not in ordered:
+            ordered.append(operation)
+    reads = [
+        (index, operation) for index, operation in enumerate(ordered)
+        if operation in READ_OPERATIONS
+    ]
+    writes = [
+        (index, operation) for index, operation in enumerate(ordered)
+        if operation not in READ_OPERATIONS
+    ]
+    if not reads or not writes:
+        return [default]
+    read_index, read_operation = reads[0]
+    write_index, write_operation = writes[-1]
+    if read_index >= write_index:
+        return [default]
+    return [read_operation, write_operation]
+
+
 def _matches(patterns: tuple[str, ...], text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
@@ -545,107 +593,164 @@ def build_plan(
     steps = []
     produced_data = []
     for service in ordered:
-        step_id = f"execute_{service}"
         operation_source = (
             message if statement.service_only else statement.normalized_text
         )
-        operation = infer_operation(service, operation_source, policy["write"])
-        read_only = operation in READ_OPERATIONS
-        postconditions = SERVICE_POSTCONDITIONS.get(service, [
-            "The response contains deterministic evidence for every claimed result"
-        ])
-        dependencies = []
-        if service == "composition":
+        operations = infer_operation_sequence(
+            service,
+            operation_source,
+            policy["write"],
+            allow_same_service_expansion=len(services) == 1,
+        )
+        previous_same_service = None
+        for operation_index, operation in enumerate(operations):
+            step_id = (
+                f"execute_{service}"
+                if len(operations) == 1
+                else f"execute_{service}_{operation}"
+            )
+            read_only = operation in READ_OPERATIONS
+            postconditions = SERVICE_POSTCONDITIONS.get(service, [
+                "The response contains deterministic evidence for every claimed result"
+            ])
             dependencies = []
-        elif "execute_composition" in produced_data:
-            dependencies = ["execute_composition"]
-        elif service == "sheets":
-            dependencies = list(produced_data)
-        elif service in {"chat", "calendar"} and "execute_sheets" in produced_data:
-            dependencies = ["execute_sheets"]
-        elif policy["write"] and service != "gmail" and produced_data:
-            dependencies = [produced_data[-1]]
-        count_match = re.search(r"\b(?:last|latest|recent)\s+(\d{1,3})\b", message.lower())
-        exact_tool_arguments = {}
-        if service == "gmail" and operation == "sender_count":
-            category_match = re.search(
-                r"\b(promotions?|promotional|social|updates?|forums?|primary)\b",
-                message.casefold(),
+            if previous_same_service:
+                dependencies = [previous_same_service]
+            elif service == "composition":
+                dependencies = []
+            elif "execute_composition" in produced_data:
+                dependencies = ["execute_composition"]
+            elif service == "sheets":
+                dependencies = list(produced_data)
+            elif service in {"chat", "calendar"} and "execute_sheets" in produced_data:
+                dependencies = ["execute_sheets"]
+            elif policy["write"] and service != "gmail" and produced_data:
+                dependencies = [produced_data[-1]]
+            count_match = re.search(
+                r"\b(?:last|latest|recent)\s+(\d{1,3})\b", message.lower(),
             )
-            category = {
-                "promotion": "promotions", "promotional": "promotions",
-                "update": "updates", "forum": "forums",
-            }.get(category_match.group(1), category_match.group(1)) if category_match else None
-            exact_tool_arguments = {
-                "category": category,
-                "period": "today" if re.search(r"\btoday\b", message.casefold()) else "all",
-                "timezone": policy["timezone"],
-                "max_messages": 500,
-            }
-        if service == "gmail" and operation == "recent_senders":
-            exact_tool_arguments = {
-                "max_results": min(int(count_match.group(1)), 100) if count_match else 20,
-                "query": "-in:sent",
-                "unique": not bool(re.search(r"\b(?:keep|include) duplicates?\b", message.lower())),
-            }
-        if (
-            service == "chat"
-            and operation == "send"
-            and (statement.chat_destination_emails or statement.email_recipients)
-        ):
-            exact_tool_arguments = {
-                "destination": (
-                    statement.chat_destination_emails or statement.email_recipients
-                )[0],
-            }
-            if statement.contextual_reference and referenced_output:
-                exact_tool_arguments["text"] = referenced_output
-        if service == "calendar" and operation == "create":
-            exact_tool_arguments = calendar_create_arguments(
-                message,
-                policy["timezone"],
-                statement.email_recipients,
-                add_meet=policy["calendar_adds_meet"],
+            exact_tool_arguments = {}
+            if service == "gmail" and operation == "sender_count":
+                category_match = re.search(
+                    r"\b(promotions?|promotional|social|updates?|forums?|primary)\b",
+                    message.casefold(),
+                )
+                category = {
+                    "promotion": "promotions", "promotional": "promotions",
+                    "update": "updates", "forum": "forums",
+                }.get(
+                    category_match.group(1), category_match.group(1),
+                ) if category_match else None
+                exact_tool_arguments = {
+                    "category": category,
+                    "period": (
+                        "today"
+                        if re.search(r"\btoday\b", message.casefold()) else "all"
+                    ),
+                    "timezone": policy["timezone"],
+                    "max_messages": 500,
+                }
+            if service == "gmail" and operation == "recent_senders":
+                exact_tool_arguments = {
+                    "max_results": (
+                        min(int(count_match.group(1)), 100) if count_match else 20
+                    ),
+                    "query": "-in:sent",
+                    "unique": not bool(re.search(
+                        r"\b(?:keep|include) duplicates?\b", message.lower(),
+                    )),
+                }
+            gmail_copy = (
+                service == "gmail"
+                and operations == ["search", "send"]
+                and len(statement.email_recipients) >= 2
+                and bool(re.search(
+                    r"\b(?:same|copy|forward)\s+(?:mail|email|message)\b",
+                    statement.normalized_text,
+                ))
             )
-        steps.append(PlanStep(
-            id=step_id,
-            title=f"Execute and verify the {service} portion",
-            service=service,
-            operation=operation,
-            dependencies=dependencies,
-            arguments={"request": message, "service": service,
-                       "allowed_tools": OPERATION_TOOLS.get((service, operation), []),
-                       "write_contract": (
-                           {
-                               "required_tools": list(contract.required_tools),
-                               "completion_mode": contract.completion_mode,
-                           }
-                           if (contract := write_contract_for(
-                               service, operation,
-                               OPERATION_TOOLS.get((service, operation), []),
-                           )) else None
-                       ),
-                       "tool_arguments": exact_tool_arguments,
-                       "workflow_hints": {
-                           "extract_unique_sender_names": service == "gmail" and "people" in message.lower(),
-                           "sheet_url_is_drive_link": policy["sheet_url_is_drive_link"],
-                           "add_meet_conference": service == "calendar" and policy["calendar_adds_meet"],
-                       },
-                       "semantic_authorization": _service_authorization(
-                           service, statement,
-                       )},
-            read_only=read_only,
-            risk_level=policy["risk_level"],
-            requires_approval=policy["requires_approval"] and not read_only,
-            weight=1.0,
-            preconditions=["Google authorization is valid"] + (
-                [f"Dependency {item} completed and its output is available"
-                 for item in dependencies]
-            ),
-            postconditions=postconditions,
-        ))
-        if read_only or service in {"drive", "docs", "sheets"}:
-            produced_data.append(step_id)
+            if gmail_copy and operation == "search":
+                exact_tool_arguments = {
+                    "query": (
+                        f"to:{statement.email_recipients[0]} in:sent"
+                    ),
+                    "max_results": 1,
+                }
+            if gmail_copy and operation == "send":
+                exact_tool_arguments = {
+                    "to": statement.email_recipients[-1],
+                }
+            if (
+                service == "chat"
+                and operation == "send"
+                and (statement.chat_destination_emails or statement.email_recipients)
+            ):
+                exact_tool_arguments = {
+                    "destination": (
+                        statement.chat_destination_emails
+                        or statement.email_recipients
+                    )[0],
+                }
+                if statement.contextual_reference and referenced_output:
+                    exact_tool_arguments["text"] = referenced_output
+            if service == "calendar" and operation == "create":
+                exact_tool_arguments = calendar_create_arguments(
+                    message,
+                    policy["timezone"],
+                    statement.email_recipients,
+                    add_meet=policy["calendar_adds_meet"],
+                )
+            allowed_tools = OPERATION_TOOLS.get((service, operation), [])
+            contract = write_contract_for(service, operation, allowed_tools)
+            steps.append(PlanStep(
+                id=step_id,
+                title=(
+                    f"Execute and verify the {service} {operation} portion"
+                    if len(operations) > 1
+                    else f"Execute and verify the {service} portion"
+                ),
+                service=service,
+                operation=operation,
+                dependencies=dependencies,
+                arguments={
+                    "request": message,
+                    "service": service,
+                    "allowed_tools": allowed_tools,
+                    "write_contract": (
+                        {
+                            "required_tools": list(contract.required_tools),
+                            "completion_mode": contract.completion_mode,
+                        }
+                        if contract else None
+                    ),
+                    "tool_arguments": exact_tool_arguments,
+                    "workflow_hints": {
+                        "extract_unique_sender_names": (
+                            service == "gmail" and "people" in message.lower()
+                        ),
+                        "sheet_url_is_drive_link": policy["sheet_url_is_drive_link"],
+                        "add_meet_conference": (
+                            service == "calendar" and policy["calendar_adds_meet"]
+                        ),
+                        "copy_gmail_dependency": gmail_copy,
+                    },
+                    "semantic_authorization": _service_authorization(
+                        service, statement,
+                    ),
+                },
+                read_only=read_only,
+                risk_level=policy["risk_level"],
+                requires_approval=policy["requires_approval"] and not read_only,
+                weight=1.0,
+                preconditions=["Google authorization is valid"] + (
+                    [f"Dependency {item} completed and its output is available"
+                     for item in dependencies]
+                ),
+                postconditions=postconditions,
+            ))
+            previous_same_service = step_id
+            if read_only or service in {"drive", "docs", "sheets"}:
+                produced_data.append(step_id)
     success_criteria = [
         criterion for step in steps for criterion in step.postconditions
     ] + ["Partial results and the first failed step are reported accurately"]

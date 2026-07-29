@@ -18,6 +18,7 @@ from app.api.routes import admin,chat,feedback,history,runs
 from app.runs.worker import worker_loop
 from app.runs.retention import retention_loop
 from app.rag.jobs import embedding_worker_loop
+from app.rag.user_sync import rag_source_sync_worker_loop
 from app.improvements.analyzer import improvement_analysis_loop
 from app.mlops.collector import metrics_collection_loop
 from app.mlops.metrics import build_info
@@ -66,6 +67,9 @@ async def lifespan(app):
         worker_task = None
         retention_task = None if is_candidate else asyncio.create_task(retention_loop(pool, retention_stop))
         embedding_task = None if is_candidate else asyncio.create_task(embedding_worker_loop(pool, retention_stop))
+        rag_sync_task = None if is_candidate else asyncio.create_task(
+            rag_source_sync_worker_loop(pool, retention_stop)
+        )
         improvement_task = asyncio.create_task(
             improvement_analysis_loop(pool, retention_stop)
         ) if settings.governed_improvements_enabled and not is_candidate else None
@@ -87,6 +91,8 @@ async def lifespan(app):
             await retention_task
         if embedding_task:
             await embedding_task
+        if rag_sync_task:
+            await rag_sync_task
         if improvement_task:
             await improvement_task
         if metrics_task:

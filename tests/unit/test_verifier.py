@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from types import SimpleNamespace
 
 from app.improvements.failure_intelligence import sanitize_failure_evidence
@@ -85,6 +86,55 @@ def test_sheet_append_uses_provider_updated_range(monkeypatch):
 def _calendar_service(event):
     events = SimpleNamespace(get=lambda **_: Reply(event))
     return SimpleNamespace(events=lambda: events)
+
+
+def _gmail_service(message):
+    messages = SimpleNamespace(get=lambda **_: Reply(message))
+    users = SimpleNamespace(messages=lambda: messages)
+    return SimpleNamespace(users=lambda: users)
+
+
+def _gmail_message(message_id, recipient, subject, body):
+    encoded = base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+    return {
+        "id": message_id,
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "To", "value": recipient},
+                {"name": "Subject", "value": subject},
+            ],
+            "body": {"data": encoded},
+        },
+    }
+
+
+def test_gmail_send_verifies_recipient_subject_and_body(monkeypatch):
+    message = _gmail_message(
+        "sent-1", "destination@example.com", "Exact subject", "Exact body",
+    )
+    monkeypatch.setattr(
+        "app.runs.verifier.google.gmail_service", _gmail_service(message),
+    )
+    execution = {
+        "tool": "send_gmail",
+        "arguments": {
+            "to": "destination@example.com",
+            "subject": "Exact subject",
+            "body": "Exact body",
+        },
+        "result": {"id": "sent-1"},
+    }
+
+    passed = _run([execution], "gmail", "send")
+    assert passed.passed
+    assert "Exact body" not in str(passed.evidence)
+    assert passed.evidence["checks"][0]["body_match"]
+
+    execution["arguments"]["body"] = "Different body"
+    failed = _run([execution], "gmail", "send")
+    assert not failed.passed
+    assert failed.category == "postcondition_failure"
 
 
 def test_calendar_expected_state_and_mismatch(monkeypatch):

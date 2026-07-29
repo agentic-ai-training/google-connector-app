@@ -9,6 +9,7 @@ from app.db.connection import close_pool, get_pool
 from app.okf.loader import sync_bundle
 from app.runs.worker import worker_loop
 from app.rag.jobs import embedding_worker_loop
+from app.rag.user_sync import rag_source_sync_worker_loop
 from app.mlops.tracing import configure_tracing
 
 
@@ -33,6 +34,7 @@ async def main():
         else:
             await asyncio.gather(
                 worker_loop(app, pool, stop), embedding_worker_loop(pool, stop),
+                rag_source_sync_worker_loop(pool, stop),
             )
     finally:
         await close_pool()
