@@ -181,6 +181,9 @@ Access for the same OAuth project, save, wait for propagation, and reconnect.
 6. If a Calendar/Chat/other write tool succeeded, inspect its deterministic readback
    before considering a later model quota error. Completed write contracts proceed
    directly to verification and must not require a post-tool model call.
+7. An explicitly failed `resolve_chat_destination` attempt is safe to resume because
+   lookup is read-only and setup uses a deterministic request ID. An uncertain
+   `send_chat_message` remains blocked pending reconciliation.
 
 ## Artifact cleanup
 

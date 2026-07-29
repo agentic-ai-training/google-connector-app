@@ -1227,6 +1227,8 @@ marked that step failed when an unnecessary post-tool quality-model turn hit quo
   quality model is unavailable before the required tool contract completes.
 - [x] Preserve artifact verification, confirmation, idempotency, lineage, and
   no-blind-retry rules.
+- [x] Permit exact-step resume after an explicitly failed idempotent Chat resolver,
+  while keeping an uncertain message send blocked.
 - [x] Update architecture, operations, the original specification addendum, and this
   upgrade ledger with the production evidence and corrected boundary.
 
