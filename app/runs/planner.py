@@ -15,6 +15,7 @@ from app.runs.request_analysis import (
     SERVICES,
     RequestStatementAnalysis,
     analyze_request_statement,
+    is_local_project_request,
 )
 GMAIL_DELIVERY_PATTERN = re.compile(
     r"\b(send|reply|mail it|mail them)\b|"
@@ -317,6 +318,9 @@ def classify_request(
     # context string to contain a separately tokenized Chat noun.
     services.extend(authority_services)
     services = list(dict.fromkeys(services))
+    if is_local_project_request(authority_message or message):
+        services = []
+        authority_services.clear()
     if (
         re.search(r"\bsend\b", authority_text)
         and statement.email_recipients

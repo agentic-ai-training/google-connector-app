@@ -164,6 +164,38 @@ def test_sendchat_composition_uses_chat_not_ordinary_space_or_meet():
     assert validate_plan(plan) == []
 
 
+def test_create_paragraph_then_chat_builds_composition_dependency():
+    message = (
+        "create a new paragraph about talking to his girlfriend in a flirty way "
+        "and send it to dhruvtyagi1905@gmail.com via chat"
+    )
+    analysis = analyze_request_statement(message)
+    plan, policy = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+
+    assert analysis.composition_requested is True
+    assert policy["services"] == ["composition", "chat"]
+    assert [(step.service, step.operation, step.dependencies) for step in plan.steps] == [
+        ("composition", "compose", []),
+        ("chat", "send", ["execute_composition"]),
+    ]
+    assert validate_plan(plan) == []
+
+
+def test_repository_markdown_edit_is_not_misclassified_as_google_docs():
+    message = "Update TEACHING_AGENTIC_DSA_OKF.md in the repository"
+    analysis = analyze_request_statement(message)
+    plan, policy = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+
+    assert analysis.explicit_services == []
+    assert policy["intent_kind"] == "out_of_scope"
+    assert policy["services"] == ["general"]
+    assert plan.steps[0].operation == "answer_workspace_chat"
+
+
 def test_contextual_rewrite_uses_prior_content_without_inheriting_prior_write():
     effective = """Current request (the only authority for new external actions):
 Make it shorter

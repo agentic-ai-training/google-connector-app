@@ -23,7 +23,24 @@ SERVICES = {
 COMPOSITION_PATTERN = re.compile(
     r"\b(draft|compose|write|rewrite|revise|shorten|shorter|expand|longer|"
     r"polish|brainstorm|outline|summarize|summarise|application|essay|roadmap|"
-    r"pointers?|talking points?|bullet points?|message body|email body)\b"
+    r"cover letter|pointers?|talking points?|bullet points?|message body|"
+    r"email body)\b"
+)
+COMPOSITION_CREATION_PATTERN = re.compile(
+    r"\b(?:create|make|generate|prepare|produce)\b.{0,50}\b"
+    r"(?:paragraph|prose|letter|memo|caption|script|message|draft|content)\b"
+)
+LOCAL_PROJECT_FILE_PATTERN = re.compile(
+    r"(?:^|[\s`'\"/(])[\w.-]+\."
+    r"(?:md|markdown|py|js|jsx|ts|tsx|java|go|rs|toml|ya?ml|json|env|ini|cfg)"
+    r"\b|"
+    r"\b(?:repository|repo|codebase|source code|project file|git branch|"
+    r"github pull request)\b",
+    re.IGNORECASE,
+)
+EXPLICIT_GOOGLE_RESOURCE_PATTERN = re.compile(
+    r"\bgoogle\s+(?:docs?|drive|sheets?|workspace)\b",
+    re.IGNORECASE,
 )
 REFERENCE_PATTERN = re.compile(
     r"\b(it|that|this|them|those|previous|above|earlier|same|former|latter|"
@@ -118,6 +135,14 @@ def _service_only(normalized_text: str) -> str | None:
     ), None)
 
 
+def is_local_project_request(message: str) -> bool:
+    """Distinguish repository/filesystem work from similarly named Google resources."""
+    return bool(
+        LOCAL_PROJECT_FILE_PATTERN.search(message)
+        and not EXPLICIT_GOOGLE_RESOURCE_PATTERN.search(message)
+    )
+
+
 def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     """Analyze the current statement only; never load conversation history here."""
     normalized = " ".join(message.casefold().strip().split())
@@ -139,6 +164,8 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
             for alias in aliases
         )
     ]
+    if is_local_project_request(message):
+        services = []
     delivery_channels = [
         channel for channel, pattern in DELIVERY_CHANNEL_PATTERNS.items()
         if pattern.search(service_text)
@@ -176,7 +203,10 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     )
     if contextual and LOCAL_ANTECEDENT_PATTERN.search(normalized):
         contextual = False
-    composition = bool(COMPOSITION_PATTERN.search(normalized))
+    composition = bool(
+        COMPOSITION_PATTERN.search(normalized)
+        or COMPOSITION_CREATION_PATTERN.search(normalized)
+    )
     if (
         contextual
         and composition
