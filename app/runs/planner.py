@@ -588,7 +588,10 @@ def build_plan(
             success_criteria=step.postconditions,
             estimated_max_tokens=0,
         ), policy
-    services = policy["services"] or ["general"]
+    rag_answer_only = policy["rag_mode"] != "none" and not policy["write"]
+    services = ["composition"] if rag_answer_only else (
+        policy["services"] or ["general"]
+    )
     ordered = sorted(services, key=lambda item: SERVICE_ORDER.get(item, 100))
     steps = []
     produced_data = []
@@ -610,9 +613,16 @@ def build_plan(
                 else f"execute_{service}_{operation}"
             )
             read_only = operation in READ_OPERATIONS
-            postconditions = SERVICE_POSTCONDITIONS.get(service, [
-                "The response contains deterministic evidence for every claimed result"
-            ])
+            postconditions = (
+                [
+                    "The answer uses only retrieved tenant evidence",
+                    "Every claimed source retains its retrieval citation",
+                    "No live Google read or external mutation is claimed",
+                ]
+                if rag_answer_only else SERVICE_POSTCONDITIONS.get(service, [
+                    "The response contains deterministic evidence for every claimed result"
+                ])
+            )
             dependencies = []
             if previous_same_service:
                 dependencies = [previous_same_service]
@@ -725,6 +735,7 @@ def build_plan(
                     ),
                     "tool_arguments": exact_tool_arguments,
                     "workflow_hints": {
+                        "answer_from_rag": rag_answer_only,
                         "extract_unique_sender_names": (
                             service == "gmail" and "people" in message.lower()
                         ),
@@ -734,15 +745,24 @@ def build_plan(
                         ),
                         "copy_gmail_dependency": gmail_copy,
                     },
-                    "semantic_authorization": _service_authorization(
-                        service, statement,
+                    "semantic_authorization": (
+                        {
+                            "authorized": True,
+                            "basis": "current_turn_semantic_historical_request",
+                        }
+                        if rag_answer_only else _service_authorization(
+                            service, statement,
+                        )
                     ),
                 },
                 read_only=read_only,
                 risk_level=policy["risk_level"],
                 requires_approval=policy["requires_approval"] and not read_only,
                 weight=1.0,
-                preconditions=["Google authorization is valid"] + (
+                preconditions=(
+                    ["Tenant-scoped retrieval completed"]
+                    if rag_answer_only else ["Google authorization is valid"]
+                ) + (
                     [f"Dependency {item} completed and its output is available"
                      for item in dependencies]
                 ),

@@ -2794,9 +2794,13 @@ def test_google_idempotency_keys_are_stable_per_run_but_not_cross_run():
 
 def test_live_operations_skip_rag_and_semantic_questions_use_it():
     assert classify_request("List my latest Gmail messages")["rag_mode"] == "none"
-    assert classify_request(
-        "Find conceptually related historical documents about pricing"
-    )["rag_mode"] == "hybrid"
+    request = "Find conceptually related historical documents about pricing"
+    assert classify_request(request)["rag_mode"] == "hybrid"
+    plan, _ = build_plan(request)
+    assert plan.services == ["composition"]
+    assert plan.steps[0].operation == "compose"
+    assert plan.steps[0].arguments["allowed_tools"] == []
+    assert plan.steps[0].arguments["workflow_hints"]["answer_from_rag"] is True
 
 
 def test_okf_bundle_is_valid():
