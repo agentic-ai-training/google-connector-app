@@ -1304,11 +1304,13 @@ def test_worker_executes_dependency_steps_and_recovers_expired_lease():
     class FakeGraph:
         def __init__(self):
             self.services = []
+            self.retrieval_queries = []
             self.active = 0
             self.max_active = 0
 
         async def ainvoke(self, state, config):
             self.services.append(state["forced_service"])
+            self.retrieval_queries.append(state["retrieval_query"])
             service = state["forced_service"]
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -1346,15 +1348,24 @@ def test_worker_executes_dependency_steps_and_recovers_expired_lease():
             fake_app = SimpleNamespace(state=SimpleNamespace(agent_graph=graph))
             await execute_run(fake_app, pool, claimed)
             completed = await get_run(pool, run["id"], "worker@example.com")
-            return completed, graph.services, graph.max_active
+            return (
+                completed, graph.services, graph.max_active,
+                graph.retrieval_queries,
+            )
 
-        completed, services, max_active = client.portal.call(exercise)
+        completed, services, max_active, retrieval_queries = client.portal.call(
+            exercise
+        )
         assert completed["status"] == "completed"
         assert [step["status"] for step in completed["steps"]] == [
             "completed", "completed",
         ]
         assert set(services) == {"gmail", "drive"}
         assert max_active == 2
+        assert retrieval_queries == [
+            "List recent Gmail messages and Drive files",
+            "List recent Gmail messages and Drive files",
+        ]
 
 
 def test_expired_write_lease_requires_reconciliation_and_blocks_resume():
