@@ -1190,8 +1190,10 @@ missing DM.
   threat model, original specification addendum, and this upgrade ledger.
 - [x] Preserve dated completion/security audit reports as immutable historical
   snapshots rather than rewriting their earlier evidence.
-- [ ] Merge reviewed CI, deploy the exact main commit to Railway API/worker and Vercel,
-  and verify version/health/OAuth missing-scope behavior.
+- [x] PR #87 passed normal and governed-candidate CI, merged as runtime commit
+  `b371edd3`, and deployed successfully to Railway API/worker and Vercel. Production
+  attestation, direct health, frontend proxy health, HTTP 200, unauthenticated 401,
+  OAuth PKCE redirect, `prompt=consent`, and requested `chat.spaces.create` all pass.
 - [!] Each existing pilot user must reconnect once and approve
   `chat.spaces.create`; this user consent cannot be performed by the service.
 
