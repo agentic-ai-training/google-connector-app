@@ -133,7 +133,9 @@ OPERATION_TOOLS = {
     ("tasks", "create"): ["create_task", "list_tasks"],
     ("tasks", "complete"): ["list_tasks", "complete_task"],
     ("tasks", "list"): ["list_tasks"],
-    ("chat", "send"): ["list_chat_spaces", "send_chat_message"],
+    ("chat", "send"): [
+        "list_chat_spaces", "resolve_chat_destination", "send_chat_message",
+    ],
     ("chat", "list_spaces"): ["list_chat_spaces"],
     ("contacts", "search"): ["search_contacts", "get_contact"],
     ("contacts", "get"): ["get_contact"],
@@ -403,9 +405,12 @@ def build_plan(
     authority_message: str | None = None,
     request_analysis: RequestStatementAnalysis | None = None,
 ) -> tuple[ExecutionPlan, dict]:
+    statement = request_analysis or analyze_request_statement(
+        authority_message or message
+    )
     policy = classify_request(
         message, timezone, authority_message=authority_message,
-        request_analysis=request_analysis,
+        request_analysis=statement,
     )
     if policy["intent_kind"] != "workspace_action":
         intent = policy["informational_intent"] or policy["intent_kind"]
@@ -487,6 +492,14 @@ def build_plan(
                 "query": "-in:sent",
                 "unique": not bool(re.search(r"\b(?:keep|include) duplicates?\b", message.lower())),
             }
+        if (
+            service == "chat"
+            and operation == "send"
+            and statement.chat_destination_emails
+        ):
+            exact_tool_arguments = {
+                "destination": statement.chat_destination_emails[0],
+            }
         steps.append(PlanStep(
             id=step_id,
             title=f"Execute and verify the {service} portion",
@@ -512,9 +525,7 @@ def build_plan(
                            "add_meet_conference": service == "calendar" and policy["calendar_adds_meet"],
                        },
                        "semantic_authorization": _service_authorization(
-                           service, request_analysis or analyze_request_statement(
-                               authority_message or message
-                           ),
+                           service, statement,
                        )},
             read_only=read_only,
             risk_level=policy["risk_level"],

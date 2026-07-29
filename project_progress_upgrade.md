@@ -1099,9 +1099,9 @@ tool authority, misleading retry controls, and incomplete model-chain reporting.
 - [x] Keep side-effect integrity at 100% for explicit failed provider writes that
   created nothing, while retaining uncertainty for missing results, successful partial
   writes, and lost-worker boundaries.
-- [!] Enable Google Chat API for Cloud project `351387763928`; this is an external
-  Google Cloud control-plane action and requires authenticated project-owner/service-
-  usage authority not present in the application OAuth credentials.
+- [x] Google Chat API enablement is confirmed by the production
+  `spaces.findDirectMessage` response. A provider-confirmed missing-DM 404 proves the
+  API is reachable and must not be classified as `SERVICE_DISABLED`.
 
 ### Epic 39.4 — Candidate-builder resumability and transparent evidence
 
@@ -1150,3 +1150,60 @@ Docker Desktop builds the API and worker images successfully after explicitly pl
 Docker Desktop's credential helper on the non-login command path. Flutter analyze and
 tests pass, and the debug APK builds successfully. GitHub CI and production deployment
 evidence are recorded after publication.
+
+## Sprint 40 — Idempotent Google Chat direct-message setup
+
+Production run `2df8b140` proved that the Chat API was enabled but no direct-message
+space yet existed for the requested recipient. The former classifier treated any error
+containing the Chat API hostname as disabled, while the send tool could not create the
+missing DM.
+
+### Epic 40.1 — Exact Chat failure taxonomy
+
+- [x] Recognize API disablement only from genuine `SERVICE_DISABLED`,
+  `accessNotConfigured`, or the provider's explicit “API has not been used/disabled”
+  evidence; the hostname alone is never sufficient.
+- [x] Preserve provider-confirmed missing-DM, insufficient-scope, invalid-destination,
+  recipient-ineligible, and ordinary permission failures as distinct sanitized causes.
+- [x] Add regression coverage for a Chat-hostname 404, genuine disabled 403, missing
+  scope, malformed destination, and unrelated 404.
+
+### Epic 40.2 — Ordered DM resolution and send
+
+- [x] Expand OAuth authority with `chat.spaces.create`; existing users whose stored
+  scope set is incomplete are disconnected safely and asked to consent once.
+- [x] Resolve an email with `spaces.findDirectMessage`; only its exact missing-DM 404
+  may invoke idempotent `spaces.setup` with a deterministic request ID and one human
+  membership.
+- [x] Split resolution and send into the ordered contract
+  `resolve_chat_destination → send_chat_message`; bind the verified returned
+  `spaces/...` name at the executor boundary and forbid hidden resolution/setup inside
+  the send tool.
+- [x] Bind the current-turn analyzed recipient into the resolver as a trusted planner
+  argument, retain near-match rejection, and never let model output substitute it.
+- [x] Read back the space and message separately, persist resolution/artifact lineage,
+  and preserve no-blind-retry behavior for a failed/uncertain message send.
+
+### Epic 40.3 — Documentation and rollout
+
+- [x] Update architecture, deployment, operations, OAuth recovery, capability catalog,
+  threat model, original specification addendum, and this upgrade ledger.
+- [x] Preserve dated completion/security audit reports as immutable historical
+  snapshots rather than rewriting their earlier evidence.
+- [ ] Merge reviewed CI, deploy the exact main commit to Railway API/worker and Vercel,
+  and verify version/health/OAuth missing-scope behavior.
+- [!] Each existing pilot user must reconnect once and approve
+  `chat.spaces.create`; this user consent cannot be performed by the service.
+
+Guardrail: a missing DM may create or reuse exactly one human-to-human direct-message
+space, but it may not send until the verified `spaces/...` output is lineage-bound.
+No unrelated 403/404 may trigger space creation, and no retry may duplicate an
+uncertain message.
+
+Local implementation evidence on 2026-07-29: 197 unit tests and 33 Docker
+PostgreSQL-backed integration tests pass. Planner goldens pass 33/33 and no-network
+workflow replays pass 14/14. Python compilation/Flake8, Bandit, `pip-audit`,
+source-aware chunking, policy, context-packing, DP allocation, dual-worker,
+Grafana-definition, Docker Compose, secret-history, and isolated migration
+downgrade/forward-repair guardrails pass. Next.js lint/build/audit and Flutter
+analyze/test/debug APK pass. Docker Desktop builds both the API and worker images.

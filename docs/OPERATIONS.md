@@ -152,6 +152,30 @@ mutating workflows remain resumable and wait for quality quota. For OAuth failur
 check `/auth/me` missing scopes, reconnect once, and verify the exact production
 callback URI in Google Cloud. Never log access/refresh tokens.
 
+When `https://www.googleapis.com/auth/chat.spaces.create` appears in
+`missing_scopes`, the user must start Google sign-in again and approve the expanded
+scope once. Do not download or replace the OAuth client JSON. If Google refuses to show
+or grant it, add the scope under Google Cloud Console → Google Auth Platform → Data
+Access for the same OAuth project, save, wait for propagation, and reconnect.
+
+## Google Chat direct-message runbook
+
+1. Confirm `chat.googleapis.com` is enabled in the OAuth client's Google Cloud project.
+2. Inspect the sanitized failed tool and boundary:
+   - genuine `403 SERVICE_DISABLED` or `accessNotConfigured`: API enablement problem;
+   - missing `chat.spaces.create`/insufficient scope: reconnect once;
+   - provider-confirmed direct-message 404: the resolver should call idempotent
+     `spaces.setup`;
+   - unrelated 403/404: preserve the provider category; never label it disabled merely
+     because its URL contains `chat.googleapis.com`.
+3. Verify the run contains `resolve_chat_destination` followed by
+   `send_chat_message`, with lineage binding the returned `spaces/...` resource.
+4. Verify the resolver through `spaces.get` and the message through
+   `spaces.messages.get`. Do not repeat a failed or uncertain send manually until
+   reconciliation permits it.
+5. If setup says the recipient is ineligible, confirm the address and whether the
+   recipient can use Google Chat. Never autocorrect a near-match address.
+
 ## Artifact cleanup
 
 Created artifacts are retained and reported by default. Delete, revoke sharing, or

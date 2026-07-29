@@ -13,6 +13,15 @@
 8. Run OAuth, read-only, approval, reconnect, session isolation, metrics, and dashboard
    smoke tests before enabling a pilot cohort.
 
+When a release adds an OAuth scope, update Google Auth Platform Data Access before the
+smoke test. This release adds
+`https://www.googleapis.com/auth/chat.spaces.create` for idempotent human-to-human
+direct-message setup. Existing encrypted credentials intentionally become incomplete:
+the UI must report the missing scope and each pilot user must reconnect once. No new
+client JSON download is required. Smoke both an existing DM and a recipient with no
+prior DM; confirm resolver readback, message readback, and no duplicate message on
+reconciliation.
+
 Set `DEPLOYMENT_VERSION` to the immutable commit/deployment version. Canary evaluation
 uses that label and refuses to pass without at least five measured control and five
 candidate runs.

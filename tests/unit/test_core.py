@@ -2490,6 +2490,14 @@ def test_added_google_scopes_require_fresh_consent():
     missing = missing_google_scopes(without_meet)
     assert "https://www.googleapis.com/auth/meetings.space.created" in missing
     assert "https://www.googleapis.com/auth/meetings.space.readonly" in missing
+    without_chat_create = [
+        scope for scope in SCOPES if scope != (
+            "https://www.googleapis.com/auth/chat.spaces.create"
+        )
+    ]
+    assert missing_google_scopes(without_chat_create) == [
+        "https://www.googleapis.com/auth/chat.spaces.create"
+    ]
 
 
 def test_high_risk_external_write_requires_confirmation():

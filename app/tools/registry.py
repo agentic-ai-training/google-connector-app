@@ -7,6 +7,7 @@ from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from langchain_core.tools import tool
 from app.db import google_clients as g
@@ -420,18 +421,63 @@ def get_contact(email:str): return g.people_service.people().searchContacts(quer
 def list_chat_spaces(): return g.chat_service.spaces().list().execute().get("spaces",[])
 
 
-def _resolve_chat_space(destination: str) -> str:
-    value = destination.strip()
-    if re.fullmatch(r"spaces/[^/]+", value):
-        return value
-    if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-        found = g.chat_service.spaces().findDirectMessage(
-            name=f"users/{value}",
-        ).execute()
-        if found.get("name"):
-            return found["name"]
+def _missing_direct_message(error: HttpError) -> bool:
+    return (
+        getattr(error.resp, "status", None) == 404
+        and "direct message doesn't exist" in str(error).casefold()
+    )
+
+
+def _validated_chat_space(spaces, result: dict, **metadata) -> dict:
+    name = str(result.get("name") or "")
+    if not re.fullmatch(r"spaces/[^/]+", name):
         raise ValueError(
-            "No accessible direct-message space exists for that email address"
+            "Google Chat did not return a valid spaces/... resource"
+        )
+    observed = spaces.get(name=name).execute()
+    if observed.get("name") != name:
+        raise ValueError(
+            "Google Chat space readback did not match the resolved resource"
+        )
+    return {"name": name, **metadata, "readbackVerified": True}
+
+
+def _resolve_chat_space(destination: str) -> dict:
+    value = destination.strip()
+    spaces = g.chat_service.spaces()
+    if re.fullmatch(r"spaces/[^/]+", value):
+        return _validated_chat_space(
+            spaces, {"name": value},
+            created=False, kind="space_resource",
+        )
+    if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        user_name = f"users/{value.casefold()}"
+        created = False
+        try:
+            found = spaces.findDirectMessage(name=user_name).execute()
+        except HttpError as exc:
+            if not _missing_direct_message(exc):
+                raise
+            created = True
+            found = spaces.setup(
+                requestId=_request_id("chat-dm-setup", user_name),
+                body={
+                    "space": {
+                        "spaceType": "DIRECT_MESSAGE",
+                        "singleUserBotDm": False,
+                    },
+                    "memberships": [{
+                        "member": {"name": user_name, "type": "HUMAN"},
+                    }],
+                },
+            ).execute()
+        if found.get("name"):
+            return _validated_chat_space(
+                spaces, found, created=created, kind="direct_message",
+                recipient=user_name,
+            )
+        raise ValueError(
+            "Google Chat did not return a direct-message space for that recipient"
         )
     matches = [
         item for item in g.chat_service.spaces().list().execute().get("spaces", [])
@@ -442,23 +488,41 @@ def _resolve_chat_space(destination: str) -> str:
             "Chat destination must be one accessible space, spaces/... resource, "
             "or direct-message email"
         )
-    return matches[0]["name"]
+    return _validated_chat_space(
+        g.chat_service.spaces(), matches[0],
+        created=False, kind="named_space",
+    )
+
+
+@tool(
+    "resolve_chat_destination",
+    description=(
+        "Resolve a Google Chat destination. For a direct-message email, return "
+        "the existing DM or idempotently create it when it does not yet exist."
+    ),
+)
+def resolve_chat_destination(destination: str):
+    return _resolve_chat_space(destination)
 
 
 @tool(
     "send_chat_message",
     description=(
-        "Send a Google Chat message. space_id may be a spaces/... resource, an "
-        "exact accessible space display name, or a direct-message email address."
+        "Send a Google Chat message to a resolved spaces/... resource. Call "
+        "resolve_chat_destination first; do not pass an email or display name."
     ),
 )
 def send_chat_message(space_id: str, text: str):
-    resolved = _resolve_chat_space(space_id)
+    resolved_name = space_id.strip()
+    if not re.fullmatch(r"spaces/[^/]+", resolved_name):
+        raise ValueError(
+            "Chat destination must be resolved to a spaces/... resource before send"
+        )
     message = g.chat_service.spaces().messages().create(
-        parent=resolved, body={"text": text},
-        requestId=_request_id("chat", resolved, text),
+        parent=resolved_name, body={"text": text},
+        requestId=_request_id("chat", resolved_name, text),
     ).execute()
-    return {**message, "resolvedSpace": resolved}
+    return {**message, "resolvedSpace": resolved_name}
 
 def _meet_space_name(meeting_code_or_name: str) -> str:
     return (meeting_code_or_name if meeting_code_or_name.startswith("spaces/")
@@ -501,7 +565,8 @@ _TOOL_NAMES = (
     "append_to_google_doc", "read_google_sheet", "write_google_sheet",
     "append_to_google_sheet", "create_google_sheet", "list_tasks", "create_task",
     "complete_task", "search_contacts", "get_contact", "list_chat_spaces",
-    "send_chat_message", "create_meet_space", "get_meet_space",
+    "resolve_chat_destination", "send_chat_message", "create_meet_space",
+    "get_meet_space",
     "list_meet_conferences", "list_meet_participants",
 )
 
