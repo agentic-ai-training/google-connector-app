@@ -1229,6 +1229,9 @@ marked that step failed when an unnecessary post-tool quality-model turn hit quo
   no-blind-retry rules.
 - [x] Permit exact-step resume after an explicitly failed idempotent Chat resolver,
   while keeping an uncertain message send blocked.
+- [x] Reconcile verified failed sibling writes without retry after the selected step
+  resumes, and forbid final `completed` status while any durable step remains failed,
+  pending, running, skipped, or otherwise unresolved.
 - [x] Update architecture, operations, the original specification addendum, and this
   upgrade ledger with the production evidence and corrected boundary.
 

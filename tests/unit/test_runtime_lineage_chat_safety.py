@@ -14,7 +14,12 @@ from app.runs.incident import build_incident, completion_from_steps
 from app.runs.planner import build_plan, validate_plan
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
-from app.runs.worker import _create_recent_senders_sheet, _dependency_context
+from app.runs.worker import (
+    _create_recent_senders_sheet,
+    _dependency_context,
+    _reconcile_verified_failed_siblings,
+    _remaining_unresolved_steps,
+)
 from app.tools.calendar_normalization import (
     normalize_calendar_datetime, normalize_calendar_window, normalize_timezone,
 )
@@ -656,6 +661,85 @@ async def test_explicit_failed_chat_resolver_is_safe_to_resume():
     assert decision.state == "safe_to_retry"
     assert decision.resume_step_id == "chat-step"
     assert decision.reason_code == "idempotent_write_explicitly_failed"
+
+
+@pytest.mark.asyncio
+async def test_verified_failed_sibling_is_reconciled_without_retry(monkeypatch):
+    step = {
+        "id": "calendar-step",
+        "run_id": "run-1",
+        "service": "calendar",
+        "operation": "create",
+        "read_only": False,
+        "status": "failed",
+        "input_data": {"allowed_tools": ["create_calendar_event"]},
+        "output_data": {"tool_executions": [{
+            "tool": "create_calendar_event",
+            "arguments": {"title": "Meeting"},
+            "result": {"id": "event-1"},
+        }]},
+    }
+    updates = []
+    events = []
+
+    class _Connection:
+        async def fetch(self, query, *_args):
+            if "FROM agent_run_steps" in query:
+                return [step]
+            if "FROM agent_artifacts" in query:
+                return [{"external_id": "event-1"}]
+            raise AssertionError(query)
+
+        async def execute(self, query, *_args):
+            updates.append(query)
+            return "UPDATE 1"
+
+    class _Acquire:
+        async def __aenter__(self):
+            return _Connection()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class _Pool:
+        def acquire(self):
+            return _Acquire()
+
+    async def reconciled(*_args, **_kwargs):
+        return SimpleNamespace(
+            state="already_completed",
+            reason_code="postconditions_already_satisfied",
+        )
+
+    async def event(*args, **kwargs):
+        events.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "app.runs.worker.reconcile_failed_step", reconciled,
+    )
+    monkeypatch.setattr("app.runs.worker.append_event", event)
+
+    count = await _reconcile_verified_failed_siblings(
+        _Pool(), {"id": "run-1", "user_id": "user-1"},
+    )
+
+    assert count == 1
+    assert len(updates) == 1
+    assert events[0][0][3] == "step_reconciled"
+    assert events[0][1]["payload"]["automatic_retry"] is False
+
+
+def test_run_cannot_finalize_while_any_step_is_unresolved():
+    steps = [
+        {"id": "gmail", "status": "completed"},
+        {"id": "calendar", "status": "failed"},
+    ]
+
+    assert _remaining_unresolved_steps(steps) == [steps[1]]
+    assert _remaining_unresolved_steps([
+        {"id": "gmail", "status": "completed"},
+        {"id": "calendar", "status": "completed"},
+    ]) == []
 
 
 def test_successful_unintended_write_reduces_side_effect_integrity():

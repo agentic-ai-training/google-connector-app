@@ -184,6 +184,9 @@ Access for the same OAuth project, save, wait for propagation, and reconnect.
 7. An explicitly failed `resolve_chat_destination` attempt is safe to resume because
    lookup is read-only and setup uses a deterministic request ID. An uncertain
    `send_chat_message` remains blocked pending reconciliation.
+8. During resume, verified failed sibling writes are read back and marked complete
+   without repetition. Any sibling that cannot be proven complete keeps the run
+   `partial`; investigate it instead of accepting a lower-percentage “completed” run.
 
 ## Artifact cleanup
 
