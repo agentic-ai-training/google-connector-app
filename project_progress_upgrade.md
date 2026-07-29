@@ -1527,7 +1527,7 @@ destination message was attempted.
   Gmail message mapping.
 - [x] Add negative coverage proving explicit read errors and non-mapping write
   results still fail closed.
-- [ ] Publish, deploy, and attest the immutable correction.
+- [x] Publish, deploy, and attest the immutable correction.
 
 Guardrail: result shape alone is not failure evidence for an allowlisted read.
 Read failure must be absent or explicit; external writes retain the stricter
@@ -1536,3 +1536,12 @@ structured-result and postcondition contracts.
 Local evidence on 2026-07-29: 237 unit tests and 37 PostgreSQL-backed integration
 tests pass; planner goldens pass 38/38 and no-network workflow replays pass 16/16.
 Python compilation, Flake8, Bandit, and dependency audit pass.
+
+Production evidence on 2026-07-29: PR
+[#107](https://github.com/agentic-ai-training/google-connector-app/pull/107)
+passed two independent CI runs and the governed candidate attestation, then merged
+as immutable commit `c6e74f02a986a2f7189f5740c474e2b13fe5dddf`. Deployment
+workflow
+[30451036207](https://github.com/agentic-ai-training/google-connector-app/actions/runs/30451036207)
+deployed and attested that exact version on the Railway API/worker and Vercel
+frontend. Production verification performed no Gmail write.
