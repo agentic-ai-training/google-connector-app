@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     groq_reasoning_model: str = "openai/gpt-oss-120b"
     groq_fallback_model: str = "llama-3.1-8b-instant"
     groq_max_tokens: int = 800
+    groq_composition_max_tokens: int = 4000
     groq_context_window_tokens: int = 32768
     groq_tool_result_max_tokens: int = 2000
     groq_context_safety_tokens: int = 1024

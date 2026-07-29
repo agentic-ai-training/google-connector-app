@@ -66,6 +66,7 @@ _CAPABILITY_PATTERNS = (
     r"\bcan you only (?:do|use|work with)\b",
     r"\bother than .+ what about\b",
     r"\bwhat about (?:google )?(?:meet|gmail|drive|calendar|chat|docs|sheets|tasks|contacts)\b",
+    r"\bwhat can you (?:write|draft|compose|create for me)\b",
 )
 
 _SCOPE_CHAT_PATTERNS = (
@@ -179,6 +180,13 @@ def informational_answer(
             "I use live Google APIs for current Workspace data, and I ask for confirmation "
             "before high-risk external writes unless you explicitly waive it."
         )
+        if re.search(r"\b(?:write|draft|compose|create for me)\b", text):
+            parts.append(
+                "I can also create or transform bounded content—such as paragraphs, "
+                "messages, applications, essays, roadmaps, outlines, translations, and "
+                "sample conversations—then wait for a separate delivery instruction or "
+                "send it through an approved Workspace step."
+            )
     return " ".join(parts)
 
 

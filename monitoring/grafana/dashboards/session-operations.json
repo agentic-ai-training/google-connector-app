@@ -141,10 +141,15 @@
       "type":"timeseries","title":"Write reconciliation outcomes","gridPos":{"h":8,"w":8,"x":16,"y":144},
       "datasource":{"type":"prometheus","uid":"prometheus"},
       "targets":[{"expr":"sum by(service,operation,outcome)(increase(agent_write_reconciliation_total[1h]))","legendFormat":"{{outcome}} {{service}}/{{operation}}"}]
+    },
+    {
+      "type":"table","title":"Operational OKF selections","gridPos":{"h":10,"w":24,"x":0,"y":152},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT e.run_id,r.session_id,e.payload->'document_ids' AS documents,e.payload->'operational_tags' AS structured_tags,e.payload->>'selection_policy' AS selection_policy,e.created_at FROM agent_run_events e JOIN agent_runs r ON r.id=e.run_id WHERE e.event_type='okf_context_selected' AND e.created_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY e.created_at DESC LIMIT 250","refId":"A"}]
     }
   ],
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":7
+  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":8
 }

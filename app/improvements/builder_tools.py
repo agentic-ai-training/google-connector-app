@@ -60,11 +60,55 @@ class BoundedRepositoryTools:
                 "start_line": {"type": "integer", "minimum": 1},
                 "end_line": {"type": "integer", "minimum": 1},
             }, ["path"]),
+            _tool(
+                "index_repository_symbols",
+                "Index Python classes and functions without reading whole files",
+                {
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                    "query": {"type": "string"},
+                },
+                [],
+            ),
+            _tool(
+                "read_repository_symbol",
+                "Read one Python class or function by qualified symbol name",
+                {
+                    "path": {"type": "string"},
+                    "symbol": {"type": "string"},
+                },
+                ["path", "symbol"],
+            ),
+            _tool(
+                "find_symbol_references",
+                "Find bounded lexical references to a Python symbol",
+                {
+                    "symbol": {"type": "string"},
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                },
+                ["symbol"],
+            ),
+            _tool(
+                "inspect_test_neighborhood",
+                "Find tests and implementation references near a symbol or term",
+                {"query": {"type": "string"}},
+                ["query"],
+            ),
             _tool("stage_candidate_file", "Stage an in-memory candidate file", {
                 "path": {"type": "string"},
                 "change_type": {"type": "string", "enum": ["create", "replace", "delete"]},
                 "content": {"type": "string"},
             }, ["path", "change_type"]),
+            _tool(
+                "apply_candidate_patch",
+                "Replace a bounded line range without restaging the whole file",
+                {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer", "minimum": 1},
+                    "end_line": {"type": "integer", "minimum": 0},
+                    "replacement": {"type": "string"},
+                },
+                ["path", "start_line", "end_line", "replacement"],
+            ),
             _tool("inspect_candidate_diff", "Inspect the bounded in-memory candidate diff", {}, []),
             _tool(
                 "validate_staged_candidate",
@@ -93,7 +137,12 @@ class BoundedRepositoryTools:
             "list_repository_files": self.list_files,
             "search_repository": self.search,
             "read_repository_file": self.read,
+            "index_repository_symbols": self.index_symbols,
+            "read_repository_symbol": self.read_symbol,
+            "find_symbol_references": self.find_references,
+            "inspect_test_neighborhood": self.inspect_test_neighborhood,
             "stage_candidate_file": self.stage,
+            "apply_candidate_patch": self.apply_patch,
             "inspect_candidate_diff": self.diff,
             "validate_staged_candidate": self.validate_staged,
             "inspect_candidate_manifest": self.manifest,
@@ -132,6 +181,17 @@ class BoundedRepositoryTools:
             matches = list(value.get("matches") or [])
             value["matches"] = matches[:30]
             value["truncated"] = bool(value.get("truncated")) or len(matches) > 30
+        elif name in {
+            "index_repository_symbols", "find_symbol_references",
+            "inspect_test_neighborhood",
+        }:
+            field = (
+                "symbols" if "symbols" in value else
+                "references" if "references" in value else "matches"
+            )
+            items = list(value.get(field) or [])
+            value[field] = items[:50]
+            value["truncated"] = bool(value.get("truncated")) or len(items) > 50
         elif name in {
             "read_repository_file", "read_staged_candidate_file", "inspect_candidate_diff",
         }:
@@ -232,6 +292,88 @@ class BoundedRepositoryTools:
             raise BuilderToolLimitError("candidate repository read-byte limit exceeded")
         return {"path": path, "start_line": start, "end_line": end, "content": content}
 
+    def _python_files(self, paths: list[str] | None = None):
+        for root in (paths or ["app/", "tests/"])[:20]:
+            prefix = root.strip().replace("\\", "/")
+            if not prefix.startswith(ALLOWED_ROOTS):
+                continue
+            candidate = self.root / prefix
+            files = [candidate] if candidate.is_file() else (
+                candidate.rglob("*.py") if candidate.is_dir() else []
+            )
+            for path in files:
+                if path.is_file() and path.stat().st_size <= 300_000:
+                    yield path
+
+    def index_symbols(
+        self, paths: list[str] | None = None, query: str = "",
+    ) -> dict:
+        needle = query.casefold().strip()
+        symbols = []
+        for path in self._python_files(paths):
+            relative = path.relative_to(self.root).as_posix()
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if needle and needle not in node.name.casefold():
+                    continue
+                symbols.append({
+                    "path": relative,
+                    "symbol": node.name,
+                    "kind": (
+                        "class" if isinstance(node, ast.ClassDef) else
+                        "async_function" if isinstance(node, ast.AsyncFunctionDef)
+                        else "function"
+                    ),
+                    "start_line": node.lineno,
+                    "end_line": getattr(node, "end_lineno", node.lineno),
+                })
+                if len(symbols) >= 300:
+                    return {"symbols": symbols, "truncated": True}
+        return {"symbols": symbols, "truncated": False}
+
+    def read_symbol(self, path: str, symbol: str) -> dict:
+        target = self._safe_path(path, must_exist=True)
+        if target.suffix != ".py":
+            raise ValueError("Symbol reads are available only for Python files")
+        source = target.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=path)
+        matches = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == symbol
+        ]
+        if len(matches) != 1:
+            raise ValueError("Symbol must identify exactly one class or function")
+        node = matches[0]
+        return self.read(path, node.lineno, getattr(node, "end_lineno", node.lineno))
+
+    def find_references(
+        self, symbol: str, paths: list[str] | None = None,
+    ) -> dict:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,99}", symbol):
+            raise ValueError("Symbol must be a Python identifier")
+        result = self.search(symbol, paths or ["app/", "tests/"])
+        return {
+            "references": result["matches"],
+            "truncated": result["truncated"],
+        }
+
+    def inspect_test_neighborhood(self, query: str) -> dict:
+        implementation = self.search(query, ["app/"])["matches"][:20]
+        tests = self.search(query, ["tests/"])["matches"][:30]
+        return {
+            "matches": [
+                *({"surface": "implementation", **item} for item in implementation),
+                *({"surface": "test", **item} for item in tests),
+            ],
+            "truncated": False,
+        }
+
     def stage(self, path: str, change_type: str, content: str = "") -> dict:
         target = self._safe_path(path)
         exists = target.is_file()
@@ -264,6 +406,39 @@ class BoundedRepositoryTools:
             raise BuilderToolLimitError("candidate aggregate output limit exceeded")
         self.staged[path] = item
         return {"staged": path, "change_type": change_type, "file_count": len(self.staged)}
+
+    def apply_patch(
+        self, path: str, start_line: int, end_line: int, replacement: str,
+    ) -> dict:
+        """Apply one explicit line-range replacement to an in-memory candidate."""
+        target = self._safe_path(path, must_exist=True)
+        existing = self.staged.get(path)
+        if existing and existing["change_type"] == "delete":
+            raise ValueError("Cannot patch a staged deletion")
+        source = (
+            str(existing.get("content") or "")
+            if existing else target.read_text(encoding="utf-8")
+        )
+        lines = source.splitlines()
+        start = int(start_line)
+        end = int(end_line)
+        if start < 1 or end < start - 1 or end > len(lines):
+            raise ValueError("Patch line range is outside the candidate file")
+        replacement_lines = replacement.splitlines()
+        updated = "\n".join([
+            *lines[:start - 1],
+            *replacement_lines,
+            *lines[end:],
+        ])
+        if source.endswith("\n") or replacement.endswith("\n"):
+            updated += "\n"
+        result = self.stage(path, "replace", updated)
+        return {
+            **result,
+            "patched_range": {"start_line": start, "end_line": end},
+            "replacement_lines": len(replacement_lines),
+            "sha256": hashlib.sha256(updated.encode()).hexdigest(),
+        }
 
     def diff(self) -> dict:
         output = []

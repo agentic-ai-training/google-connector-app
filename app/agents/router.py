@@ -4,13 +4,22 @@ DEEP_TERMS=(
     "compare", "research", "essay", "roadmap", "application",
 )
 async def route_model_node(state):
+    contract = state.get("content_contract") or {}
+    if contract.get("requested"):
+        return {
+            "model_to_use": (
+                "groq_reasoning"
+                if contract.get("complexity") in {"medium", "high"}
+                else "groq_fast"
+            )
+        }
     text=state.get("message","").lower()
     return {
         "model_to_use": "groq_reasoning"
         if any(term in text for term in DEEP_TERMS)
         else "groq_fast"
     }
-def get_llm(model_choice, *, fallback=False):
+def get_llm(model_choice, *, fallback=False, max_tokens=None):
     settings=get_settings()
     if not settings.groq_api_key or "your_" in settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
@@ -26,7 +35,7 @@ def get_llm(model_choice, *, fallback=False):
         temperature=.3,
         timeout=45,
         max_retries=1,
-        max_tokens=settings.groq_max_tokens,
+        max_tokens=max_tokens or settings.groq_max_tokens,
     )
 
 

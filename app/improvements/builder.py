@@ -26,7 +26,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v9-runtime-adoption-gate"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v10-symbol-patch-sandbox"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -42,6 +42,7 @@ BUILDER_CORRECTION_RESERVE_TOKENS = 1_024
 BUILDER_FINALIZATION_RESERVE_TOKENS = 4_096
 BUILDER_FINISH_TOOL_NAMES = frozenset({
     "stage_candidate_file",
+    "apply_candidate_patch",
     "inspect_candidate_diff",
     "validate_staged_candidate",
     "inspect_candidate_manifest",
@@ -709,6 +710,8 @@ def _candidate_prompt(job: dict, sources: list[dict], role: str) -> str:
             "Do not claim tests passed. CI validates the frozen candidate separately.",
             "Preserve unrelated behavior and include a no-network regression for the reported failure.",
             "Tool calls can only read or stage in memory; they cannot execute, publish, or authorize changes.",
+            "Prefer symbol indexing, symbol reads, reference lookup, test-neighborhood lookup, and bounded line patches over reading or emitting whole files.",
+            "Use structural validation as a local compiler check; trusted no-secret CI remains the only test authority.",
             "For a new tool include schema, least scopes, adapter, registry, projection, verifier, tests, and draft OKF.",
         ],
         "incident": job["sanitized_input"], "sources": sources,
@@ -1142,12 +1145,15 @@ async def generate_candidate_draft(
 ) -> tuple[dict, int, list[str], list[str]]:
     """Generate a patch from sanitized facts and a bounded checkout only."""
     sanitized = dict(job["sanitized_input"] or {})
+    ci_feedback = sanitized.get("trusted_ci_feedback")
     scope = sanitized.get("selected_option", {}).get("change_scope", [])
     tool_extension = any(
         "tool" in value.casefold() for value in [sanitized.get("component", ""), *scope]
     )
-    first_role = "tool_extension_designer" if tool_extension else (
+    first_role = "review_remediation_author" if ci_feedback else (
+        "tool_extension_designer" if tool_extension else (
         "coordinator" if job["mode"] == "single" else "investigator_and_patch_author"
+        )
     )
     roles = [first_role] + (
         ["independent_safety_reviewer"] if job["mode"] == "multi_role" else []
@@ -1177,6 +1183,8 @@ async def generate_candidate_draft(
             "independent_safety_reviewer",
         ]
     if checkpoint_files and (
+        ci_feedback
+        or
         resume.get("phase") == "author_completed"
         or "investigator_and_patch_author" in resume.get("roles_completed", [])
         or "tool_extension_designer" in resume.get("roles_completed", [])

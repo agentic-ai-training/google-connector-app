@@ -131,6 +131,17 @@ class CandidateValidationAttestation(BaseModel):
     passed: bool
 
 
+class CandidateValidationFailure(BaseModel):
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    repository: str = Field(min_length=3, max_length=300)
+    workflow: str = Field(min_length=1, max_length=300)
+    run_id: str = Field(min_length=1, max_length=100)
+    failed_jobs: list[str] = Field(min_length=1, max_length=10)
+    diagnostic_codes: list[str] = Field(min_length=1, max_length=30)
+    diagnostics: list[str] = Field(default_factory=list, max_length=30)
+    log_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class CandidateDeploymentAttestation(BaseModel):
     candidate_version: str = Field(pattern=r"^[0-9a-f]{40}$")
     deployment_id: str = Field(min_length=1, max_length=300)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.runs.content_policy import analyze_content_request
 
 SERVICES = {
     "gmail": ("gmail", "email", "emails", "emials", "mail", "mails", "maisl"),
@@ -24,7 +25,7 @@ COMPOSITION_PATTERN = re.compile(
     r"\b(draft|compose|write|rewrite|revise|shorten|shorter|expand|longer|"
     r"polish|brainstorm|outline|summarize|summarise|application|essay|roadmap|"
     r"cover letter|pointers?|talking points?|bullet points?|message body|"
-    r"email body)\b"
+    r"email body|translate|translation|conversation|dialogue|explain)\b"
 )
 COMPOSITION_CREATION_PATTERN = re.compile(
     r"\b(?:create|make|generate|prepare|produce)\b.{0,50}\b"
@@ -73,7 +74,8 @@ DELIVERY_CHANNEL_PATTERNS = {
     ),
 }
 LOCAL_ANTECEDENT_PATTERN = re.compile(
-    r"\b(create|draft|write|compose|find|get|make|build|prepare)\b.+"
+    r"\b(create|draft|write|compose|find|get|make|build|prepare|generate|"
+    r"have|start|hold)\b.+"
     r"(?:\band\b|\bthen\b|[,.;])\s*(?:then\s+)?"
     r"(?:send|share|email|post|use|put|add|change|rewrite|revise|shorten|"
     r"expand|summarize|summarise|format|turn|convert|make)\s+"
@@ -118,6 +120,7 @@ class RequestStatementAnalysis:
     email_recipients: list[str] = field(default_factory=list)
     delivery_channels: list[str] = field(default_factory=list)
     chat_destination_emails: list[str] = field(default_factory=list)
+    content_contract: dict = field(default_factory=dict)
 
     def classifier_input(self) -> dict:
         """Structured current-turn facts that classification is required to consume."""
@@ -136,6 +139,7 @@ class RequestStatementAnalysis:
             "email_recipients": self.email_recipients,
             "delivery_channels": self.delivery_channels,
             "chat_destination_emails": self.chat_destination_emails,
+            "content_contract": self.content_contract,
         }
 
     def diagnostics(self) -> dict:
@@ -155,6 +159,10 @@ class RequestStatementAnalysis:
             "email_recipient_count": len(self.email_recipients),
             "delivery_channels": self.delivery_channels,
             "chat_destination_email_count": len(self.chat_destination_emails),
+            "content_contract": {
+                key: value for key, value in self.content_contract.items()
+                if key not in {"prompt", "content"}
+            },
         }
 
 
@@ -254,6 +262,12 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         COMPOSITION_PATTERN.search(normalized)
         or COMPOSITION_CREATION_PATTERN.search(normalized)
     )
+    content_contract = analyze_content_request(message)
+    composition = composition or content_contract.requested
+    if content_contract.prospective_artifact:
+        # The referenced artifact does not exist yet. Resolving "it" against
+        # history would silently substitute unrelated prior content.
+        contextual = False
     if (
         contextual
         and composition
@@ -295,4 +309,5 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         email_recipients=recipients,
         delivery_channels=delivery_channels,
         chat_destination_emails=chat_destinations,
+        content_contract=content_contract.plan_value(),
     )

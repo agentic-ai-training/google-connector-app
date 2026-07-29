@@ -5,6 +5,7 @@ import re
 import socket
 import time
 import uuid
+import hashlib
 from contextlib import suppress
 from datetime import datetime, timedelta
 
@@ -264,14 +265,24 @@ _PENDING_WRITE_VERIFICATION_OUTPUT = (
 )
 
 
-def _composition_output_error(request: str, output: str) -> str | None:
+def _composition_output_error(
+    request: str, output: str, content_contract: dict | None = None,
+) -> str | None:
     """Enforce bounded format requirements before composed text reaches a write."""
     text = str(output or "").strip()
     if not text:
         return "The composition stage returned empty content."
     normalized_request = " ".join(str(request).casefold().split())
     words = re.findall(r"\b[\w'-]+\b", text)
-    if re.search(r"\bparagraph\b", normalized_request) and len(words) < 12:
+    contract = content_contract or {}
+    kind = str(contract.get("kind") or "")
+    min_words = int(contract.get("min_words") or 0)
+    if min_words and len(words) < min_words:
+        return (
+            f"The composition stage did not produce the requested {kind or 'content'} "
+            f"(fewer than {min_words} words)."
+        )
+    if not contract and re.search(r"\bparagraph\b", normalized_request) and len(words) < 12:
         return (
             "The composition stage did not produce the requested paragraph "
             "(fewer than 12 words)."
@@ -1572,6 +1583,16 @@ async def _execute_step(app, pool, run, step, dependencies):
         "expected_write_tools": [],
         "write_completion_mode": "all",
         "tool_selection_retry_count": 0,
+        "content_contract": input_data.get("content_contract") or {},
+        "completion_token_budget": min(
+            int(
+                (input_data.get("content_contract") or {}).get(
+                    "visible_output_budget",
+                    get_settings().groq_max_tokens,
+                )
+            ),
+            get_settings().groq_composition_max_tokens,
+        ),
         "risk_level": run["risk_level"],
         "allow_small_fallback": (
             run["risk_level"] == "low" and len((run["plan"] or {}).get("services", [])) <= 1
@@ -1603,6 +1624,7 @@ async def _execute_step(app, pool, run, step, dependencies):
     composition_error = (
         _composition_output_error(
             input_data.get("request") or run["request"], output,
+            input_data.get("content_contract"),
         )
         if step.get("operation") == "compose" else None
     )
@@ -1649,6 +1671,21 @@ async def _execute_step(app, pool, run, step, dependencies):
         evidence = result.get("error") or evidence
     if verified:
         output = _verified_terminal_output(step, output, result)
+    content_lineage = None
+    if verified and step.get("operation") == "compose":
+        contract_value = input_data.get("content_contract") or {}
+        content_lineage = {
+            "version": "content-lineage-v1",
+            "source": "current_run_composition",
+            "source_run_id": str(run_id),
+            "source_step_id": str(step["id"]),
+            "sha256": hashlib.sha256(str(output).encode()).hexdigest(),
+            "kind": contract_value.get("kind", "response"),
+            "languages": contract_value.get("languages", []),
+            "prospective_artifact": bool(
+                contract_value.get("prospective_artifact")
+            ),
+        }
     async with pool.acquire() as conn:
         await conn.execute(
             """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,
@@ -1658,6 +1695,7 @@ async def _execute_step(app, pool, run, step, dependencies):
             json.dumps({"output": output, "tool_results": result.get("tool_results", []),
                         "tool_executions": persisted_executions,
                         "verification": evidence,
+                        "content_lineage": content_lineage,
                         "execution_path": execution_path or "guarded_agent_fallback",
                         "fallback_reason": fallback_reason}, default=str),
             elapsed_ms, None if verified else (error_category or "verification"),
