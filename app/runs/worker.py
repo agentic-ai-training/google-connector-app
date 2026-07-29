@@ -5,6 +5,7 @@ import socket
 import time
 import uuid
 from contextlib import suppress
+from datetime import datetime, timedelta
 
 from app.config.settings import get_settings
 from app.agents.errors import ExecutionFailure
@@ -14,7 +15,9 @@ from app.agents.supervisor import (
 from app.db.google_clients import request_google_credentials
 from app.db.oauth_credentials import load_google_credentials
 from app.runs.incident import build_incident, completion_from_steps
+from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
+from app.runs.request_analysis import analyze_request_statement
 from app.runs.repository import append_event
 from app.runs.informational import informational_answer, workspace_chat_answer
 from app.improvements.failure_intelligence import record_failure_incident
@@ -26,6 +29,10 @@ from app.evaluation.collector import record_run_evaluation
 from app.tools.base import GoogleWorkspaceBaseTool
 from app.tools.result_projection import project_tool_result
 from app.tools.contracts import write_contract_for
+from app.tools.calendar_normalization import (
+    normalize_calendar_datetime,
+    normalize_timezone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +499,94 @@ async def _create_recent_senders_sheet(pool, run, step, dependencies):
     }
 
 
+async def _create_deterministic_calendar_event(pool, run, step):
+    """Create a fully specified Calendar/Meet event without an LLM round trip."""
+    input_data = step.get("input_data") or {}
+    provided = input_data.get("tool_arguments") or {}
+    required = {
+        "title", "start_datetime", "duration_minutes", "timezone", "attendees",
+    }
+    if not required.issubset(provided):
+        request = input_data.get("request") or ""
+        statement = analyze_request_statement(request)
+        provided = calendar_create_arguments(
+            request,
+            resolve_timezone(request),
+            statement.email_recipients,
+            add_meet=bool(
+                (input_data.get("workflow_hints") or {}).get(
+                    "add_meet_conference",
+                )
+            ),
+        )
+    if not required.issubset(provided):
+        return None
+    try:
+        timezone_name = normalize_timezone(provided["timezone"])
+        start_datetime = normalize_calendar_datetime(
+            provided["start_datetime"], timezone_name,
+        )
+        end_datetime = (
+            datetime.fromisoformat(start_datetime)
+            + timedelta(minutes=int(provided["duration_minutes"]))
+        ).isoformat()
+    except (TypeError, ValueError):
+        return None
+    tools = {tool.name: tool for tool in get_toolsets()["calendar"]}
+    tool = tools["create_calendar_event"]
+    if isinstance(tool, GoogleWorkspaceBaseTool):
+        tool.db_pool = pool
+    arguments = {
+        "title": provided["title"],
+        "start_datetime": start_datetime,
+        "end_datetime": end_datetime,
+        "attendees": list(provided["attendees"]),
+        "add_meet": bool(provided.get("add_meet", True)),
+        "timezone": timezone_name,
+    }
+    call = {
+        "id": f"deterministic-calendar-{uuid.uuid4()}",
+        "name": "create_calendar_event",
+        "args": arguments,
+    }
+    state = {
+        "session_id": run["session_id"], "user_id": run["user_id"],
+        "run_id": str(run["id"]), "step_id": str(step["id"]),
+    }
+    _, raw_result, envelope = await execute_tool_call(tool, call, state, pool)
+    execution = {
+        "tool": call["name"], "arguments": arguments, "result": raw_result,
+        "compact_result": envelope.compact_result,
+        "projection": envelope.metadata(),
+    }
+    if not isinstance(raw_result, dict) or raw_result.get("error"):
+        return {
+            "output": "", "tool_results": [envelope.compact_result],
+            "tool_executions": [execution], "task_complete": False,
+            "error": (
+                f"{safe_write_failure_message(call['name'], raw_result)}; "
+                "automatic repetition is blocked."
+            ),
+            "error_category": "tool_failure",
+            "error_component": "deterministic_calendar_workflow",
+            "error_boundary": "calendar_create",
+        }
+    event_id = raw_result.get("id")
+    event_url = raw_result.get("htmlLink")
+    meet_url = raw_result.get("hangoutLink")
+    details = [f"Created Calendar event {event_id}"]
+    if event_url:
+        details.append(event_url)
+    if meet_url:
+        details.append(f"Meet: {meet_url}")
+    return {
+        "output": " · ".join(details),
+        "tool_results": [envelope.compact_result],
+        "tool_executions": [execution],
+        "task_complete": True,
+    }
+
+
 async def _store_artifacts(conn, run, step, artifacts):
     for index, artifact in enumerate(artifacts):
         external_id = artifact.get("external_id") or f"url-{index}"
@@ -687,6 +782,14 @@ async def _execute_step(app, pool, run, step, dependencies):
     ):
         result = await _create_recent_senders_sheet(
             pool, run, step, dependencies,
+        )
+    if (
+        result is None
+        and step.get("service") == "calendar"
+        and step.get("operation") == "create"
+    ):
+        result = await _create_deterministic_calendar_event(
+            pool, run, step,
         )
     dependency_text = json.dumps(dependencies, default=str)
     planning_request = input_data.get("request") or run["request"]

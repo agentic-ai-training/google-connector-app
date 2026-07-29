@@ -1061,6 +1061,13 @@ For the Google discovery client, include the deterministic `requestId` in the
 write tool succeeds, return directly to deterministic postcondition verification;
 do not require an additional LLM turn to declare the write complete.
 
+Google Chat writes also require a saved Chat API Configuration containing the app
+identity; merely enabling `chat.googleapis.com` is insufficient. Classify `Google Chat
+app not found` as incomplete project configuration and surface the actionable
+sanitized cause. When an approved Calendar create already has start, duration,
+timezone, attendees, and Meet intent, project those typed arguments and execute the
+idempotent Calendar tool without another planning-model call.
+
 ---
 
 ## SPRINT 6 — FastAPI Backend

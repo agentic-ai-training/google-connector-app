@@ -71,7 +71,9 @@ def normalize_calendar_datetime(
         return parsed.isoformat()
 
     cleaned = _without_timezone_words(raw, timezone_name)
-    relative = re.search(r"\b(today|tomorrow)\b", cleaned, re.IGNORECASE)
+    relative = re.search(
+        r"\b(today|tomorrow|tommorow)\b", cleaned, re.IGNORECASE,
+    )
     time_match = re.search(
         r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
         cleaned,
@@ -84,7 +86,7 @@ def normalize_calendar_datetime(
         )
     reference = (now or datetime.now(timezone)).astimezone(timezone)
     day = reference.date() + timedelta(
-        days=1 if relative.group(1).casefold() == "tomorrow" else 0
+        days=1 if relative.group(1).casefold() in {"tomorrow", "tommorow"} else 0
     )
     hour = int(time_match.group(1)) % 12
     if time_match.group(3).casefold() == "pm":

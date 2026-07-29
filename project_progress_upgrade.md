@@ -1238,3 +1238,33 @@ marked that step failed when an unnecessary post-tool quality-model turn hit quo
 Guardrail: model quota may prevent a write before its contract begins, but it cannot
 override successful tool evidence plus deterministic readback after the contract has
 completed.
+
+## Sprint 42 — Chat app configuration diagnosis and deterministic Calendar create
+
+Production run `f6cb9e9d` reached Google after the setup-request repair. Google
+returned `404 Google Chat app not found`, proving that the API was enabled and the
+scope was granted but the project-level Chat app identity had not been configured.
+The same run's Calendar step made no Google call because quality-model quota was
+unavailable even though the approved clarifications fully specified the event.
+
+- [x] Classify `Google Chat app not found` as incomplete Chat API Configuration and
+  preserve a precise sanitized recovery message instead of the generic write failure.
+- [x] Document that Chat writes require a saved app name, HTTPS avatar, description,
+  and disabled interactive features in addition to API enablement and OAuth scopes.
+- [x] Project fully specified Calendar create arguments in the typed planner,
+  including the common `tommorow` misspelling, duration, IANA timezone, attendee, and
+  Meet intent.
+- [x] Execute those Calendar creates through the idempotent tool and deterministic
+  verifier without spending quality-model quota to reconstruct approved arguments.
+- [x] Recover typed Calendar arguments from a legacy failed step's persisted approved
+  request so run `f6cb9e9d` can use the repair when explicitly resumed.
+- [x] Bind an unambiguous email recipient into the Chat resolver even when it arrives
+  through clarification text rather than the initial Chat-specific analyzer field.
+- [x] Add focused and exact-request regression coverage.
+
+External requirement: the Cloud project owner must save the Chat API Configuration
+once. The application cannot truthfully report Chat write readiness before Google
+accepts that project-level configuration.
+
+Guardrail: the deterministic Calendar path activates only when every required typed
+argument is present. Otherwise, the existing guarded planner path remains in control.

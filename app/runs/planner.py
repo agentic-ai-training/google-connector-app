@@ -247,6 +247,50 @@ def resolve_timezone(message: str, supplied: str | None = None) -> str | None:
     return None
 
 
+def calendar_create_arguments(
+    message: str,
+    timezone: str | None,
+    recipients: list[str],
+    *,
+    add_meet: bool,
+) -> dict:
+    """Project a fully specified natural-language event into bounded arguments."""
+    start_match = re.search(
+        r"\b(today|tomorrow|tommorow)\b\s+(?:at\s+)?"
+        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+        message,
+        re.IGNORECASE,
+    )
+    duration_match = re.search(
+        r"\b(\d+)\s*(minutes?|hours?)\b",
+        message,
+        re.IGNORECASE,
+    )
+    if not start_match or not duration_match or not timezone or not recipients:
+        return {}
+    duration = int(duration_match.group(1))
+    if duration <= 0:
+        return {}
+    if duration_match.group(2).casefold().startswith("hour"):
+        duration *= 60
+    recipient_list = list(dict.fromkeys(
+        item.casefold() for item in recipients if item
+    ))
+    if not recipient_list:
+        return {}
+    start_day = start_match.group(1)
+    if start_day.casefold() == "tommorow":
+        start_day = "tomorrow"
+    return {
+        "title": f"Meeting with {recipient_list[0]}",
+        "start_datetime": f"{start_day} {start_match.group(2)}",
+        "duration_minutes": duration,
+        "timezone": timezone,
+        "attendees": recipient_list,
+        "add_meet": add_meet,
+    }
+
+
 def classify_request(
     message: str,
     timezone: str | None = None,
@@ -495,11 +539,20 @@ def build_plan(
         if (
             service == "chat"
             and operation == "send"
-            and statement.chat_destination_emails
+            and (statement.chat_destination_emails or statement.email_recipients)
         ):
             exact_tool_arguments = {
-                "destination": statement.chat_destination_emails[0],
+                "destination": (
+                    statement.chat_destination_emails or statement.email_recipients
+                )[0],
             }
+        if service == "calendar" and operation == "create":
+            exact_tool_arguments = calendar_create_arguments(
+                message,
+                policy["timezone"],
+                statement.email_recipients,
+                add_meet=policy["calendar_adds_meet"],
+            )
         steps.append(PlanStep(
             id=step_id,
             title=f"Execute and verify the {service} portion",

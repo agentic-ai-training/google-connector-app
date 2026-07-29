@@ -171,20 +171,24 @@ Access for the same OAuth project, save, wait for propagation, and reconnect.
      request or DM creation occurred;
    - unrelated 403/404: preserve the provider category; never label it disabled merely
      because its URL contains `chat.googleapis.com`.
-3. Verify the run contains `resolve_chat_destination` followed by
+3. If Google reports `Google Chat app not found`, open the Chat API Configuration tab
+   for the same project. Configure an app name, HTTPS avatar URL, and description;
+   turn interactive features off; save and wait for propagation. Enabling the API
+   alone is insufficient for writes.
+4. Verify the run contains `resolve_chat_destination` followed by
    `send_chat_message`, with lineage binding the returned `spaces/...` resource.
-4. Verify the resolver through `spaces.get` and the message through
+5. Verify the resolver through `spaces.get` and the message through
    `spaces.messages.get`. Do not repeat a failed or uncertain send manually until
    reconciliation permits it.
-5. If setup says the recipient is ineligible, confirm the address and whether the
+6. If setup says the recipient is ineligible, confirm the address and whether the
    recipient can use Google Chat. Never autocorrect a near-match address.
-6. If a Calendar/Chat/other write tool succeeded, inspect its deterministic readback
+7. If a Calendar/Chat/other write tool succeeded, inspect its deterministic readback
    before considering a later model quota error. Completed write contracts proceed
    directly to verification and must not require a post-tool model call.
-7. An explicitly failed `resolve_chat_destination` attempt is safe to resume because
+8. An explicitly failed `resolve_chat_destination` attempt is safe to resume because
    lookup is read-only and setup uses a deterministic request ID. An uncertain
    `send_chat_message` remains blocked pending reconciliation.
-8. During resume, verified failed sibling writes are read back and marked complete
+9. During resume, verified failed sibling writes are read back and marked complete
    without repetition. Any sibling that cannot be proven complete keeps the run
    `partial`; investigate it instead of accepting a lower-percentage “completed” run.
 
