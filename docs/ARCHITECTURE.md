@@ -262,3 +262,7 @@ recorded without copying the query into high-cardinality telemetry.
 The durable worker passes that authoritative request separately as `retrieval_query`.
 The agent's service-scoped execution prompt and serialized dependency outputs are never
 used as the knowledge-search query.
+Read-only semantic/historical requests are then routed to the bounded evidence-answer
+composition path. They do not invoke `read_google_doc` without a document ID. Live or
+latest reads still use Google APIs, and any request containing a write retains its
+ordinary dependency DAG and approval policy.
