@@ -126,7 +126,8 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                      timezone_name: str | None = None,
                      planning_message: str | None = None,
                      context_diagnostics: dict | None = None,
-                     request_analysis: RequestStatementAnalysis | None = None):
+                     request_analysis: RequestStatementAnalysis | None = None,
+                     referenced_output: str | None = None):
     settings = get_settings()
     if len(message) > settings.max_request_chars:
         raise RunLimitExceeded(
@@ -139,6 +140,7 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
     plan, policy = build_plan(
         planning_message, timezone_name, authority_message=message,
         request_analysis=request_analysis,
+        referenced_output=referenced_output,
     )
     plan_errors = validate_plan(plan)
     if plan_errors:

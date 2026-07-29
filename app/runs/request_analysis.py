@@ -13,7 +13,9 @@ SERVICES = {
     "docs": ("doc", "docs", "document", "documents"),
     "sheets": ("sheet", "spreadsheet", "table", "rows"),
     "tasks": ("task", "tasks", "todo"),
-    "chat": ("chat", "space"),
+    # A bare "space" is ordinary language too ("engineering space"). Chat is
+    # recognized through explicit Chat wording/resource syntax below.
+    "chat": ("chat",),
     "contacts": ("contact", "contacts", "people"),
     "meet": ("meet", "conference", "video call"),
 }
@@ -27,10 +29,10 @@ REFERENCE_PATTERN = re.compile(
     r"\b(it|that|this|them|those|previous|above|earlier|same|former|latter|"
     r"one|ones|version)\b|"
     r"\b(?:the|that|this|previous|above|earlier|same)\s+"
-    r"(?:draft|result|link|content|idea|ideas|point|points)\b"
+    r"(?:draft|result|link|content|idea|ideas|point|points|paragraph|message)\b"
 )
 CONTEXTUAL_ACTION_PATTERN = re.compile(
-    r"\b(send|email|post|share|use|put|add|remove|change|rewrite|revise|shorten|"
+    r"\b(send|sent|email|chat|post|share|use|put|add|remove|change|rewrite|revise|shorten|"
     r"expand|summarize|summarise|format|turn|convert|make|continue|finish)\b"
 )
 EXTERNAL_WRITE_PATTERN = re.compile(
@@ -48,7 +50,9 @@ EMAIL_PATTERN = re.compile(
 DELIVERY_CHANNEL_PATTERNS = {
     "gmail": re.compile(r"\b(?:gmail|e-?mail|mails?)\b", re.IGNORECASE),
     "chat": re.compile(
-        r"\b(?:google\s+chat|chat\s+message|chat)\b", re.IGNORECASE,
+        r"\b(?:google\s+chat|chat\s+message|chat)\b|"
+        r"\bsend\s*(?:on\s+)?(?:google\s+)?chat\b",
+        re.IGNORECASE,
     ),
 }
 LOCAL_ANTECEDENT_PATTERN = re.compile(
@@ -117,6 +121,13 @@ def _service_only(normalized_text: str) -> str | None:
 def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     """Analyze the current statement only; never load conversation history here."""
     normalized = " ".join(message.casefold().strip().split())
+    # Users commonly concatenate the command and channel ("sendchat"). Treat it
+    # as the natural phrase "send chat" before applying word-boundary policies.
+    normalized = re.sub(
+        r"\bsend\s*(?:on\s+)?(?:google\s+)?chat\b",
+        "send chat",
+        normalized,
+    )
     # Domains such as ``@gmail.com`` identify a recipient, not the user's intended
     # delivery service. Remove addresses before scanning service nouns so an
     # explicit Google Chat request cannot silently acquire a Gmail mutation.
@@ -166,9 +177,24 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     if contextual and LOCAL_ANTECEDENT_PATTERN.search(normalized):
         contextual = False
     composition = bool(COMPOSITION_PATTERN.search(normalized))
+    if (
+        contextual
+        and composition
+        and re.search(
+            r"\b(?:and|then)\s+send\s+(?:(?:on\s+)?chat\s+)?"
+            r"(?:it|that|this)\b",
+            normalized,
+        )
+    ):
+        contextual = False
     external_write = bool(
         EXTERNAL_WRITE_PATTERN.search(normalized)
         or EMAIL_WRITE_PATTERN.search(message)
+        or (
+            "chat" in delivery_channels
+            and bool(re.search(r"\b(?:send|chat|post|message)\b", normalized))
+            and bool(recipients)
+        )
         or (
             re.search(r"\b(create|append|update|modify|upload|move|complete)\b",
                       normalized)

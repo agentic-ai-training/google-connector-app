@@ -7,7 +7,10 @@
    and current-turn write authority before classification or planning.
 2. Previous messages are not appended unconditionally. A relevance gate projects only
    the bounded session facts needed to resolve anaphora or omitted context; the current
-   turn remains the authority for external writes.
+   turn remains the authority for every executable service and external write. Prior
+   output can supply referenced content (for example, “send the paragraph above”) but
+   nouns inside that output cannot introduce Calendar, Meet, Chat, Gmail, or other
+   steps.
 3. A guarded router separates Workspace actions, Workspace-scoped product questions,
    and bounded composition (drafts, applications, essays, roadmaps, summaries, and
    pointers intended for a Workspace artifact). It does not provide open-domain chat.
@@ -105,6 +108,12 @@ Chat sends use an ordered contract:
 ```text
 resolve_chat_destination -> bind verified spaces/... name -> send_chat_message
 ```
+
+The message text may come from a verified Sheet URL, a completed composition
+dependency, or an explicitly referenced prior assistant result. Each source is bound
+as typed lineage and sent exactly, without an additional model turn. Combined requests
+therefore form `composition -> Chat`; referential requests may form a Chat-only run,
+but both retain human approval and the same resolver/send verification contract.
 
 An email destination first uses `spaces.findDirectMessage`. Only a provider-confirmed
 404 stating that the direct message does not exist may invoke idempotent `spaces.setup`;
