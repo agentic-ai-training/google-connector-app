@@ -207,6 +207,11 @@ async def _reconcile_and_resume(
         if credentials_token is not None:
             request_google_credentials.reset(credentials_token)
 
+    settings = get_settings()
+    resume_executor_version = (
+        settings.executor_version or settings.deployment_version
+    )
+    previous_executor_version = run.get("executor_version")
     async with pool.acquire() as conn, conn.transaction():
         locked = await conn.fetchrow(
             """SELECT status,error_category FROM agent_run_steps
@@ -240,8 +245,9 @@ async def _reconcile_and_resume(
                 """UPDATE agent_runs SET status='queued',current_phase='queued',
                    completed_at=NULL,error_category=NULL,error_message=NULL,
                    current_step_id=NULL,lease_owner=NULL,lease_expires_at=NULL,
-                   side_effect_integrity=100 WHERE id=$1 AND user_id=$2""",
-                run_id, user_id,
+                   side_effect_integrity=100,executor_version=$3
+                   WHERE id=$1 AND user_id=$2""",
+                run_id, user_id, resume_executor_version,
             )
     await append_event(
         pool, run_id, user_id, "run_reconciled",
@@ -252,6 +258,11 @@ async def _reconcile_and_resume(
             "reason_code": decision.reason_code,
             "resume_step_id": decision.resume_step_id,
             "evidence": decision.evidence,
+            "previous_executor_version": previous_executor_version,
+            "resume_executor_version": (
+                resume_executor_version
+                if decision.state != "manual_required" else previous_executor_version
+            ),
         },
     )
     write_reconciliation.labels(

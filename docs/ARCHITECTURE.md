@@ -181,3 +181,8 @@ hashes, idempotency, tool-result projection, verification, artifacts, incidents,
 durable run events. Steps persist `execution_path` and `fallback_reason`, and emit
 `typed_execution_selected` or `guarded_agent_fallback_selected` without sensitive
 arguments.
+
+A failed step that reconciliation proves safe to retry is re-pinned to the currently
+deployed immutable executor version before it is queued. This permits a production
+repair to resume an older run. A write with uncertain acceptance is never re-pinned or
+queued automatically.

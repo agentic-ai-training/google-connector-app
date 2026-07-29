@@ -1300,6 +1300,9 @@ gap without weakening write safety.
   both execution paths.
 - [x] Add regression tests for exact write/read selection, incomplete-argument
   fallback, ordered-contract fallback, and content-safe approval previews.
+- [x] Re-pin only reconciliation-proven safe resumes to the current immutable executor
+  so an older failed run can consume a deployed repair; uncertain writes remain pinned
+  and blocked.
 
 Guardrail: fallback is available for planning before the first external call, not as
 an alternate writer after deterministic execution fails.
