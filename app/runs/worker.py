@@ -257,6 +257,53 @@ def _contains_failure(value) -> bool:
     return False
 
 
+_PENDING_WRITE_VERIFICATION_OUTPUT = (
+    "Required Google Workspace write operations completed; "
+    "read-after-write verification is pending."
+)
+
+
+def _composition_output_error(request: str, output: str) -> str | None:
+    """Enforce bounded format requirements before composed text reaches a write."""
+    text = str(output or "").strip()
+    if not text:
+        return "The composition stage returned empty content."
+    normalized_request = " ".join(str(request).casefold().split())
+    words = re.findall(r"\b[\w'-]+\b", text)
+    if re.search(r"\bparagraph\b", normalized_request) and len(words) < 12:
+        return (
+            "The composition stage did not produce the requested paragraph "
+            "(fewer than 12 words)."
+        )
+    if re.search(r"\bessay\b", normalized_request) and len(words) < 80:
+        return (
+            "The composition stage did not produce the requested essay "
+            "(fewer than 80 words)."
+        )
+    if re.search(r"\b(?:bullet points?|pointers?)\b", normalized_request):
+        list_lines = [
+            line for line in text.splitlines()
+            if re.match(r"^\s*(?:[-*•]|\d+[.)])\s+\S", line)
+        ]
+        if len(list_lines) < 2:
+            return "The composition stage did not produce the requested list format."
+    return None
+
+
+def _verified_terminal_output(step: dict, output: str) -> str:
+    """Replace a pre-verification executor status after durable verification passes."""
+    if str(output).strip() != _PENDING_WRITE_VERIFICATION_OUTPUT:
+        return output
+    service = step.get("service")
+    if service == "chat":
+        return "Sent the requested content in Google Chat and verified the message."
+    if service == "gmail":
+        return "Completed and verified the requested Gmail write."
+    if service == "calendar":
+        return "Completed and verified the requested Calendar write."
+    return "Required Google Workspace write operations completed and were verified."
+
+
 def _find_artifacts(value, found=None):
     """Extract stable Google resource evidence without retaining message bodies."""
     found = found if found is not None else []
@@ -1134,15 +1181,27 @@ async def _execute_step(app, pool, run, step, dependencies):
             initial, config={"configurable": {"thread_id": f"{run_id}:{step['step_key']}"}}
         )
     output = result.get("output", "")
-    if step.get("operation") == "compose" and not str(output).strip():
+    composition_error = (
+        _composition_output_error(
+            input_data.get("request") or run["request"], output,
+        )
+        if step.get("operation") == "compose" else None
+    )
+    if composition_error:
         result = {
             **result,
             "task_complete": False,
-            "error": "The composition stage returned empty content.",
+            "error": composition_error,
             "error_category": "postcondition_failure",
             "error_component": "composition_agent",
             "error_boundary": "composition_output",
-            "error_evidence": {"output_present": False},
+            "error_evidence": {
+                "output_present": bool(str(output).strip()),
+                "requested_paragraph": bool(re.search(
+                    r"\bparagraph\b",
+                    str(input_data.get("request") or run["request"]).casefold(),
+                )),
+            },
         }
     executions = result.get("tool_executions", [])
     if executions:
@@ -1169,6 +1228,8 @@ async def _execute_step(app, pool, run, step, dependencies):
         ).inc()
     if not verified and error_category:
         evidence = result.get("error") or evidence
+    if verified:
+        output = _verified_terminal_output(step, output)
     async with pool.acquire() as conn:
         await conn.execute(
             """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,

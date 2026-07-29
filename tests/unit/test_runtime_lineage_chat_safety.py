@@ -19,6 +19,7 @@ from app.runs.planner import (
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.worker import (
+    _composition_output_error,
     _create_deterministic_calendar_event,
     _create_recent_senders_sheet,
     _chat_message_content,
@@ -26,6 +27,7 @@ from app.runs.worker import (
     _reconcile_verified_failed_siblings,
     _remaining_unresolved_steps,
     _send_deterministic_chat_message,
+    _verified_terminal_output,
     _verified_sheet_url,
 )
 from app.tools.calendar_normalization import (
@@ -139,6 +141,28 @@ def test_chat_content_prefers_explicit_reference_then_composition_dependency():
         {"input_data": {"tool_arguments": {}}},
         dependencies,
     ) == ("Freshly composed paragraph", "completed_composition_dependency")
+
+
+def test_composition_postcondition_rejects_short_non_paragraph():
+    request = "Create a new paragraph in a flirty tone"
+    assert _composition_output_error(request, "Hey love, what's up?")
+    assert _composition_output_error(
+        request,
+        (
+            "I keep catching myself smiling whenever your name appears, and I "
+            "think you should know that talking with you is my favourite distraction."
+        ),
+    ) is None
+
+
+def test_verified_write_never_retains_pending_verification_message():
+    pending = (
+        "Required Google Workspace write operations completed; "
+        "read-after-write verification is pending."
+    )
+    assert _verified_terminal_output({"service": "chat"}, pending) == (
+        "Sent the requested content in Google Chat and verified the message."
+    )
 
 
 @pytest.mark.asyncio
