@@ -255,3 +255,7 @@ diagnostics distinguish requested mode (`hybrid`) from effective mode (`keyword`
 and record dense availability/error type, embedding duration, and dense/lexical
 candidate counts. This may reduce recall during an Ollama slowdown, but it cannot
 masquerade as successful hybrid retrieval or discard usable lexical evidence.
+For semantic request wrappers with an explicit `about`, `concerning`, or `regarding`
+topic, the keyword channel searches that topic rather than requiring every instruction
+word to occur in the indexed content. The transformation strategy and token count are
+recorded without copying the query into high-cardinality telemetry.
