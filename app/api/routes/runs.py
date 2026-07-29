@@ -79,23 +79,30 @@ def _routing_plan(
     authority_message: str | None = None,
     request_analysis: RequestStatementAnalysis | None = None,
 ) -> dict:
+    statement = request_analysis or analyze_request_statement(
+        authority_message or message
+    )
     policy = classify_request(
         message, timezone_name, authority_message=authority_message,
-        request_analysis=request_analysis,
+        request_analysis=statement,
     )
     services = policy.get("services") or []
+    def operations_for(service: str) -> list[str]:
+        if service == "gmail" and statement.gmail_copy_requested:
+            return ["search", "send"]
+        return infer_operation_sequence(
+            service,
+            message,
+            policy.get("write", False),
+            allow_same_service_expansion=len(services) == 1,
+        )
     return {
         "services": services,
         "rag_mode": policy.get("rag_mode", "none"),
         "steps": [
             {"operation": operation}
             for service in services
-            for operation in infer_operation_sequence(
-                service,
-                message,
-                policy.get("write", False),
-                allow_same_service_expansion=len(services) == 1,
-            )
+            for operation in operations_for(service)
         ],
     }
 

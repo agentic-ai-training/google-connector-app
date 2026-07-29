@@ -86,6 +86,23 @@ LOCAL_RESOURCE_ANTECEDENT_PATTERN = re.compile(
     r"expand|summarize|summarise|format|turn|convert|make)\s+"
     r"(?:the\s+)?same\s+(?:mail|email|message|file|document|event|task|content)\b"
 )
+DEFERRED_EXTERNAL_WRITE_PATTERN = re.compile(
+    r"\b(?:wait|hold)\b.{0,100}\b(?:until|for)\b.{0,100}"
+    r"\b(?:next|later|another)\s+(?:command|instruction|message)\b|"
+    r"\b(?:do\s+not|don't)\s+(?:send|share|post|email)\b.{0,100}"
+    r"\b(?:until|unless)\b",
+)
+GMAIL_COPY_SOURCE_PATTERN = re.compile(
+    r"\b(?:last|latest|most\s+recent|previous)\s+"
+    r"(?:mail|email|message)\s+(?:that\s+)?(?:you\s+)?sent\s+to\b|"
+    r"\b(?:fetch|find|get|read|search)\b.{0,120}"
+    r"\b(?:last|latest|most\s+recent|previous)\s+(?:mail|email|message)\b",
+)
+GMAIL_COPY_TRANSFER_PATTERN = re.compile(
+    r"\b(?:send|forward|copy)\b.{0,120}"
+    r"\b(?:same\s+)?(?:mail|email|message|it)\b|"
+    r"\b(?:send|forward|copy)\s+(?:it|that|this)\s+to\b",
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +113,8 @@ class RequestStatementAnalysis:
     contextual_reference: bool = False
     service_only: str | None = None
     current_authorizes_external_write: bool = False
+    deferred_external_write: bool = False
+    gmail_copy_requested: bool = False
     email_recipients: list[str] = field(default_factory=list)
     delivery_channels: list[str] = field(default_factory=list)
     chat_destination_emails: list[str] = field(default_factory=list)
@@ -112,6 +131,8 @@ class RequestStatementAnalysis:
             "current_authorizes_external_write": (
                 self.current_authorizes_external_write
             ),
+            "deferred_external_write": self.deferred_external_write,
+            "gmail_copy_requested": self.gmail_copy_requested,
             "email_recipients": self.email_recipients,
             "delivery_channels": self.delivery_channels,
             "chat_destination_emails": self.chat_destination_emails,
@@ -129,6 +150,8 @@ class RequestStatementAnalysis:
             "current_authorizes_external_write": (
                 self.current_authorizes_external_write
             ),
+            "deferred_external_write": self.deferred_external_write,
+            "gmail_copy_requested": self.gmail_copy_requested,
             "email_recipient_count": len(self.email_recipients),
             "delivery_channels": self.delivery_channels,
             "chat_destination_email_count": len(self.chat_destination_emails),
@@ -178,6 +201,18 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         if pattern.search(service_text)
     ]
     recipients = list(dict.fromkeys(EMAIL_PATTERN.findall(message)))
+    deferred_external_write = bool(
+        DEFERRED_EXTERNAL_WRITE_PATTERN.search(normalized)
+    )
+    gmail_copy_requested = bool(
+        "gmail" in services
+        and len(recipients) >= 2
+        and GMAIL_COPY_SOURCE_PATTERN.search(normalized)
+        and (
+            GMAIL_COPY_TRANSFER_PATTERN.search(normalized)
+            or len(re.findall(r"\b(?:send|forward|copy)\b", normalized)) >= 2
+        )
+    )
     chat_destinations = []
     chat_matches = list(re.finditer(r"\b(?:google\s+chat|chat)\b", normalized))
     for recipient in recipients:
@@ -211,6 +246,8 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
     if contextual and (
         LOCAL_ANTECEDENT_PATTERN.search(normalized)
         or LOCAL_RESOURCE_ANTECEDENT_PATTERN.search(normalized)
+        or gmail_copy_requested
+        or deferred_external_write
     ):
         contextual = False
     composition = bool(
@@ -227,7 +264,7 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         )
     ):
         contextual = False
-    external_write = bool(
+    external_write = not deferred_external_write and bool(
         EXTERNAL_WRITE_PATTERN.search(normalized)
         or EMAIL_WRITE_PATTERN.search(message)
         or (
@@ -253,6 +290,8 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         contextual_reference=contextual,
         service_only=_service_only(normalized),
         current_authorizes_external_write=external_write,
+        deferred_external_write=deferred_external_write,
+        gmail_copy_requested=gmail_copy_requested,
         email_recipients=recipients,
         delivery_channels=delivery_channels,
         chat_destination_emails=chat_destinations,

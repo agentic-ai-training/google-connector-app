@@ -78,6 +78,67 @@ async def test_self_contained_request_analyzes_without_loading_prior_context():
 
 
 @pytest.mark.asyncio
+async def test_deferred_delivery_does_not_load_context_or_authorize_write():
+    message = (
+        "create a paragraph about how to get a job as an agentic ai engineer "
+        "and wait until i give you the next command on where to send it"
+    )
+    pool = _Pool(previous={
+        "id": "unrelated-prior-run",
+        "result": {"output": "private prior content"},
+        "status": "completed",
+    })
+    statement = analyze_request_statement(message)
+
+    result = await analyze_conversation_context(
+        pool, user_id="user-a", session_id="session-a",
+        message=message, request_analysis=statement,
+    )
+    plan, policy = build_plan(
+        result.effective_message,
+        authority_message=message,
+        request_analysis=statement,
+    )
+
+    assert statement.deferred_external_write is True
+    assert statement.current_authorizes_external_write is False
+    assert statement.contextual_reference is False
+    assert result.mode == "standalone"
+    assert result.diagnostics()["prior_context_included"] is False
+    assert pool.acquires == 0
+    assert [(step.service, step.operation) for step in plan.steps] == [
+        ("composition", "compose"),
+    ]
+    assert policy["requires_approval"] is False
+
+
+@pytest.mark.asyncio
+async def test_current_request_gmail_antecedent_does_not_load_prior_context():
+    message = (
+        "send the last mail you sent to achintyat256@gmail.com, send it to "
+        "dhruvtyagi19@gmail.com"
+    )
+    pool = _Pool(previous={
+        "id": "unrelated-paragraph",
+        "result": {"output": "An unrelated job-search paragraph"},
+        "status": "completed",
+    })
+    statement = analyze_request_statement(message)
+
+    result = await analyze_conversation_context(
+        pool, user_id="user-a", session_id="session-a",
+        message=message, request_analysis=statement,
+    )
+
+    assert statement.gmail_copy_requested is True
+    assert statement.contextual_reference is False
+    assert result.mode == "standalone"
+    assert result.effective_message == message
+    assert result.diagnostics()["prior_context_included"] is False
+    assert pool.acquires == 0
+
+
+@pytest.mark.asyncio
 async def test_referential_request_gets_only_one_same_session_turn():
     pool = _Pool(previous={
         "id": "run-prior",

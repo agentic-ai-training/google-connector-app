@@ -291,6 +291,22 @@ def _composition_output_error(request: str, output: str) -> str | None:
     return None
 
 
+def _refusal_output_error(output: str) -> str | None:
+    """Reject model prose that claims completion without executing a live read."""
+    text = " ".join(str(output or "").casefold().split())
+    if re.search(
+        r"\b(?:i(?:'m| am)\s+sorry[,:]?\s+but\s+)?"
+        r"(?:i\s+)?(?:can(?:not|'t)|could(?:not|n't)|am\s+unable\s+to)\s+"
+        r"(?:fulfill|fulfil|complete|perform|do|help\s+with)\b",
+        text,
+    ):
+        return (
+            "The live Google operation returned a refusal instead of required "
+            "tool evidence."
+        )
+    return None
+
+
 def _delivery_preview(value: str, limit: int = 4_000) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -405,6 +421,17 @@ def verify_step(step, result) -> tuple[bool, str, list[dict]]:
     if _contains_failure(tool_results):
         return False, "At least one tool returned explicit failure evidence", []
     artifacts = _find_artifacts(tool_results)
+    input_data = step.get("input_data") or step.get("arguments") or {}
+    expected_live_tools = input_data.get("allowed_tools") or []
+    refusal = _refusal_output_error(result.get("output", ""))
+    if expected_live_tools and refusal:
+        return False, refusal, artifacts
+    if step.get("read_only") and expected_live_tools and not tool_results:
+        return (
+            False,
+            "A live Google read completed without calling an allowed tool.",
+            artifacts,
+        )
     if not step["read_only"] and not tool_results:
         return False, "A write step completed without any tool result", []
     if not step["read_only"] and not artifacts:

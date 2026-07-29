@@ -1704,6 +1704,87 @@ Previous assistant result: {prior_output}"""
         }
 
 
+def test_gmail_copy_current_antecedent_ignores_prior_turn_and_persists_typed_dag():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.context import analyze_conversation_context
+    from app.runs.repository import create_run, get_run
+    from app.runs.request_analysis import analyze_request_statement
+
+    current = (
+        "send the last mail you sent to achintyat256@gmail.com, send it to , "
+        "dhruvtyagi19@gmail.com"
+    )
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            marker = f"gmail-copy-context-{uuid.uuid4()}"
+            prior, _ = await create_run(
+                pool,
+                "gmail-copy-context@example.com",
+                "Create a paragraph about an engineering job",
+                marker,
+                f"{marker}-prior",
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE agent_runs
+                       SET status='completed',
+                           result='{"output":"unrelated private paragraph"}'::jsonb
+                       WHERE id=$1""",
+                    prior["id"],
+                )
+            statement = analyze_request_statement(current)
+            context = await analyze_conversation_context(
+                pool,
+                user_id="gmail-copy-context@example.com",
+                session_id=marker,
+                message=current,
+                request_analysis=statement,
+            )
+            run, created = await create_run(
+                pool,
+                "gmail-copy-context@example.com",
+                current,
+                marker,
+                f"{marker}-copy",
+                planning_message=context.effective_message,
+                request_analysis=statement,
+                referenced_output=context.referenced_output,
+                context_diagnostics=context.diagnostics(),
+            )
+            stored = await get_run(
+                pool, run["id"], "gmail-copy-context@example.com",
+            )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE session_id=$1", marker,
+                )
+            return created, context, stored
+
+        created, context, stored = client.portal.call(exercise)
+        assert created is True
+        assert context.mode == "standalone"
+        assert context.source_run_ids == []
+        assert context.effective_message == current
+        assert stored["status"] == "awaiting_approval"
+        assert stored["plan"]["services"] == ["gmail"]
+        assert [
+            (step["operation"], step["dependencies"])
+            for step in stored["steps"]
+        ] == [
+            ("search", []),
+            ("send", ["execute_gmail_search"]),
+        ]
+        assert stored["steps"][0]["input_data"]["tool_arguments"] == {
+            "query": "to:achintyat256@gmail.com in:sent",
+            "max_results": 1,
+        }
+        assert stored["steps"][1]["input_data"]["tool_arguments"] == {
+            "to": "dhruvtyagi19@gmail.com",
+        }
+
+
 def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
     from app.api.main import app
     from app.db.connection import get_pool
