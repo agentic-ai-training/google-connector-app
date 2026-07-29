@@ -783,6 +783,17 @@ def make_service_node(service: str, pool=None):
                                 "retry_count": selection_retries,
                             },
                         )
+                if contract and contract_satisfied(contract, executions):
+                    return {
+                        "messages": messages[1:],
+                        "output": (
+                            "Required Google Workspace write operations completed; "
+                            "read-after-write verification is pending."
+                        ),
+                        "tool_results": results,
+                        "tool_executions": executions,
+                        "task_complete": True,
+                    }
             raise RuntimeError("Tool-call limit reached before the task completed")
         except Exception as exc:
             failure = {

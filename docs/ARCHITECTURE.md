@@ -110,9 +110,17 @@ An email destination first uses `spaces.findDirectMessage`. Only a provider-conf
 404 stating that the direct message does not exist may invoke idempotent `spaces.setup`;
 unrelated 404/403 responses are not reclassified. The resolver is itself read back with
 `spaces.get`, recorded as an artifact, and the send tool accepts only the verified
-`spaces/...` name. This requires `chat.spaces.create`; users whose encrypted credential
+`spaces/...` name. The discovery client represents `SetupSpaceRequest.requestId` inside
+the `body` alongside `space` and `memberships`; it is not a method keyword argument.
+This requires `chat.spaces.create`; users whose encrypted credential
 predates that scope must reconnect once. A hostname in an error is never by itself
 evidence that the Chat API is disabled.
+
+Once every required tool in an ordered write contract has succeeded, execution returns
+directly to deterministic read-after-write verification. It does not spend another
+model turn merely to paraphrase success. A post-tool model quota failure therefore
+cannot relabel an already-created and subsequently verified Calendar, Chat, Sheet, or
+other write as failed.
 
 Resume is an explicit state machine:
 

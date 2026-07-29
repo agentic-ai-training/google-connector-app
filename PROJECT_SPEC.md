@@ -1056,6 +1056,10 @@ message email. For email, call `spaces.findDirectMessage`; only its specific mis
 404 may call idempotent `spaces.setup`. Read back the returned space and bind its
 `spaces/...` name into `send_chat_message`. This ordered write contract requires
 `chat.spaces.create`; existing users reconnect once after the scope is deployed.
+For the Google discovery client, include the deterministic `requestId` in the
+`SetupSpaceRequest` body—not as a `spaces.setup()` keyword. After the final required
+write tool succeeds, return directly to deterministic postcondition verification;
+do not require an additional LLM turn to declare the write complete.
 
 ---
 
