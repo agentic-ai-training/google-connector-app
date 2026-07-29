@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from app.runs.request_analysis import (
@@ -76,14 +77,56 @@ async def analyze_conversation_context(
 
     service = statement.service_only
     async with pool.acquire() as conn:
-        previous = await conn.fetchrow(
-            """SELECT id,request,result,intent_kind,status
-               FROM agent_runs
-               WHERE user_id=$1 AND session_id=$2 AND deleted_at IS NULL
-                 AND queued_at >= now()-interval '24 hours'
-               ORDER BY queued_at DESC LIMIT 1""",
-            user_id, session_id,
-        )
+        if service:
+            # A service-only answer ("gmail") applies only to the immediately
+            # preceding ambiguous turn. It must never skip backwards and attach
+            # itself to an unrelated request.
+            previous = await conn.fetchrow(
+                """SELECT id,request,result,intent_kind,status
+                   FROM agent_runs
+                   WHERE user_id=$1 AND session_id=$2 AND deleted_at IS NULL
+                     AND queued_at >= now()-interval '24 hours'
+                   ORDER BY queued_at DESC LIMIT 1""",
+                user_id, session_id,
+            )
+        else:
+            # Referential delivery must resolve to content, not blindly to the
+            # last assistant turn. Skip capability/scope answers and write
+            # receipts, and prefer a composition when the user explicitly names
+            # a paragraph/draft/essay even if an intervening read occurred.
+            wants_composition = bool(
+                re.search(
+                    r"\b(paragraph|draft|essay|roadmap|application|letter)\b",
+                    statement.normalized_text,
+                )
+            )
+            previous = await conn.fetchrow(
+                """SELECT id,request,result,intent_kind,status
+                   FROM agent_runs
+                   WHERE user_id=$1 AND session_id=$2 AND deleted_at IS NULL
+                     AND queued_at >= now()-interval '24 hours'
+                     AND status='completed'
+                     AND nullif(btrim(result->>'output'),'') IS NOT NULL
+                     AND intent_kind NOT IN
+                       ('product_information','scope_chat','workspace_guidance',
+                        'ambiguous','out_of_scope')
+                     AND NOT EXISTS (
+                       SELECT 1
+                       FROM jsonb_array_elements(
+                         coalesce(plan->'steps','[]'::jsonb)
+                       ) AS planned_step
+                       WHERE coalesce(
+                         (planned_step->>'read_only')::boolean, true
+                       ) = false
+                     )
+                   ORDER BY
+                     CASE WHEN $3 AND coalesce(plan->'services','[]'::jsonb)
+                                      ? 'composition'
+                          THEN 0 ELSE 1 END,
+                     queued_at DESC
+                   LIMIT 1""",
+                user_id, session_id, wants_composition,
+            )
     if not previous:
         return ContextAnalysis(
             current_message=message,

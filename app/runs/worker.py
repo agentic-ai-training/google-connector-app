@@ -290,8 +290,80 @@ def _composition_output_error(request: str, output: str) -> str | None:
     return None
 
 
-def _verified_terminal_output(step: dict, output: str) -> str:
-    """Replace a pre-verification executor status after durable verification passes."""
+def _delivery_preview(value: str, limit: int = 4_000) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return (
+        text[:limit].rstrip()
+        + f"\n\n[Preview truncated; verified body contains {len(text):,} characters.]"
+    )
+
+
+def _verified_delivery_receipt(step: dict, result: dict) -> str | None:
+    """Render auditable, bounded receipts from the verified write execution."""
+    executions = result.get("tool_executions") or []
+    service = step.get("service")
+    if service == "chat":
+        send = next((
+            item for item in reversed(executions)
+            if item.get("tool") == "send_chat_message"
+        ), None)
+        resolver = next((
+            item for item in executions
+            if item.get("tool") == "resolve_chat_destination"
+        ), None)
+        if not send:
+            return None
+        arguments = send.get("arguments") or {}
+        sent_result = send.get("result") or {}
+        destination = (
+            ((resolver or {}).get("arguments") or {}).get("destination")
+            or sent_result.get("resolvedSpace")
+            or arguments.get("space_id")
+            or "the requested destination"
+        )
+        content = _delivery_preview(arguments.get("text"))
+        resource = sent_result.get("name")
+        if not content:
+            return None
+        suffix = f"\n\nGoogle Chat message resource: {resource}" if resource else ""
+        return (
+            f"Sent and verified this Google Chat message to {destination}:\n\n"
+            f"{content}{suffix}"
+        )
+    if service == "gmail":
+        send = next((
+            item for item in reversed(executions)
+            if item.get("tool") in {"send_gmail", "reply_gmail"}
+        ), None)
+        if not send:
+            return None
+        arguments = send.get("arguments") or {}
+        sent_result = send.get("result") or {}
+        recipient = arguments.get("to") or (
+            f"thread {arguments.get('thread_id')}"
+            if arguments.get("thread_id") else "the requested recipient"
+        )
+        subject = arguments.get("subject")
+        content = _delivery_preview(arguments.get("body"))
+        resource = sent_result.get("id") or sent_result.get("messageId")
+        if not content:
+            return None
+        subject_line = f"\nSubject: {subject}" if subject else ""
+        suffix = f"\n\nGmail message ID: {resource}" if resource else ""
+        return (
+            f"Sent and verified this Gmail message to {recipient}:"
+            f"{subject_line}\n\n{content}{suffix}"
+        )
+    return None
+
+
+def _verified_terminal_output(step: dict, output: str, result: dict | None = None) -> str:
+    """Replace generic statuses with evidence from the verified external write."""
+    receipt = _verified_delivery_receipt(step, result or {})
+    if receipt:
+        return receipt
     if str(output).strip() != _PENDING_WRITE_VERIFICATION_OUTPUT:
         return output
     service = step.get("service")
@@ -1229,7 +1301,7 @@ async def _execute_step(app, pool, run, step, dependencies):
     if not verified and error_category:
         evidence = result.get("error") or evidence
     if verified:
-        output = _verified_terminal_output(step, output)
+        output = _verified_terminal_output(step, output, result)
     async with pool.acquire() as conn:
         await conn.execute(
             """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,

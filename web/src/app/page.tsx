@@ -183,6 +183,12 @@ export default function Home(){
     ?totalModelInput:(currentRun?.input_tokens??0);
   const displayedOutputTokens=hasDetailedModelUsage
     ?totalModelOutput:(currentRun?.output_tokens??0);
+  const conversationContext=currentRun?.planning_diagnostics?.conversation_context;
+  const contextSources=conversationContext?.source_run_ids??[];
+  const ragRetrievals=currentRun?.rag_retrievals??[];
+  const ragReturned=ragRetrievals.reduce((sum,item)=>sum+item.returned_count,0);
+  const ragUsed=ragRetrievals.reduce((sum,item)=>sum+item.used_count,0);
+  const ragSources=[...new Set(ragRetrievals.flatMap(item=>item.source_types??[]))];
 
   if(authLoading)return <main className="grid h-screen place-items-center">Checking your session…</main>;
   if(!user)return <main className="grid h-screen place-items-center bg-zinc-50 p-6 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
@@ -207,7 +213,7 @@ export default function Home(){
     {currentRun&&<section className="border-b bg-white p-4 text-sm dark:bg-zinc-900">
       <div className="flex items-center justify-between"><strong>Run {currentRun.id.slice(0,8)} · {currentRun.status.replaceAll("_"," ")}</strong><span>{Math.round(currentRun.functional_completion)}%</span></div>
       <div className="mt-2 h-2 overflow-hidden rounded bg-zinc-200"><div className="h-full bg-blue-600" style={{width:`${currentRun.functional_completion}%`}}/></div>
-      <p className="mt-2 text-xs text-zinc-500">Phase: {currentRun.current_phase} · Services: {currentRun.plan?.services?.join(", ")||"general"} · RAG: {currentRun.plan?.rag_mode||"none"} · Deployment: {currentRun.deployment_version||"unknown"}</p>
+      <p className="mt-2 text-xs text-zinc-500">Phase: {currentRun.current_phase} · Services: {currentRun.plan?.services?.join(", ")||"general"} · Knowledge RAG: {currentRun.plan?.rag_mode||"none"}{ragRetrievals.length>0?` (${ragUsed}/${ragReturned} results used${ragSources.length?`; sources: ${ragSources.join(", ")}`:""})`:" (no indexed corpus retrieved)"} · Conversation context: {conversationContext?.prior_context_included?`${conversationContext.mode||"referential"} from ${contextSources.map(id=>id.slice(0,8)).join(", ")}`:"standalone"} · Deployment: {currentRun.deployment_version||"unknown"}</p>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><span>Technical {Math.round(currentRun.technical_completion)}%</span><span>Functional {Math.round(currentRun.functional_completion)}%</span><span>User-visible {Math.round(currentRun.user_visible_completion)}%</span><span>Side effects {Math.round(currentRun.side_effect_integrity)}%</span></div>
       <div className="mt-3 rounded-lg border p-3 text-xs">
         <p><strong>{TERMINAL_RUN_STATUSES.has(currentRun.status)?"Total time":"Elapsed time"}:</strong> {formatDuration(elapsedDuration(currentRun,clock))} · Recorded step time: {formatDuration(currentRun.active_duration_ms??0)}</p>

@@ -12,6 +12,16 @@ export type RunArtifact={id:string;artifact_type:string;external_id:string;url?:
 export type ModelUsage={
   model:string;calls:number;input_tokens:number;output_tokens:number;
 };
+export type RagRetrieval={
+  mode:string;reason?:string;returned_count:number;used_count:number;
+  duration_ms?:number;source_types?:string[];
+};
+export type PlanningDiagnostics={
+  conversation_context?:{
+    mode?:string;prior_context_included?:boolean;source_run_ids?:string[];
+    context_turn_count?:number;relevance_reason?:string;
+  };
+};
 export type AgentRun={
   id:string;status:string;current_phase:string;technical_completion:number;
   functional_completion:number;user_visible_completion:number;side_effect_integrity:number;
@@ -20,6 +30,7 @@ export type AgentRun={
   queued_at?:string;started_at?:string;completed_at?:string;
   elapsed_duration_ms?:number;active_duration_ms?:number;
   model_call_count?:number;model_usage?:ModelUsage[];
+  planning_diagnostics?:PlanningDiagnostics;rag_retrievals?:RagRetrieval[];
   error_category?:string;deployment_version?:string;
   result?:{output?:string};incident_summary?:{breaking_point?:string;primary_cause?:string;error?:string};
   clarification_questions?:string[];

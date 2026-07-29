@@ -493,6 +493,14 @@ async def get_run(pool, run_id, user_id):
         result["artifacts"] = [dict(item) for item in await conn.fetch(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 ORDER BY created_at", run_id
         )]
+        result["rag_retrievals"] = [dict(item) for item in await conn.fetch(
+            """SELECT mode,reason,returned_count,used_count,duration_ms,
+                      source_types,created_at
+               FROM rag_retrieval_events
+               WHERE run_id=$1
+               ORDER BY created_at""",
+            run_id,
+        )]
         result["recent_events"] = [dict(item) for item in await conn.fetch(
             """SELECT id,event_type,phase,message,payload,created_at
                FROM agent_run_events WHERE run_id=$1 ORDER BY id DESC LIMIT 25""",
