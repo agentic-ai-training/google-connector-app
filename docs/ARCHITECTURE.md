@@ -247,3 +247,11 @@ Private index: sources, chunker versions, pending/dead-letter jobs, latest sync
 may report hybrid retrieval only when a tenant-owned indexed corpus exists and a durable
 retrieval event records what was returned and used. Another user's legacy chunks are
 never evidence that RAG is ready for the current user.
+
+Dense query embedding has its own latency bound. If the production Ollama service
+cannot return a query vector within that budget, PostgreSQL full-text retrieval still
+runs instead of being cancelled with the dense channel. The durable event and run
+diagnostics distinguish requested mode (`hybrid`) from effective mode (`keyword`),
+and record dense availability/error type, embedding duration, and dense/lexical
+candidate counts. This may reduce recall during an Ollama slowdown, but it cannot
+masquerade as successful hybrid retrieval or discard usable lexical evidence.

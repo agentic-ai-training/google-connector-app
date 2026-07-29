@@ -216,6 +216,8 @@ async def retrieve_context_node(state: AgentState):
         }
     started = time.perf_counter()
     packing_strategy = "greedy"
+    retrieval_diagnostics = {}
+    effective_mode = policy["rag_mode"]
     pool = None
     retrieval_reason = "semantic historical request"
     try:
@@ -229,8 +231,18 @@ async def retrieve_context_node(state: AgentState):
             )
             if rag_enabled:
                 docs = await hybrid_retrieve(
-                    state.get("message", ""), pool=pool, user_id=state.get("user_id")
+                    state.get("message", ""), pool=pool,
+                    user_id=state.get("user_id"),
+                    diagnostics=retrieval_diagnostics,
                 )
+                effective_mode = retrieval_diagnostics.get(
+                    "effective_mode", policy["rag_mode"]
+                )
+                if effective_mode == "keyword":
+                    retrieval_reason = (
+                        "dense query embedding exceeded its bounded latency; "
+                        "PostgreSQL keyword fallback completed"
+                    )
             else:
                 docs = []
                 retrieval_reason = "new_rag feature disabled for user"
@@ -251,7 +263,7 @@ async def retrieve_context_node(state: AgentState):
                             returned_count,used_count,duration_ms,source_types)
                            VALUES($1,$2,$3,$4,$5,$6,0,0,$7,'{}')""",
                         state["run_id"], state.get("step_id"),
-                        state.get("user_id"), policy["rag_mode"],
+                        state.get("user_id"), effective_mode,
                         retrieval_reason,
                         hashlib.sha256(
                             state.get("message", "").encode()
@@ -267,8 +279,10 @@ async def retrieve_context_node(state: AgentState):
             "error": retrieval_reason,
             "rag_decision": {
                 "mode": policy["rag_mode"],
+                "requested_mode": policy["rag_mode"],
                 "reason": retrieval_reason,
                 "packing_strategy": packing_strategy,
+                "retrieval_diagnostics": retrieval_diagnostics,
             },
         }
     if state.get("run_id"):
@@ -282,7 +296,7 @@ async def retrieve_context_node(state: AgentState):
                         used_count,duration_ms,source_types)
                        VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9)""",
                     state["run_id"], state.get("step_id"), state.get("user_id"),
-                    policy["rag_mode"], retrieval_reason,
+                    effective_mode, retrieval_reason,
                     hashlib.sha256(state.get("message", "").encode()).hexdigest(),
                     len(docs), int((time.perf_counter() - started) * 1000),
                     list(dict.fromkeys(str(doc.get("source", "unknown")) for doc in docs)),
@@ -292,9 +306,11 @@ async def retrieve_context_node(state: AgentState):
     return {"retrieved_context": pack_context(docs, strategy=packing_strategy),
             "operational_context": pack_operational_knowledge(operational),
             "tool_results": docs,
-            "rag_decision": {"mode": policy["rag_mode"],
+            "rag_decision": {"mode": effective_mode,
+                             "requested_mode": policy["rag_mode"],
                              "reason": retrieval_reason,
-                             "packing_strategy": packing_strategy}}
+                             "packing_strategy": packing_strategy,
+                             "retrieval_diagnostics": retrieval_diagnostics}}
 
 
 async def supervisor_node(state: AgentState):
