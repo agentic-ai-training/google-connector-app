@@ -1311,3 +1311,25 @@ Local evidence on 2026-07-29: 213 unit tests and 33 PostgreSQL-backed integratio
 tests pass; planner goldens pass 33/33 and no-network workflow replays pass 14/14.
 Python compilation and Flake8 pass, Bandit reports no medium/high findings, and the
 Next.js lint, production build, and critical-severity audit gate pass.
+
+## Sprint 44 — Live duration and actual per-model usage
+
+- [x] Show total elapsed request time on the main active-session progress card,
+  updating while a durable run is in progress and freezing at its completion time.
+- [x] Show recorded step execution time separately so queue, approval, and
+  clarification waiting time are not confused with completed/running step work.
+- [x] Aggregate the immutable `agent_model_calls` ledger by actual model, including
+  fallback models, call count, input tokens, output tokens, and total tokens.
+- [x] Expose zero-token deterministic runs explicitly rather than hiding the usage
+  section.
+- [x] Preserve a labelled aggregate-only fallback for historical runs whose old data
+  does not have per-call allocation.
+
+Guardrail: token attribution comes from server-side model-call evidence. The browser
+does not infer which configured model probably handled a call.
+
+Local evidence on 2026-07-29: 213 unit tests and 34 PostgreSQL-backed integration
+tests pass; planner goldens pass 33/33 and no-network workflow replays pass 14/14.
+Python compilation and Flake8 pass, Bandit reports no medium/high findings, the
+version-controlled Grafana dashboards validate, and Next.js lint, production build,
+and the critical-severity audit gate pass.

@@ -19,6 +19,24 @@ const COMMON_TIMEZONES=[
 ];
 const isTimezoneQuestion=(question:string)=>question.toLocaleLowerCase().includes("timezone");
 const browserTimezone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";
+const TERMINAL_RUN_STATUSES=new Set(["completed","failed","partial","cancelled"]);
+
+function formatDuration(milliseconds:number){
+  const seconds=Math.max(0,Math.floor(milliseconds/1000));
+  const hours=Math.floor(seconds/3600);
+  const minutes=Math.floor((seconds%3600)/60);
+  const remaining=seconds%60;
+  return hours>0?`${hours}h ${minutes}m ${remaining}s`
+    :minutes>0?`${minutes}m ${remaining}s`:`${remaining}s`;
+}
+
+function elapsedDuration(run:AgentRun,now:number){
+  const started=Date.parse(run.queued_at??run.started_at??"");
+  if(!Number.isFinite(started))return run.elapsed_duration_ms??0;
+  const completed=run.completed_at?Date.parse(run.completed_at):now;
+  return Number.isFinite(completed)
+    ?Math.max(0,completed-started):(run.elapsed_duration_ms??0);
+}
 
 function ArtifactActions({run,artifact,onRefresh}:{
   run:AgentRun;artifact:RunArtifact;onRefresh:()=>Promise<void>;
@@ -66,6 +84,7 @@ export default function Home(){
     runId:string;answers:Record<string,string>;
   }>({runId:"",answers:{}});
   const [pendingImprovements,setPendingImprovements]=useState(0);
+  const [clock,setClock]=useState(()=>Date.now());
 
   useEffect(()=>{
     let active=true;
@@ -119,6 +138,13 @@ export default function Home(){
 
   const chat=useChat(session);
   const {messages,sendMessage,streaming,error,currentRun,decide,clarify,cancel,resume,refreshRun}=chat;
+  const currentRunId=currentRun?.id;
+  const currentRunStatus=currentRun?.status;
+  useEffect(()=>{
+    if(!currentRunId||!currentRunStatus||TERMINAL_RUN_STATUSES.has(currentRunStatus))return;
+    const timer=window.setInterval(()=>setClock(Date.now()),1000);
+    return()=>window.clearInterval(timer);
+  },[currentRunId,currentRunStatus]);
   const clarifications=currentRun?.id===clarificationDraft.runId
     ?clarificationDraft.answers:{};
   const clarificationValue=(question:string)=>clarifications[question]
@@ -146,6 +172,17 @@ export default function Home(){
     if(value&&!streaming&&user){setInput("");void sendMessage(value);}
   };
   const disconnect=async()=>{await disconnectGoogle();setUser(null);};
+  const totalModelInput=(currentRun?.model_usage??[]).reduce(
+    (total,item)=>total+item.input_tokens,0,
+  );
+  const totalModelOutput=(currentRun?.model_usage??[]).reduce(
+    (total,item)=>total+item.output_tokens,0,
+  );
+  const hasDetailedModelUsage=(currentRun?.model_usage?.length??0)>0;
+  const displayedInputTokens=hasDetailedModelUsage
+    ?totalModelInput:(currentRun?.input_tokens??0);
+  const displayedOutputTokens=hasDetailedModelUsage
+    ?totalModelOutput:(currentRun?.output_tokens??0);
 
   if(authLoading)return <main className="grid h-screen place-items-center">Checking your session…</main>;
   if(!user)return <main className="grid h-screen place-items-center bg-zinc-50 p-6 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
@@ -172,7 +209,15 @@ export default function Home(){
       <div className="mt-2 h-2 overflow-hidden rounded bg-zinc-200"><div className="h-full bg-blue-600" style={{width:`${currentRun.functional_completion}%`}}/></div>
       <p className="mt-2 text-xs text-zinc-500">Phase: {currentRun.current_phase} · Services: {currentRun.plan?.services?.join(", ")||"general"} · RAG: {currentRun.plan?.rag_mode||"none"} · Deployment: {currentRun.deployment_version||"unknown"}</p>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><span>Technical {Math.round(currentRun.technical_completion)}%</span><span>Functional {Math.round(currentRun.functional_completion)}%</span><span>User-visible {Math.round(currentRun.user_visible_completion)}%</span><span>Side effects {Math.round(currentRun.side_effect_integrity)}%</span></div>
-      {(currentRun.models_used?.length??0)>0&&<p className="mt-2 text-xs">Models: {(currentRun.models_used??[]).join(", ")} · Tokens: {currentRun.input_tokens+currentRun.output_tokens}</p>}
+      <div className="mt-3 rounded-lg border p-3 text-xs">
+        <p><strong>{TERMINAL_RUN_STATUSES.has(currentRun.status)?"Total time":"Elapsed time"}:</strong> {formatDuration(elapsedDuration(currentRun,clock))} · Recorded step time: {formatDuration(currentRun.active_duration_ms??0)}</p>
+        <p className="mt-1"><strong>LLM tokens:</strong> {(displayedInputTokens+displayedOutputTokens).toLocaleString()} total · {displayedInputTokens.toLocaleString()} input · {displayedOutputTokens.toLocaleString()} output</p>
+        {hasDetailedModelUsage?<ul className="mt-1 space-y-1">
+          {currentRun.model_usage?.map(usage=><li key={usage.model}><strong>{usage.model}</strong>: {(usage.input_tokens+usage.output_tokens).toLocaleString()} tokens ({usage.input_tokens.toLocaleString()} input · {usage.output_tokens.toLocaleString()} output · {usage.calls} {usage.calls===1?"call":"calls"})</li>)}
+        </ul>:(currentRun.models_used?.length??0)>0
+          ?<p className="mt-1">Models: {(currentRun.models_used??[]).join(", ")} (per-model allocation is unavailable for this legacy run)</p>
+          :<p className="mt-1 text-zinc-500">{TERMINAL_RUN_STATUSES.has(currentRun.status)?"No LLM calls were used; this run followed a deterministic path.":"No LLM calls have been recorded yet."}</p>}
+      </div>
       {currentRun.recent_events?.some(event=>event.event_type==="fallback_model_used")&&<p className="mt-2 text-xs text-amber-600">A validated fallback model was used for a safe step.</p>}
       <ol className="mt-3 space-y-1">{currentRun.steps.map(step=><li key={step.id}><StepMark status={step.status}/> {step.title}</li>)}</ol>
       {currentRun.artifacts?.length>0&&<div className="mt-3 rounded-lg border p-3"><strong>Verified artifacts and recovery</strong><ul className="mt-1 space-y-3">{currentRun.artifacts.map(artifact=><li key={artifact.id}>{artifact.url?.startsWith("https://")?<a className="text-blue-600 underline" href={artifact.url} target="_blank" rel="noreferrer">{artifact.artifact_type}: {artifact.external_id}</a>:<span>{artifact.artifact_type}: {artifact.external_id}</span>} <span className="text-zinc-500">({artifact.verification_status}; {artifact.cleanup_state})</span><ArtifactActions run={currentRun} artifact={artifact} onRefresh={refreshRun}/></li>)}</ul></div>}
