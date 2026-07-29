@@ -106,6 +106,62 @@ def test_embedding_queue_admission_is_bounded_per_user():
         assert client.portal.call(attempt) is False
 
 
+def test_rag_source_sync_is_durable_deduplicated_and_tenant_scoped():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    first_user = f"rag-sync-{uuid.uuid4()}@example.com"
+    second_user = f"rag-sync-{uuid.uuid4()}@example.com"
+    job_ids = []
+    with TestClient(app) as client:
+        first_token = client.post(
+            "/auth/token", json={"email": first_user},
+        ).json()["access_token"]
+        second_token = client.post(
+            "/auth/token", json={"email": second_user},
+        ).json()["access_token"]
+        first_headers = {"Authorization": f"Bearer {first_token}"}
+        second_headers = {"Authorization": f"Bearer {second_token}"}
+        payload = {
+            "sources": ["gmail", "drive"],
+            "max_items_per_source": 3,
+            "requeue_known_failures": True,
+        }
+
+        first = client.post("/runs/rag/sync", headers=first_headers, json=payload)
+        assert first.status_code == 202
+        assert first.json()["created"] is True
+        job_ids.append(first.json()["id"])
+
+        duplicate = client.post(
+            "/runs/rag/sync", headers=first_headers, json=payload,
+        )
+        assert duplicate.status_code == 202
+        assert duplicate.json()["created"] is False
+        assert duplicate.json()["id"] == first.json()["id"]
+
+        second = client.post("/runs/rag/sync", headers=second_headers, json=payload)
+        assert second.status_code == 202
+        assert second.json()["id"] != first.json()["id"]
+        job_ids.append(second.json()["id"])
+
+        first_status = client.get("/runs/rag/status", headers=first_headers)
+        second_status = client.get("/runs/rag/status", headers=second_headers)
+        assert first_status.status_code == second_status.status_code == 200
+        assert first_status.json()["latest_sync"]["id"] == first.json()["id"]
+        assert second_status.json()["latest_sync"]["id"] == second.json()["id"]
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM rag_source_sync_jobs WHERE id=ANY($1::uuid[])",
+                    job_ids,
+                )
+
+        client.portal.call(cleanup)
+
+
 def test_contextual_workflow_and_failure_inbox_are_durable():
     from app.api.main import app
     from app.db.connection import get_pool

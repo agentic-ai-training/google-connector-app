@@ -41,10 +41,18 @@ from app.runs.schemas import (
     RunCreate,
     RunDecision,
     RunResume,
+    RagSyncRequest,
+)
+from app.rag.user_sync import (
+    enqueue_user_sync,
+    user_rag_status,
 )
 from app.improvements.failure_intelligence import record_failure_incident
 from app.mlops.metrics import write_reconciliation
-from app.runs.planner import classify_request, infer_operation
+from app.runs.planner import (
+    classify_request,
+    infer_operation_sequence,
+)
 from app.runs.reconciliation import (
     ReconciliationDecision,
     reconcile_failed_step,
@@ -80,8 +88,14 @@ def _routing_plan(
         "services": services,
         "rag_mode": policy.get("rag_mode", "none"),
         "steps": [
-            {"operation": infer_operation(service, message, policy.get("write", False))}
+            {"operation": operation}
             for service in services
+            for operation in infer_operation_sequence(
+                service,
+                message,
+                policy.get("write", False),
+                allow_same_service_expansion=len(services) == 1,
+            )
         ],
     }
 
@@ -426,6 +440,31 @@ async def run_history(
         started_before=started_before, limit=limit, offset=offset,
     )
     return {"runs": _serializable(rows)}
+
+
+@router.get("/rag/status")
+async def rag_status(request: Request):
+    pool = await get_pool()
+    return _serializable(
+        await user_rag_status(pool, request.state.user_id)
+    )
+
+
+@router.post("/rag/sync", status_code=202)
+async def rag_sync(body: RagSyncRequest, request: Request):
+    """Queue an explicitly consented tenant-owned source-aware backfill."""
+    pool = await get_pool()
+    try:
+        result = await enqueue_user_sync(
+            pool,
+            user_id=request.state.user_id,
+            sources=body.sources,
+            max_items_per_source=body.max_items_per_source,
+            requeue_known_failures=body.requeue_known_failures,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serializable(result)
 
 
 @router.get("/{run_id}")

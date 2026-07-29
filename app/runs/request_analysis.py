@@ -79,6 +79,13 @@ LOCAL_ANTECEDENT_PATTERN = re.compile(
     r"expand|summarize|summarise|format|turn|convert|make)\s+"
     r"(?:it|that|this|them|those)\b"
 )
+LOCAL_RESOURCE_ANTECEDENT_PATTERN = re.compile(
+    r"\b(?:fetch|find|get|read|list|search)\b.+?"
+    r"(?:\band\b|\bthen\b|[,.;])\s*(?:then\s+)?"
+    r"(?:send|share|email|post|use|put|add|change|rewrite|revise|shorten|"
+    r"expand|summarize|summarise|format|turn|convert|make)\s+"
+    r"(?:the\s+)?same\s+(?:mail|email|message|file|document|event|task|content)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -201,7 +208,10 @@ def analyze_request_statement(message: str) -> RequestStatementAnalysis:
         )
         or re.search(r"\b(what about|instead|do the same|go ahead)\b", normalized)
     )
-    if contextual and LOCAL_ANTECEDENT_PATTERN.search(normalized):
+    if contextual and (
+        LOCAL_ANTECEDENT_PATTERN.search(normalized)
+        or LOCAL_RESOURCE_ANTECEDENT_PATTERN.search(normalized)
+    ):
         contextual = False
     composition = bool(
         COMPOSITION_PATTERN.search(normalized)

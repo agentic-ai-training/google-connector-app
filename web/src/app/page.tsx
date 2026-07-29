@@ -85,6 +85,8 @@ export default function Home(){
   }>({runId:"",answers:{}});
   const [pendingImprovements,setPendingImprovements]=useState(0);
   const [clock,setClock]=useState(()=>Date.now());
+  const [ragSyncing,setRagSyncing]=useState(false);
+  const [ragSyncMessage,setRagSyncMessage]=useState("");
 
   useEffect(()=>{
     let active=true;
@@ -172,6 +174,35 @@ export default function Home(){
     if(value&&!streaming&&user){setInput("");void sendMessage(value);}
   };
   const disconnect=async()=>{await disconnectGoogle();setUser(null);};
+  const syncKnowledge=async()=>{
+    setRagSyncing(true);setRagSyncMessage("");
+    try{
+      const response=await fetch(`${API}/runs/rag/sync`,{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          Authorization:`Bearer ${getToken()??""}`,
+        },
+        body:JSON.stringify({
+          sources:["gmail","drive","calendar"],
+          max_items_per_source:25,
+          requeue_known_failures:true,
+        }),
+      });
+      const payload=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(
+        typeof payload?.detail==="string"?payload.detail:"Knowledge indexing failed",
+      );
+      setRagSyncMessage(
+        payload?.created===false
+          ?"Your existing private indexing job is still active."
+          :"Private source-aware indexing was queued and will continue if you leave this page.",
+      );
+      await refreshRun();
+    }catch(error){
+      setRagSyncMessage(error instanceof Error?error.message:"Knowledge indexing failed");
+    }finally{setRagSyncing(false);}
+  };
   const totalModelInput=(currentRun?.model_usage??[]).reduce(
     (total,item)=>total+item.input_tokens,0,
   );
@@ -189,6 +220,20 @@ export default function Home(){
   const ragReturned=ragRetrievals.reduce((sum,item)=>sum+item.returned_count,0);
   const ragUsed=ragRetrievals.reduce((sum,item)=>sum+item.used_count,0);
   const ragSources=[...new Set(ragRetrievals.flatMap(item=>item.source_types??[]))];
+  const ragMode=currentRun?.plan?.rag_mode??"none";
+  const ragStatus=ragMode==="none"
+    ?"not requested for this live/direct operation"
+    :ragRetrievals.length>0
+      ?`${ragMode} (${ragUsed}/${ragReturned} results used${ragSources.length?`; sources: ${ragSources.join(", ")}`:""})`
+      :currentRun?.rag_index_status?.ready
+        ?`${ragMode} (retrieval has not completed or recorded evidence)`
+        :`${ragMode} (this user has no ready indexed corpus)`;
+  const ragIndex=currentRun?.rag_index_status;
+  const privateIndexStatus=ragIndex?.ready
+    ?`${ragIndex.sources.reduce((sum,item)=>sum+item.embedded_chunks,0)} embedded chunks`
+    :ragIndex?.latest_sync
+      ?`sync ${ragIndex.latest_sync.status}`
+      :"not indexed";
 
   if(authLoading)return <main className="grid h-screen place-items-center">Checking your session…</main>;
   if(!user)return <main className="grid h-screen place-items-center bg-zinc-50 p-6 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
@@ -206,14 +251,16 @@ export default function Home(){
       <span className="flex items-center gap-2 text-sm">
         <a href="/history" className="rounded-lg border px-3 py-2">History</a>
         {user.admin&&<a href="/admin/improvements" className="rounded-lg border px-3 py-2">Improvements{pendingImprovements>0&&<span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">{pendingImprovements}</span>}</a>}
+        <button title="Explicitly index recent Gmail, Drive, and Calendar content for your private Knowledge RAG corpus" disabled={ragSyncing} onClick={()=>void syncKnowledge()} className="rounded-lg border px-3 py-2 disabled:opacity-50">{ragSyncing?"Indexing…":"Index my Workspace"}</button>
         <span>{user.email}</span>
         <button onClick={()=>void disconnect()} className="rounded-lg border px-3 py-2">Disconnect Google</button>
       </span>
     </header>
+    {ragSyncMessage&&<p className="border-b bg-blue-50 px-4 py-2 text-xs text-blue-900 dark:bg-blue-950 dark:text-blue-100">{ragSyncMessage}</p>}
     {currentRun&&<section className="border-b bg-white p-4 text-sm dark:bg-zinc-900">
       <div className="flex items-center justify-between"><strong>Run {currentRun.id.slice(0,8)} · {currentRun.status.replaceAll("_"," ")}</strong><span>{Math.round(currentRun.functional_completion)}%</span></div>
       <div className="mt-2 h-2 overflow-hidden rounded bg-zinc-200"><div className="h-full bg-blue-600" style={{width:`${currentRun.functional_completion}%`}}/></div>
-      <p className="mt-2 text-xs text-zinc-500">Phase: {currentRun.current_phase} · Services: {currentRun.plan?.services?.join(", ")||"general"} · Knowledge RAG: {currentRun.plan?.rag_mode||"none"}{ragRetrievals.length>0?` (${ragUsed}/${ragReturned} results used${ragSources.length?`; sources: ${ragSources.join(", ")}`:""})`:" (no indexed corpus retrieved)"} · Conversation context: {conversationContext?.prior_context_included?`${conversationContext.mode||"referential"} from ${contextSources.map(id=>id.slice(0,8)).join(", ")}`:"standalone"} · Deployment: {currentRun.deployment_version||"unknown"}</p>
+      <p className="mt-2 text-xs text-zinc-500">Phase: {currentRun.current_phase} · Services: {currentRun.plan?.services?.join(", ")||"general"} · Knowledge RAG: {ragStatus} · Private index: {privateIndexStatus} · Conversation context: {conversationContext?.prior_context_included?`${conversationContext.mode||"referential"} from ${contextSources.map(id=>id.slice(0,8)).join(", ")}`:"standalone"} · Deployment: {currentRun.deployment_version||"unknown"}</p>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><span>Technical {Math.round(currentRun.technical_completion)}%</span><span>Functional {Math.round(currentRun.functional_completion)}%</span><span>User-visible {Math.round(currentRun.user_visible_completion)}%</span><span>Side effects {Math.round(currentRun.side_effect_integrity)}%</span></div>
       <div className="mt-3 rounded-lg border p-3 text-xs">
         <p><strong>{TERMINAL_RUN_STATUSES.has(currentRun.status)?"Total time":"Elapsed time"}:</strong> {formatDuration(elapsedDuration(currentRun,clock))} · Recorded step time: {formatDuration(currentRun.active_duration_ms??0)}</p>

@@ -300,12 +300,39 @@ def _generic_verification(tool: str, args: dict, result: dict) -> tuple[bool, di
     if tool in {"send_gmail", "reply_gmail", "label_gmail", "trash_gmail"}:
         resource_id = _first(result, "id", "messageId") or args.get("message_id")
         value = google.gmail_service.users().messages().get(
-            userId="me", id=resource_id, format="minimal",
+            userId="me", id=resource_id,
+            format="full" if tool == "send_gmail" else "minimal",
         ).execute()
-        return value.get("id") == resource_id, {
+        checks = {
             "tool": tool, "message_id": _safe_id(resource_id),
             "id_match": value.get("id") == resource_id,
         }
+        if tool == "send_gmail":
+            from app.tools.registry import _gmail
+
+            observed = _gmail(value)
+            expected_recipient = str(args.get("to") or "").casefold()
+            observed_recipients = {
+                str(item).casefold() for item in observed.get("recipients", [])
+            }
+            checks.update({
+                "recipient_match": expected_recipient in observed_recipients,
+                "subject_match": observed.get("subject") == args.get("subject"),
+                "body_match": observed.get("body_plain") == args.get("body"),
+                "expected_recipient_hash": _hash(expected_recipient),
+                "observed_recipient_hashes": sorted(
+                    _hash(item) for item in observed_recipients
+                ),
+                "expected_subject_hash": _hash(args.get("subject")),
+                "observed_subject_hash": _hash(observed.get("subject")),
+                "expected_body_hash": _hash(args.get("body")),
+                "observed_body_hash": _hash(observed.get("body_plain")),
+            })
+        return all(
+            checks.get(key, True) for key in (
+                "id_match", "recipient_match", "subject_match", "body_match",
+            )
+        ), checks
     if tool in {"upload_drive_file", "move_drive_file", "trash_drive_file"}:
         resource_id = _first(result, "fileId") or args.get("file_id") or result.get("id")
         value = google.drive_service.files().get(

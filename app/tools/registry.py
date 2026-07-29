@@ -54,9 +54,12 @@ def _body(payload, mime="text/plain"):
 def _gmail(msg):
     h = _headers(msg)
     sender_name, sender = parseaddr(h.get("from", ""))
-    recipients = [address for _, address in getaddresses([
-        h.get("to", ""), h.get("cc", ""), h.get("bcc", "")
-    ]) if address]
+    recipient_headers = [
+        value for value in (h.get("to"), h.get("cc"), h.get("bcc")) if value
+    ]
+    recipients = [
+        address for _, address in getaddresses(recipient_headers) if address
+    ]
     try:
         received = parsedate_to_datetime(h.get("date", "")).isoformat()
     except (TypeError, ValueError):

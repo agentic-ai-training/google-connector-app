@@ -33,7 +33,7 @@ payload = {
                  "python scripts/run_context_packing_evals.py",
                  "python -m compileall -q app", "python -m flake8 app scripts tests migrations",
                  "bandit -q -r app scripts", "pip-audit -r requirements.txt",
-                 "alembic downgrade 012 && alembic upgrade 013",
+                 "alembic downgrade 012 && alembic upgrade head",
                  "docker build -f Dockerfile.worker .", "docker build -f Dockerfile.builder .",
                  "npm run lint && npm run build", "flutter analyze && flutter test",
                  "flutter build apk --debug"],

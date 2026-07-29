@@ -27,6 +27,7 @@ from app.runs.worker import (
     _reconcile_verified_failed_siblings,
     _remaining_unresolved_steps,
     _send_deterministic_chat_message,
+    _send_deterministic_gmail_copy,
     _verified_terminal_output,
     _verified_sheet_url,
 )
@@ -91,6 +92,94 @@ def test_chat_email_is_recipient_not_gmail_service_or_calendar_context():
         "destination": "achintyat256@gmail.com",
     }
     assert validate_plan(plan) == []
+
+
+def test_same_turn_gmail_copy_is_two_typed_steps_not_previous_context():
+    message = (
+        "fetch the last mail you sent to achintyat256@gmail.com, and send "
+        "the same mail to dhruvvtyagi1905@gmail.com"
+    )
+    analysis = analyze_request_statement(message)
+    plan, policy = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+
+    assert analysis.contextual_reference is False
+    assert policy["rag_mode"] == "none"
+    assert [
+        (step.id, step.operation, step.dependencies)
+        for step in plan.steps
+    ] == [
+        ("execute_gmail_search", "search", []),
+        ("execute_gmail_send", "send", ["execute_gmail_search"]),
+    ]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "query": "to:achintyat256@gmail.com in:sent",
+        "max_results": 1,
+    }
+    assert plan.steps[1].arguments["tool_arguments"] == {
+        "to": "dhruvvtyagi1905@gmail.com",
+    }
+    assert plan.steps[1].requires_approval is True
+    assert validate_plan(plan) == []
+
+
+@pytest.mark.asyncio
+async def test_gmail_copy_binds_dependency_subject_and_body_without_model(
+    monkeypatch,
+):
+    calls = []
+
+    class _Envelope:
+        compact_result = {"id": "sent-1"}
+
+        @staticmethod
+        def metadata():
+            return {"truncated": False}
+
+    async def execute(_tool, call, _state, _pool):
+        calls.append(call)
+        return None, {"id": "sent-1"}, _Envelope()
+
+    monkeypatch.setattr(
+        "app.runs.worker.get_toolsets",
+        lambda: {"gmail": [SimpleNamespace(name="send_gmail")]},
+    )
+    monkeypatch.setattr("app.runs.worker.execute_tool_call", execute)
+    result = await _send_deterministic_gmail_copy(
+        object(),
+        {"id": "run-1", "user_id": "user-1", "session_id": "session-1"},
+        {
+            "id": "step-2",
+            "input_data": {
+                "workflow_hints": {"copy_gmail_dependency": True},
+                "tool_arguments": {"to": "target@example.com"},
+            },
+        },
+        [{
+            "service": "gmail",
+            "output_data": {
+                "tool_executions": [{
+                    "tool": "get_gmail_message",
+                    "result": {
+                        "id": "source-1",
+                        "subject": "Exact subject",
+                        "body_excerpt": "Exact body",
+                    },
+                    "projection": {"truncated": False},
+                }],
+            },
+        }],
+    )
+
+    assert result["task_complete"] is True
+    assert calls[0]["name"] == "send_gmail"
+    assert calls[0]["args"] == {
+        "to": "target@example.com",
+        "subject": "Exact subject",
+        "body": "Exact body",
+    }
+    assert result["tool_executions"][0]["projection"]["lineage_bound"] is True
 
 
 def test_calendar_natural_language_is_normalized_with_india_alias():

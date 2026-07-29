@@ -501,6 +501,46 @@ async def get_run(pool, run_id, user_id):
                ORDER BY created_at""",
             run_id,
         )]
+        index_rows = await conn.fetch(
+            """SELECT source_type,count(*)::integer AS chunks,
+                      count(embedding)::integer AS embedded_chunks,
+                      array_agg(DISTINCT chunker_version ORDER BY chunker_version)
+                        AS chunker_versions
+               FROM rag_chunks
+               WHERE user_id=$1 AND deleted_at IS NULL
+               GROUP BY source_type ORDER BY source_type""",
+            user_id,
+        )
+        parent_count = await conn.fetchval(
+            """SELECT count(*) FROM rag_parent_sections
+               WHERE user_id=$1 AND deleted_at IS NULL""",
+            user_id,
+        )
+        pending_embeddings = await conn.fetchval(
+            """SELECT count(*) FROM embedding_jobs
+               WHERE user_id=$1 AND status IN ('queued','running','failed')""",
+            user_id,
+        )
+        dead_embeddings = await conn.fetchval(
+            """SELECT count(*) FROM embedding_jobs
+               WHERE user_id=$1 AND status='dead_letter'""",
+            user_id,
+        )
+        latest_sync = await conn.fetchrow(
+            """SELECT id,status,sources,max_items_per_source,result,error_message,
+                      created_at,started_at,completed_at
+               FROM rag_source_sync_jobs
+               WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1""",
+            user_id,
+        )
+        result["rag_index_status"] = {
+            "ready": bool(index_rows),
+            "sources": [dict(item) for item in index_rows],
+            "parent_sections": int(parent_count or 0),
+            "pending_embedding_jobs": int(pending_embeddings or 0),
+            "dead_letter_embedding_jobs": int(dead_embeddings or 0),
+            "latest_sync": dict(latest_sync) if latest_sync else None,
+        }
         result["recent_events"] = [dict(item) for item in await conn.fetch(
             """SELECT id,event_type,phase,message,payload,created_at
                FROM agent_run_events WHERE run_id=$1 ORDER BY id DESC LIMIT 25""",

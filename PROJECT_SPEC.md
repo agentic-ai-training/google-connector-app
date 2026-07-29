@@ -1996,3 +1996,22 @@ another verified dependency as exact typed content. It then uses the existing
 destination-resolution, approval, idempotency, verification, and no-blind-retry
 contract without another model planning call. Structured backend failures must be
 decoded into readable messages by clients and must never render as `[object Object]`.
+
+## Addendum — Same-service read/write lineage and consented RAG indexing
+
+The structured planner must allow multiple ordered operations for one service when the
+current request explicitly requires them. Copying an existing Gmail message is a
+read-then-write DAG, not one model-driven Gmail step: identify and fetch the exact
+source, carry its subject/body through an encrypted tenant-scoped reference, send to
+the requested recipient after the existing approval gate, and verify the new message
+ID, recipient, subject, and body. Current-request outputs use typed lineage; unrelated
+conversation context must not be loaded when the antecedent is inside the same request.
+
+User-content indexing requires an explicit authenticated action in addition to Google
+OAuth. It must queue a durable, leased, tenant-scoped source synchronization job and
+return without depending on the browser connection. The worker performs bounded
+Gmail/Drive/Calendar collection, source-aware chunking, versioned embedding, retries,
+and observable dead-letter handling. Google timestamps must be normalized before
+asyncpg writes. The UI must distinguish conversation context, knowledge-RAG decisions
+and retrieval evidence, and per-user index readiness; live operations correctly report
+knowledge RAG as not requested.

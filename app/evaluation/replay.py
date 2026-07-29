@@ -81,7 +81,12 @@ class SimulatedGoogleWorkspace:
             "deleted": operation in {"delete", "trash", "cancel"},
         }
         if service == "gmail":
-            artifact.update(message_id=external_id, recipient=arguments.get("recipient"))
+            artifact.update(
+                message_id=external_id,
+                recipient=arguments.get("recipient") or arguments.get("to"),
+                subject=arguments.get("subject"),
+                body=arguments.get("body"),
+            )
         elif service == "sheets":
             rows = arguments.get("rows", [])
             artifact.update(spreadsheetId=external_id, spreadsheetUrl=artifact["url"],

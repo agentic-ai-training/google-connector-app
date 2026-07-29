@@ -15,9 +15,14 @@ def evaluate_plan(plan, expected: dict[str, Any]) -> dict[str, float]:
     """Score independently observable plan qualities; do not hide trade-offs."""
     actual_services = list(plan.services)
     expected_services = list(expected.get("services", []))
-    expected_operations = list(expected.get("operations", []))
     actual_pairs = [(step.service, step.operation) for step in plan.steps]
-    expected_pairs = list(zip(expected_services, expected_operations))
+    expected_pairs = [
+        (item["service"], item["operation"])
+        for item in expected.get("steps", [])
+    ]
+    if not expected_pairs:
+        expected_operations = list(expected.get("operations", []))
+        expected_pairs = list(zip(expected_services, expected_operations))
     service_recall = (
         len(set(actual_services) & set(expected_services)) / max(1, len(set(expected_services)))
     )
