@@ -1409,19 +1409,45 @@ reached an asyncpg timestamp column.
   cancelling the whole RAG node after 20 seconds.
 - [x] Record requested versus effective retrieval mode, dense availability/error type,
   query-embedding duration, and dense/lexical candidate counts in run diagnostics.
-- [ ] Deploy migration, API/worker, and web changes; enqueue the consenting production
-  user's bounded backfill; verify source-aware chunks, retrieval evidence, exact-copy
-  completion, and actionable errors without duplicating the already-sent artifact.
+- [x] Deploy migration, API/worker, and web changes; enqueue the consenting production
+  user's bounded backfill; verify source-aware chunks and retrieval evidence in
+  production, and verify exact-copy completion/actionable errors with the no-network
+  replay suite without duplicating the already-sent artifact.
 
 Guardrails: OAuth access alone is not training/indexing consent; indexed content remains
 tenant-scoped. Knowledge RAG is not used to locate current Gmail state or execute writes.
 The source and destination messages are separate artifacts, and a failed write is never
 blindly retried.
 
-Local evidence on 2026-07-29: 229 unit tests and 36 PostgreSQL-backed integration
+Local evidence on 2026-07-29: 230 unit tests and 36 PostgreSQL-backed integration
 tests pass; planner goldens pass 36/36 and no-network workflow replays pass 15/15.
 Migration 014 downgrades to 013 and repairs forward to 014. Python compilation,
 Flake8, Bandit, and dependency audit pass; offline chunking/policy/context-packing/DP
 and dual-worker gates pass; Grafana dashboards and Compose validate; Next.js
 lint/build/audit pass; Flutter analyze/test/debug APK pass; and the API and worker
 Docker images build successfully.
+
+Production evidence on 2026-07-29:
+
+- Reliability changes were merged through PRs
+  [#99](https://github.com/agentic-ai-training/google-connector-app/pull/99),
+  [#100](https://github.com/agentic-ai-training/google-connector-app/pull/100),
+  [#101](https://github.com/agentic-ai-training/google-connector-app/pull/101),
+  [#102](https://github.com/agentic-ai-training/google-connector-app/pull/102), and
+  [#103](https://github.com/agentic-ai-training/google-connector-app/pull/103).
+- Migration 014, API, durable worker, and frontend were deployed. Deployment workflow
+  `30446030283` attested the exact immutable merge
+  `58ef28cf15ef46aa867ea0b618846eb9817a9f8a` on Railway API/worker and Vercel.
+- Consented sync job `c04f9d7a-e876-41ce-9708-636a2b3f470f` collected 25 Gmail,
+  11 Drive, and 4 Calendar records. All 42 embedding jobs completed (the total includes
+  two repaired and requeued timestamp dead letters), leaving zero pending, failed, or
+  dead jobs and 39 active source-aware chunks linked to 33 parent sections.
+- Read-only production run `289e873a-7cc9-4527-abb2-44a7e0f68789` completed in
+  22.174 seconds. Bounded dense embedding degraded explicitly to PostgreSQL keyword
+  retrieval, returned and used five tenant-owned Gmail/Drive chunks, produced a cited
+  evidence answer, created zero external artifacts, and executed a single
+  `llama-3.3-70b-versatile` call (2,064 input and 338 output tokens).
+- Exact-copy read/write lineage, recipient/subject/body verification, sanitized failure
+  evidence, and no-blind-retry behavior passed the integration and no-network replay
+  gates. No additional Gmail message was sent while verifying the already-completed
+  user workflow.
