@@ -1451,3 +1451,45 @@ Production evidence on 2026-07-29:
   evidence, and no-blind-retry behavior passed the integration and no-network replay
   gates. No additional Gmail message was sent while verifying the already-completed
   user workflow.
+
+## Sprint 47 — Deferred write authority and send-first Gmail copy regression
+
+Production runs `c42918b4` and `b952849a` exposed two remaining statement-analysis
+defects. A request to prepare content and wait for a later delivery command was
+incorrectly marked as current write authority and loaded an unrelated prior run. A
+self-contained “send the last mail you sent to A, send it to B” request also loaded
+that paragraph, collapsed to one Gmail search step, and accepted model refusal prose
+as a successful live read despite recording zero tool attempts.
+
+- [x] Treat “wait/hold until my next command or instruction” as deferred delivery:
+  compose now, grant no current external-write authority, require no write approval,
+  and do not load prior conversation output merely because the sentence contains `it`.
+- [x] Recognize latest/last sent-mail copying as a self-contained current-request
+  antecedent with two recipient roles even when natural verb order begins with `send`.
+- [x] Build the immutable typed Gmail `search -> send` DAG with source query
+  `to:<source> in:sent`, exact subject/body lineage, destination binding, high-risk
+  approval, and the existing read-after-write verification.
+- [x] Keep live Gmail state on live Google APIs; do not use conversation history or
+  knowledge RAG to locate the source message.
+- [x] Require actual allowlisted tool evidence for a live read. Reject provider/model
+  refusal prose and generic text as postcondition failures instead of allowing false
+  100% completion.
+- [x] Preserve tool-free composition and guarded informational answers; the live-tool
+  invariant applies only when the durable step declares non-empty `allowed_tools`.
+- [x] Add exact production wording to current-turn context, deferred authorization,
+  planner, postcondition, PostgreSQL persistence, golden-task, and workflow-replay
+  regression coverage.
+- [ ] Publish, deploy, and verify the immutable release without approving or executing
+  a real Gmail-copy run; production verification must stop at approval/cancellation.
+
+Guardrails: the current statement alone grants a new external write. Pronouns first
+resolve against explicit resources in that statement; only unresolved references may
+load one bounded same-session prior result. A live-operation step cannot complete from
+model prose without provider tool evidence.
+
+Local evidence on 2026-07-29: 235 unit tests and 37 PostgreSQL-backed integration
+tests pass; planner goldens pass 38/38 and no-network workflow replays pass 16/16.
+Python compilation, Flake8, Bandit, and dependency audit pass; offline
+chunking/policy/context-packing/DP and dual-worker gates pass; Grafana dashboards
+validate; Next.js lint/build and the critical-severity audit gate pass; Flutter
+analyze/test/debug APK pass.

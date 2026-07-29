@@ -28,6 +28,7 @@ from app.runs.worker import (
     _remaining_unresolved_steps,
     _send_deterministic_chat_message,
     _send_deterministic_gmail_copy,
+    verify_step,
     _verified_terminal_output,
     _verified_sheet_url,
 )
@@ -122,6 +123,79 @@ def test_same_turn_gmail_copy_is_two_typed_steps_not_previous_context():
     }
     assert plan.steps[1].requires_approval is True
     assert validate_plan(plan) == []
+
+
+def test_send_last_sent_mail_verb_order_still_builds_typed_copy_dag():
+    message = (
+        "send the last mail you sent to achintyat256@gmail.com, send it to , "
+        "dhruvtyagi19@gmail.com"
+    )
+    analysis = analyze_request_statement(message)
+    plan, policy = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+
+    assert analysis.gmail_copy_requested is True
+    assert analysis.contextual_reference is False
+    assert policy["rag_mode"] == "none"
+    assert [
+        (step.id, step.operation, step.dependencies)
+        for step in plan.steps
+    ] == [
+        ("execute_gmail_search", "search", []),
+        ("execute_gmail_send", "send", ["execute_gmail_search"]),
+    ]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "query": "to:achintyat256@gmail.com in:sent",
+        "max_results": 1,
+    }
+    assert plan.steps[1].arguments["tool_arguments"] == {
+        "to": "dhruvtyagi19@gmail.com",
+    }
+    assert plan.steps[0].arguments["workflow_hints"]["copy_gmail_dependency"] is True
+    assert plan.steps[1].arguments["workflow_hints"]["copy_gmail_dependency"] is True
+    assert validate_plan(plan) == []
+
+
+def test_live_read_refusal_without_tool_evidence_fails_postcondition():
+    step = {
+        "read_only": True,
+        "input_data": {
+            "allowed_tools": ["search_gmail", "get_gmail_message"],
+        },
+    }
+    verified, evidence, artifacts = verify_step(step, {
+        "task_complete": True,
+        "output": "I'm sorry, but I can't fulfill that request.",
+        "tool_results": [],
+    })
+
+    assert verified is False
+    assert "refusal" in evidence
+    assert artifacts == []
+
+
+def test_live_read_requires_tool_evidence_but_composition_does_not():
+    live_verified, evidence, _ = verify_step({
+        "read_only": True,
+        "input_data": {"allowed_tools": ["search_gmail"]},
+    }, {
+        "task_complete": True,
+        "output": "Here is the result.",
+        "tool_results": [],
+    })
+    composition_verified, _, _ = verify_step({
+        "read_only": True,
+        "input_data": {"allowed_tools": []},
+    }, {
+        "task_complete": True,
+        "output": "A complete composed paragraph with no Google API claim.",
+        "tool_results": [],
+    })
+
+    assert live_verified is False
+    assert "without calling an allowed tool" in evidence
+    assert composition_verified is True
 
 
 @pytest.mark.asyncio

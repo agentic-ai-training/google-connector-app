@@ -226,6 +226,19 @@ send the same message” resolves inside the current DAG and does not load an un
 prior assistant answer. “Send the paragraph above” may load a bounded exact prior
 assistant result. Neither mechanism is knowledge RAG.
 
+Pronoun resolution first checks the current request. Wording such as “send the last
+mail you sent to A, send it to B” binds `it` to the explicitly selected Gmail message
+even though `send` appears before the source selector; it still produces a typed
+read-before-write DAG. Conversely, “prepare this and wait until my next command on
+where to send it” authorizes composition only. The later write requires a new current
+turn and its normal approval.
+
+A durable read that declares allowlisted Google tools cannot be verified from prose
+alone. At least one tool result/execution must exist, and refusal text is a
+postcondition failure rather than a successful answer. Tool-free composition and
+trusted product-information steps remain valid because their plans deliberately carry
+an empty tool allowlist.
+
 Knowledge RAG is opt-in per user and is never implied by OAuth consent. The authenticated
 index action creates a durable `rag_source_sync_jobs` record and returns immediately.
 A leased worker reads a bounded set of that user's Gmail, Drive, and Calendar resources,

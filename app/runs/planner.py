@@ -425,6 +425,22 @@ def classify_request(
         intent_message, services,
     )
     if (
+        statement.composition_requested
+        and statement.deferred_external_write
+        and intent_kind in {"ambiguous", "out_of_scope"}
+    ):
+        # "Draft this now and wait for my next delivery instruction" authorizes
+        # composition, not the later external write. Keep the prepared content
+        # available as a completed composition run without inventing a service.
+        intent_kind = "workspace_action"
+        intent_evidence = {
+            **intent_evidence,
+            "product_intent": None,
+            "basis": "structured deferred-delivery composition",
+            "confidence": "high",
+            "ambiguous": False,
+        }
+    if (
         statement.current_authorizes_external_write
         and authority_services
         and intent_kind in {"ambiguous", "out_of_scope"}
@@ -605,6 +621,12 @@ def build_plan(
             policy["write"],
             allow_same_service_expansion=len(services) == 1,
         )
+        # Exact Gmail copying is a typed read→write workflow even when natural
+        # wording mentions "send" before "last mail" (for example, "send the
+        # last mail you sent to A, send it to B"). Textual verb order must not
+        # collapse that request into one search or one send step.
+        if service == "gmail" and statement.gmail_copy_requested:
+            operations = ["search", "send"]
         previous_same_service = None
         for operation_index, operation in enumerate(operations):
             step_id = (
@@ -674,10 +696,13 @@ def build_plan(
                 service == "gmail"
                 and operations == ["search", "send"]
                 and len(statement.email_recipients) >= 2
-                and bool(re.search(
-                    r"\b(?:same|copy|forward)\s+(?:mail|email|message)\b",
-                    statement.normalized_text,
-                ))
+                and (
+                    statement.gmail_copy_requested
+                    or bool(re.search(
+                        r"\b(?:same|copy|forward)\s+(?:mail|email|message)\b",
+                        statement.normalized_text,
+                    ))
+                )
             )
             if gmail_copy and operation == "search":
                 exact_tool_arguments = {
