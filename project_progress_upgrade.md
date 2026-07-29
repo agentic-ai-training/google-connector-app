@@ -1571,7 +1571,7 @@ completion allowance without producing visible content.
 - [x] Persist content lineage containing source run/step, artifact kind, languages,
   future-artifact state, and SHA-256 content hash.
 - [x] Verify composition from the persisted content contract.
-- [ ] Deploy and prove the release with safe tool-free and clarification-only requests.
+- [x] Deploy and prove the release with safe tool-free and clarification-only requests.
 
 Guardrails: deterministic execution is selected from typed completeness and risk, not
 from a growing phrase table. Deterministic failure after an external attempt never falls
@@ -1637,3 +1637,29 @@ downgrades to 002 and repairs forward to 014. Grafana dashboards, GitHub workflo
 YAML, Docker Compose, and secret-history guardrails pass. Next.js lint/build and the
 production critical audit pass. Flutter analyze/test/debug APK pass. API, worker,
 candidate API, and candidate-builder Docker images build successfully.
+
+Production evidence on 2026-07-30:
+
+- PR [#109](https://github.com/agentic-ai-training/google-connector-app/pull/109)
+  passed both CI and governed-candidate validation, then merged as immutable commit
+  `04d3fcd0476592e4de9d9bb2bb7a4cfd9864e8c7`. Deployment workflow
+  [30495920194](https://github.com/agentic-ai-training/google-connector-app/actions/runs/30495920194)
+  deployed and attested that exact API, worker, and frontend version.
+- Tool-free production run `ca2d687b-7435-4ff7-8dc7-e61e1dcbdd3e` completed
+  deterministically with the bounded-writing capability catalog, no model call, and
+  no external artifact.
+- The first multilingual proof exposed an equivalent translation-grammar form before
+  any external action. PR
+  [#110](https://github.com/agentic-ai-training/google-connector-app/pull/110)
+  generalized quantifier/word/translation-stem order, passed both hosted suites, and
+  deployed through attested workflow
+  [30496553978](https://github.com/agentic-ai-training/google-connector-app/actions/runs/30496553978)
+  as `564c1bd5b9bbd355ecdfa53e04a14860a18e4cbc`.
+- Final production run `d91c528a-5428-47cf-b3ce-39019b372959` stopped at
+  `awaiting_clarification`, asked separately for passage layout and gloss language,
+  and recorded zero model calls and zero external artifacts.
+- The revised session dashboard is version-controlled and validated, but Grafana Cloud
+  publication is pending because `GRAFANA_SERVICE_ACCOUNT_TOKEN` is absent from both
+  the local untracked vault and the linked Railway service. This does not affect
+  runtime OKF evidence, which is already returned by the API and rendered by the
+  deployed frontend.
