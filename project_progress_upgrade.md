@@ -1545,3 +1545,95 @@ workflow
 [30451036207](https://github.com/agentic-ai-training/google-connector-app/actions/runs/30451036207)
 deployed and attested that exact version on the Railway API/worker and Vercel
 frontend. Production verification performed no Gmail write.
+
+## Sprint 49 — Dynamic content contracts and semantic lineage
+
+Production incidents `7c75e091` and `263ca2fb` exposed two systemic boundaries rather
+than two phrases to hard-code. A request for a future conversation was resolved to an
+old paragraph, and a many-language word-gloss request exhausted a fixed reasoning-model
+completion allowance without producing visible content.
+
+- [x] Analyze every current statement into a provider-independent content contract:
+  artifact kind, interaction mode, languages, translation granularity, minimum visible
+  content, complexity, output allowance, deferred delivery, future-artifact state, and
+  required clarifications.
+- [x] Permit bounded creation/transformation tasks without requiring an immediate
+  Workspace mutation, while keeping unrestricted factual/open-domain chat out of scope.
+- [x] Detect content that does not exist yet. Never resolve it to an older session
+  result; clarify whether to generate a sample now or capture a later real interaction.
+- [x] Normalize language aliases as vocabulary and preserve request order.
+- [x] Clarify combinatorially large or ambiguous word-gloss requests before spending
+  model quota.
+- [x] Route composition from structured complexity rather than topic words such as
+  `plan`; use a content-specific visible-output budget.
+- [x] If a tool-free composition returns no visible content, retry exactly once through
+  the approved quality route. Never use this fallback after an external tool attempt.
+- [x] Persist content lineage containing source run/step, artifact kind, languages,
+  future-artifact state, and SHA-256 content hash.
+- [x] Verify composition from the persisted content contract.
+- [ ] Deploy and prove the release with safe tool-free and clarification-only requests.
+
+Guardrails: deterministic execution is selected from typed completeness and risk, not
+from a growing phrase table. Deterministic failure after an external attempt never falls
+through to an LLM. Delivery consumes only a compatible completed artifact or explicit
+bounded prior reference.
+
+## Sprint 50 — Compiler-style candidate builder and trusted CI remediation
+
+Whole-file generation, broad reads, and repeated provider turns consumed large token
+budgets while still producing incomplete candidates. The target is a two-plane coding
+system, not an unrestricted shell attached to the Groq key.
+
+- [x] Add bounded Python symbol indexing/reads, reference lookup, and
+  implementation/test-neighborhood discovery.
+- [x] Add bounded in-memory line-range patching so one symbol can change without
+  re-emitting an entire source file.
+- [x] Retain whole-file staging for new files/refactors, structural validation, and
+  manifest/diff inspection.
+- [x] Activate `bounded-repo-tools-v10-symbol-patch-sandbox`.
+- [x] Keep generation free of shell, network, production data, OAuth, deployment
+  credentials, and executable candidate code.
+- [x] Keep test execution in trusted CI with no Groq key or production credentials.
+- [x] Capture backend/web/mobile failure logs, reduce them to bounded diagnostics, and
+  redact identities and secret-like assignments.
+- [x] Submit hash-bound trusted failure evidence to a dedicated endpoint.
+- [x] Clone the immutable failed candidate into one governed remediation build, preserve
+  its files, attach sanitized CI evidence, and require fresh independent review.
+- [x] Deduplicate remediation per source build and preserve failed history.
+- [x] Put a high-contrast `Required human actions` ledger directly below the builder for
+  retries, PR publication, canary approval/activation, and promotion.
+- [ ] Exercise the complete hosted fail-remediate-pass-canary lifecycle with a real
+  candidate and its human gates.
+
+Guardrails: trusted CI failure may create another untrusted draft, never an approval or
+deployment. Arbitrary generated code cannot be guaranteed to pass; bounded tools,
+validation, CI feedback, retry ceilings, and human gates prevent unsafe claims and loops.
+
+## Sprint 51 — Operational OKF selection and evidence
+
+OKF already loads at API/worker startup, is version-pinned per run, and is supplied to
+the guarded agent. Its previous raw-query lexical lookup was insufficient.
+
+- [x] Select operational knowledge from structured service, operation, risk, read/write,
+  tool, and content-kind tags in addition to lexical relevance.
+- [x] Prefer tag-compatible documents before lexical-only matches.
+- [x] Persist selected document IDs, versions, query hash, structured tags, and
+  selection-policy version as durable evidence.
+- [x] Keep OKF separate from tenant RAG and live Google state.
+- [x] Keep executable schemas, tool allowlists, approvals, OAuth, idempotency, and
+  verifier postconditions in code; OKF cannot weaken them.
+- [x] Add selected OKF IDs/version/reason to run detail and Grafana session views.
+- [ ] Measure structured selection against lexical-only lookup before canary promotion.
+
+Practical role: OKF is the versioned, human-readable operational knowledge plane for
+capabilities, workflows, policies, runbooks, recovery guidance, and candidate context.
+It is not a replacement for PostgreSQL, pgvector, Google APIs, or hard enforcement.
+
+Local evidence on 2026-07-30: 242 unit tests and 37 PostgreSQL-backed integration
+tests pass; planner goldens, source-aware chunking evaluation, 16/16 no-network
+workflow replays, policy/context-packing/DP evaluation, and dual-worker isolation
+pass. Python compilation, Flake8, Bandit, and dependency audit pass. Migration 014
+downgrades to 002 and repairs forward to 014. Grafana dashboards, GitHub workflow
+YAML, Docker Compose, and secret-history guardrails pass. Next.js lint/build and the
+production critical audit pass. Flutter analyze/test/debug APK pass. API, worker,
+candidate API, and candidate-builder Docker images build successfully.

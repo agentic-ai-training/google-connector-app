@@ -2015,3 +2015,31 @@ and observable dead-letter handling. Google timestamps must be normalized before
 asyncpg writes. The UI must distinguish conversation context, knowledge-RAG decisions
 and retrieval evidence, and per-user index readiness; live operations correctly report
 knowledge RAG as not requested.
+
+## Addendum — Dynamic content and governed coding automation
+
+Creation/transformation requests must use a typed content contract before model routing.
+It describes kind, interaction mode, languages, translation granularity, complexity,
+visible output budget, minimum format, deferred delivery, future-artifact state, and
+clarifications. Bounded non-Workspace writing is supported without turning the product
+into an unrestricted factual chatbot. A future artifact cannot resolve to old output.
+Completed content carries hash-bound lineage into an approved delivery step.
+
+Candidate generation uses low-token compiler-style repository operations wherever
+possible: symbol index/read, reference lookup, test-neighborhood lookup, bounded patches,
+structural validation, diff, and manifest. The model-facing process receives no terminal,
+network, production credentials, Google content, or execution authority. Trusted
+no-secret CI executes the frozen candidate. On failure it may return only bounded,
+redacted diagnostics and automatically queue one independently reviewed remediation
+draft. Human approval remains mandatory before GitHub publication, production-connected
+deployment, real-user canary activation, trusted OKF publication, and promotion.
+
+Every actionable approval or retry is highlighted directly below the candidate-builder
+ledger. Passive history and external waiting states are visually separate.
+
+OKF is a practical production operational-knowledge layer. Every run pins a trusted
+bundle. Model-assisted execution retrieves versioned workflows, policies, capabilities,
+and runbooks using structured service/operation/risk/tool/content tags plus lexical
+relevance and records selection evidence. Hard schemas, tool ceilings, approval, OAuth,
+idempotency, and postcondition verification remain executable code and cannot be
+overridden by OKF text.

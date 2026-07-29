@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,6 +12,7 @@ from app.db.prompt_service import (
 from app.runs.schemas import (
     ImprovementCandidateRegistration,
     CandidateValidationAttestation,
+    CandidateValidationFailure,
     CandidateDeploymentAttestation,
     ProductionDeploymentAttestation,
     CandidateBuildCheckpoint, CandidateBuildDraft,
@@ -67,6 +69,20 @@ class FailureIncidentDecisionIn(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 class CandidateBuildNewAttemptIn(BaseModel):
     confirmation: str
+
+
+def _sanitize_ci_diagnostic(value: str) -> str:
+    """Keep compiler/test location evidence while removing identity and secrets."""
+    text = str(value or "")[:600]
+    text = re.sub(
+        r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}",
+        "[redacted-email]", text, flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|token|password|secret)\b\s*[:=]\s*\S+",
+        r"\1=[redacted]", text,
+    )
+    return text
 
 
 def _json_object(value) -> dict:
@@ -514,6 +530,126 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
         "retry_reason": retry_decision.reason_code,
         "resume_point": retry_decision.resume_point,
         "retry_after_seconds": retry_after_seconds, "retry_count": retry_count,
+    }
+
+
+@router.post("/candidate-builds/{build_id}/validation-failure")
+async def remediate_candidate_validation_failure(
+    build_id: str, body: CandidateValidationFailure,
+):
+    """Create one bounded remediation attempt from trusted, sanitized CI evidence."""
+    settings = get_settings()
+    pool = await get_pool()
+    diagnostics = [
+        _sanitize_ci_diagnostic(value)
+        for value in body.diagnostics
+        if str(value).strip()
+    ][:30]
+    async with pool.acquire() as conn, conn.transaction():
+        source = await conn.fetchrow(
+            """SELECT b.*,p.proposal_key
+                 FROM candidate_builds b
+                 JOIN improvement_proposals p ON p.id=b.proposal_id
+                WHERE b.id=$1 FOR UPDATE""",
+            build_id,
+        )
+        if not source:
+            raise HTTPException(404, "Candidate build not found")
+        if source["status"] not in {"drafted", "validating"}:
+            raise HTTPException(
+                409, "Only a frozen candidate awaiting CI may be remediated",
+            )
+        existing = await conn.fetchval(
+            """SELECT id FROM candidate_builds
+                WHERE sanitized_input->'trusted_ci_feedback'->>'source_build_id'=$1
+                  AND status IN ('queued','investigating','drafted','validating',
+                                 'validated')
+                ORDER BY created_at DESC LIMIT 1""",
+            build_id,
+        )
+        if existing:
+            return {
+                "source_build_id": build_id,
+                "build_id": str(existing),
+                "status": "already_queued",
+            }
+        files = await conn.fetch(
+            """SELECT path,change_type,preimage_hash,result_hash,content
+                 FROM candidate_build_files WHERE build_id=$1 ORDER BY path""",
+            build_id,
+        )
+        if not files:
+            raise HTTPException(409, "Frozen candidate files are unavailable")
+        sanitized_input = _json_object(source["sanitized_input"])
+        sanitized_input["trusted_ci_feedback"] = {
+            "source_build_id": build_id,
+            "source_commit": body.commit_sha,
+            "repository": body.repository,
+            "workflow": body.workflow,
+            "run_id": body.run_id,
+            "failed_jobs": body.failed_jobs,
+            "diagnostic_codes": body.diagnostic_codes,
+            "diagnostics": diagnostics,
+            "log_digest": body.log_digest,
+            "contains_raw_user_content": False,
+        }
+        new_id = await conn.fetchval(
+            """INSERT INTO candidate_builds
+               (proposal_id,selected_option,mode,base_commit,model_name,
+                model_policy_version,tool_policy_version,token_budget,
+                sanitized_input,checkpoint,created_by)
+               VALUES($1,$2,'multi_role',$3,$4,$5,$6,$7,$8::jsonb,
+                      $9::jsonb,'trusted-ci-remediation')
+               RETURNING id""",
+            source["proposal_id"], source["selected_option"],
+            source["base_commit"], settings.candidate_builder_model,
+            MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
+            settings.candidate_builder_job_token_budget,
+            json.dumps(sanitized_input),
+            json.dumps({
+                "ci_remediation_source_build_id": build_id,
+                "contains_private_evidence": False,
+            }),
+        )
+        for item in files:
+            await conn.execute(
+                """INSERT INTO candidate_build_files
+                   (build_id,path,change_type,preimage_hash,result_hash,content)
+                   VALUES($1,$2,$3,$4,$5,$6)""",
+                new_id, item["path"], item["change_type"],
+                item["preimage_hash"], item["result_hash"], item["content"],
+            )
+        await conn.execute(
+            """UPDATE candidate_builds
+                  SET status='failed',error_message='trusted_ci_validation_failed',
+                      completed_at=now(),updated_at=now()
+                WHERE id=$1""",
+            build_id,
+        )
+        payload = json.dumps({
+            "source_build_id": build_id,
+            "remediation_build_id": str(new_id),
+            "diagnostic_codes": body.diagnostic_codes,
+            "failed_jobs": body.failed_jobs,
+            "contains_private_evidence": False,
+        })
+        await conn.execute(
+            """INSERT INTO improvement_notifications
+               (proposal_id,channel,event_type,status,sanitized_payload)
+               VALUES($1,'admin','candidate_ci_remediation_queued','sent',$2::jsonb),
+                     ($1,'grafana','candidate_ci_remediation_queued','sent',$2::jsonb)""",
+            source["proposal_id"], payload,
+        )
+    try:
+        from app.improvements.publisher import dispatch_candidate_builder
+        dispatch = await dispatch_candidate_builder(str(new_id))
+    except Exception as exc:
+        dispatch = {"status": "not_dispatched", "reason": type(exc).__name__}
+    return {
+        "source_build_id": build_id,
+        "build_id": str(new_id),
+        "status": "queued",
+        "dispatch": dispatch,
     }
 
 

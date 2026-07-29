@@ -386,3 +386,47 @@ async def test_composition_node_is_tool_free_and_returns_finished_content(monkey
     assert result["output"] == "Finished application"
     assert result["tool_executions"] == []
     assert result["task_complete"] is True
+
+
+def test_standalone_bounded_composition_is_supported_without_workspace_mutation():
+    request = "Write a short paragraph explaining how to create a LangChain tool"
+    analysis = analyze_request_statement(request)
+    plan, policy = build_plan(request, request_analysis=analysis)
+
+    assert policy["intent_kind"] == "workspace_action"
+    assert policy["services"] == ["composition"]
+    assert policy["write"] is False
+    assert plan.steps[0].arguments["content_contract"]["kind"] == "paragraph"
+
+
+def test_prospective_conversation_is_not_resolved_to_stale_prior_content():
+    request = (
+        "Have a conversation with me in Russian, then copy it and send the "
+        "conversation to alex@example.com on chat"
+    )
+    analysis = analyze_request_statement(request)
+    plan, policy = build_plan(request, request_analysis=analysis)
+
+    assert analysis.contextual_reference is False
+    assert analysis.content_contract["prospective_artifact"] is True
+    assert policy["required_clarifications"]
+    assert "generate a sample now" in policy["required_clarifications"][0]
+    assert [step.service for step in plan.steps] == ["composition", "chat"]
+
+
+def test_oversized_multilingual_word_gloss_is_clarified_before_model_call():
+    request = (
+        "Write a combined paragraph in Cantonese, Japanese, Korean, Hebrew, "
+        "Russian, Slovakian, Egyptian, Somalian, Pashto, Arabic, Spanish and "
+        "French with every word translation"
+    )
+    plan, policy = build_plan(request)
+
+    contract = policy["content_contract"]
+    assert contract["complexity"] == "high"
+    assert contract["languages"] == [
+        "Cantonese", "Japanese", "Korean", "Hebrew", "Russian", "Slovak",
+        "Egyptian Arabic", "Somali", "Pashto", "Arabic", "Spanish", "French",
+    ]
+    assert contract["visible_output_budget"] == 4000
+    assert len(plan.required_clarifications) == 2

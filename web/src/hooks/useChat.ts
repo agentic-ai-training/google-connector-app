@@ -16,6 +16,15 @@ export type RagRetrieval={
   mode:string;reason?:string;returned_count:number;used_count:number;
   duration_ms?:number;source_types?:string[];
 };
+export type OkfRetrieval={
+  document_ids:string[];okf_versions:string[];duration_ms?:number;
+};
+export type OkfSelectionEvent={
+  payload?:{
+    document_ids?:string[];operational_tags?:string[];
+    selection_policy?:string;
+  };
+};
 export type RagIndexStatus={
   ready:boolean;parent_sections:number;pending_embedding_jobs:number;
   dead_letter_embedding_jobs:number;
@@ -40,6 +49,7 @@ export type AgentRun={
   elapsed_duration_ms?:number;active_duration_ms?:number;
   model_call_count?:number;model_usage?:ModelUsage[];
   planning_diagnostics?:PlanningDiagnostics;rag_retrievals?:RagRetrieval[];
+  okf_retrievals?:OkfRetrieval[];okf_selection_events?:OkfSelectionEvent[];
   rag_index_status?:RagIndexStatus;
   error_category?:string;deployment_version?:string;
   result?:{output?:string};incident_summary?:{breaking_point?:string;primary_cause?:string;error?:string};

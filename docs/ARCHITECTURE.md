@@ -12,8 +12,10 @@
    nouns inside that output cannot introduce Calendar, Meet, Chat, Gmail, or other
    steps.
 3. A guarded router separates Workspace actions, Workspace-scoped product questions,
-   and bounded composition (drafts, applications, essays, roadmaps, summaries, and
-   pointers intended for a Workspace artifact). It does not provide open-domain chat.
+   and bounded creation/transformation (drafts, applications, essays, roadmaps,
+   translations, conversations, summaries, and pointers). Bounded composition may
+   finish before the user chooses a Workspace destination; unrestricted factual
+   open-domain chat remains outside the product boundary.
 4. `POST /runs` creates a tenant-scoped, idempotent run and a validated service DAG.
 5. Materially missing time, timezone, duration, or Chat destination pauses in
    `awaiting_clarification`.
@@ -34,7 +36,9 @@ but it rejects high-risk mutations so those must use the approved durable path.
 - Live Google APIs are authoritative for current state and mutations.
 - User Google content is untrusted tenant evidence in `rag_chunks`, scoped by user ID.
 - The OKF Markdown bundle is trusted operational knowledge. It is loaded, validated,
-  versioned, retrieved, and cited separately from user RAG.
+  versioned, retrieved, and cited separately from user RAG. Selection combines lexical
+  relevance with structured service, operation, risk, read/write, tool, and content-kind
+  tags, and records selected IDs, versions, and policy evidence.
 - RAG is gated per request. Live/latest Google operations bypass it. When historical
   semantic evidence is needed, source-aware ingestion preserves Gmail thread metadata,
   document heading parents, Sheet row/header structure, Chat threads, Calendar/Meet
@@ -59,10 +63,18 @@ offers exactly two reviewable strategies. A selection queues a Groq-built untrus
 candidate—it does not itself change runtime behavior.
 
 The builder receives bounded repository tools and sanitized evidence, but no Workspace
-content, OAuth token, production database, or deployment credential. Trusted CI must bind
+content, OAuth token, production database, or deployment credential. Its compiler-style
+surface includes symbol indexing/reads, reference and test-neighborhood lookup, bounded
+line patches, whole-file staging, diff/manifest inspection, and structural validation.
+It never receives an arbitrary terminal. Trusted CI must bind
 the resulting files, commit, tree, hashes, validation commands, rollback manifest, and
 privacy/security results. Human gates remain separate for draft PR publication, candidate
 deployment, real-user canary activation, trusted OKF publication, and promotion.
+
+When trusted CI fails, backend/web/mobile logs are collected in the no-secret runner,
+reduced to bounded diagnostics, and redacted before they cross into generation. One
+deduplicated remediation build starts from the frozen files, applies the diagnostics,
+and undergoes fresh independent review. It still cannot publish or deploy itself.
 
 Worker-compatible code candidates run in a separate Railway project and claim only runs
 pinned to their immutable executor version. API/planner candidates use the same isolated
@@ -168,10 +180,34 @@ authority, terminal policy codes, and absence of a commit/deployment. A valid re
 checkpoint resumes at its persisted round with frozen author files.
 
 The active candidate policies are `adaptive-roles-v3-model-chain-evidence` and
-`bounded-repo-tools-v9-runtime-adoption-gate`. The portal reports the configured primary
+`bounded-repo-tools-v10-symbol-patch-sandbox`. The portal reports the configured primary
 and every actually used Groq-hosted fallback. Finalization rejects files whose declared
 create/replace/delete operation disagrees with the base tree and rejects new modules
 that are not adopted by an existing runtime path.
+
+The portal places every current human gate directly below the candidate ledger. A single
+highlighted list covers retries, draft-PR publication, isolated-canary deployment,
+traffic activation, and promotion.
+
+## Dynamic content planning
+
+Every statement is projected into `content-contract-v1` when it requests creation or
+transformation:
+
+```text
+kind + mode + languages + translation granularity
+minimum visible content + complexity + visible token allowance
+future-artifact state + deferred-delivery state + clarifications
+```
+
+The planner uses this structure rather than treating topic words such as `plan` as proof
+that a reasoning model is required. Ambiguous combinatorial content pauses for the
+smallest material clarification. A tool-free composition can retry once when a provider
+returns no visible content; an external operation never inherits that retry authority.
+
+Successful composition emits `content-lineage-v1` with source run/step, kind, languages,
+future-artifact state, and content hash. A future conversation is not a completed
+artifact, so “have a conversation, then copy it” cannot select an older paragraph.
 ## Durable hybrid execution
 
 Every durable step passes through one execution boundary. The worker first checks

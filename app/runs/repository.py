@@ -501,6 +501,19 @@ async def get_run(pool, run_id, user_id):
                ORDER BY created_at""",
             run_id,
         )]
+        result["okf_retrievals"] = [dict(item) for item in await conn.fetch(
+            """SELECT document_ids,okf_versions,duration_ms,created_at
+                 FROM okf_retrieval_events
+                WHERE run_id=$1 ORDER BY created_at""",
+            run_id,
+        )]
+        result["okf_selection_events"] = [dict(item) for item in await conn.fetch(
+            """SELECT payload,created_at
+                 FROM agent_run_events
+                WHERE run_id=$1 AND event_type='okf_context_selected'
+                ORDER BY id""",
+            run_id,
+        )]
         index_rows = await conn.fetch(
             """SELECT source_type,count(*)::integer AS chunks,
                       count(embedding)::integer AS embedded_chunks,

@@ -2858,6 +2858,49 @@ def test_candidate_builder_tools_are_read_bounded_and_stage_only_in_memory(tmp_p
     assert "+VALUE = 2" in tools.execute("inspect_candidate_diff", {})["diff"]
 
 
+def test_candidate_builder_symbol_and_line_patch_tools_reduce_whole_file_output(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "tests").mkdir()
+    source = tmp_path / "app" / "example.py"
+    source.write_text(
+        "def unchanged():\n"
+        "    return 1\n\n"
+        "def target(value):\n"
+        "    return value + 1\n"
+    )
+    (tmp_path / "tests" / "test_example.py").write_text(
+        "from app.example import target\n\n"
+        "def test_target():\n"
+        "    assert target(1) == 2\n"
+    )
+    tools = BoundedRepositoryTools(tmp_path, max_calls=20)
+
+    symbols = tools.execute("index_repository_symbols", {
+        "paths": ["app/"], "query": "target",
+    })
+    assert symbols["symbols"][0]["start_line"] == 4
+    assert "return value + 1" in tools.execute("read_repository_symbol", {
+        "path": "app/example.py", "symbol": "target",
+    })["content"]
+    neighborhood = tools.execute("inspect_test_neighborhood", {
+        "query": "target",
+    })
+    assert {item["surface"] for item in neighborhood["matches"]} == {
+        "implementation", "test",
+    }
+    patched = tools.execute("apply_candidate_patch", {
+        "path": "app/example.py",
+        "start_line": 5,
+        "end_line": 5,
+        "replacement": "    return value + 2",
+    })
+
+    assert patched["replacement_lines"] == 1
+    assert source.read_text().endswith("return value + 1\n")
+    assert "+    return value + 2" in tools.diff()["diff"]
+    assert tools.validate_staged()["valid"] is True
+
+
 def test_candidate_builder_change_type_must_match_base_tree(tmp_path):
     (tmp_path / "app").mkdir()
     existing = tmp_path / "app" / "existing.py"

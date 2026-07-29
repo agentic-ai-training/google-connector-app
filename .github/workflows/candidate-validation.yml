@@ -9,6 +9,7 @@ on:
       - 'knowledge/**'
       - 'config/**'
       - 'docs/**'
+      - 'monitoring/**'
       - 'web/**'
       - 'mobile/**'
 
@@ -31,6 +32,7 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@v5
+      - run: : > candidate-tests.log
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt bandit pip-audit
@@ -41,25 +43,30 @@ jobs:
           DATABASE_URL: postgresql://agent_user:agent_pass_2024@localhost:5432/agent_db
           ASYNC_DATABASE_URL: postgresql+asyncpg://agent_user:agent_pass_2024@localhost:5432/agent_db
         run: |
-          python -m compileall -q app scripts
-          alembic upgrade head
-          pytest tests/ -q 2>&1 | tee candidate-tests.log
-          python scripts/run_golden_evals.py 2>&1 | tee -a candidate-tests.log
-          python scripts/run_workflow_replays.py 2>&1 | tee -a candidate-tests.log
-          python scripts/run_policy_evals.py 2>&1 | tee -a candidate-tests.log
-          python scripts/run_context_packing_evals.py 2>&1 | tee -a candidate-tests.log
-          python scripts/run_dp_allocation_evals.py 2>&1 | tee -a candidate-tests.log
-          python scripts/run_dual_worker_simulation.py 2>&1 | tee -a candidate-tests.log
-          python -m flake8 app scripts tests migrations
-          bandit -q -r app scripts -ll
-          pip-audit -r requirements.txt --progress-spinner off
-          alembic downgrade 012
-          alembic upgrade head
-          test "$(alembic current | tail -1)" = "014 (head)"
-          docker build -f Dockerfile.worker -t candidate-worker:test .
-          docker build -f Dockerfile.candidate -t candidate-api:test .
-          docker build -f Dockerfile.builder -t candidate-builder:test .
+          {
+            python -m compileall -q app scripts
+            alembic upgrade head
+            pytest tests/ -q
+            python scripts/run_golden_evals.py
+            python scripts/run_chunking_evals.py
+            python scripts/run_workflow_replays.py
+            python scripts/run_policy_evals.py
+            python scripts/run_context_packing_evals.py
+            python scripts/run_dp_allocation_evals.py
+            python scripts/run_dual_worker_simulation.py
+            python scripts/sync_grafana_dashboards.py
+            python -m flake8 app scripts tests migrations
+            bandit -q -r app scripts -ll
+            pip-audit -r requirements.txt --progress-spinner off
+            alembic downgrade 012
+            alembic upgrade head
+            test "$(alembic current | tail -1)" = "014 (head)"
+            docker build -f Dockerfile.worker -t candidate-worker:test .
+            docker build -f Dockerfile.candidate -t candidate-api:test .
+            docker build -f Dockerfile.builder -t candidate-builder:test .
+          } 2>&1 | tee candidate-tests.log
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: candidate-backend-log
           path: candidate-tests.log
@@ -69,26 +76,74 @@ jobs:
     defaults: {run: {working-directory: web}}
     steps:
       - uses: actions/checkout@v5
+      - run: : > candidate-web.log
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+      - run: |
+          {
+            npm run lint
+            npm run build
+            npm audit --omit=dev --audit-level=critical
+          } 2>&1 | tee candidate-web.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-web-log
+          path: web/candidate-web.log
 
   flutter:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: mobile}}
     steps:
       - uses: actions/checkout@v5
+      - run: : > candidate-flutter.log
       - uses: subosito/flutter-action@v2
         with: {channel: stable, cache: true}
       - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
-      - run: flutter build apk --debug
+      - run: |
+          {
+            flutter analyze
+            flutter test
+            flutter build apk --debug
+          } 2>&1 | tee candidate-flutter.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-flutter-log
+          path: mobile/candidate-flutter.log
+
+  remediate-failure:
+    needs: [backend, web, flutter]
+    if: failure() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - run: pip install 'httpx==0.28.1'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*-log
+          path: candidate-failure-logs
+          merge-multiple: true
+      - name: Queue bounded remediation from sanitized CI evidence
+        env:
+          CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
+          CANDIDATE_CI_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_CI_ATTESTATION_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+          FLUTTER_RESULT: ${{ needs.flutter.result }}
+        run: python scripts/submit_candidate_validation_failure.py
 
   attest:
     needs: [backend, web, flutter]

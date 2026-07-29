@@ -17,6 +17,7 @@ from app.runs.request_analysis import (
     analyze_request_statement,
     is_local_project_request,
 )
+from app.runs.content_policy import analyze_content_request
 GMAIL_DELIVERY_PATTERN = re.compile(
     r"\b(send|reply|mail it|mail them)\b|"
     r"\bemail\s+(it|them|this|that|the|my|our|[A-Za-z0-9._%+-]+@)\b"
@@ -426,17 +427,20 @@ def classify_request(
     )
     if (
         statement.composition_requested
-        and statement.deferred_external_write
+        and (
+            statement.deferred_external_write
+            or not statement.explicit_services
+        )
         and intent_kind in {"ambiguous", "out_of_scope"}
     ):
-        # "Draft this now and wait for my next delivery instruction" authorizes
-        # composition, not the later external write. Keep the prepared content
-        # available as a completed composition run without inventing a service.
+        # Bounded composition is supported even without an immediate Workspace
+        # mutation. This does not turn the product into an unrestricted factual
+        # chatbot: it authorizes creation/transformation only.
         intent_kind = "workspace_action"
         intent_evidence = {
             **intent_evidence,
             "product_intent": None,
-            "basis": "structured deferred-delivery composition",
+            "basis": "structured bounded composition",
             "confidence": "high",
             "ambiguous": False,
         }
@@ -506,6 +510,8 @@ def classify_request(
     live = any(term in authority_text for term in LIVE_TERMS)
     rag_mode = "hybrid" if semantic and not live else "none"
     clarifications = []
+    content_contract = analyze_content_request(authority_message or message)
+    clarifications.extend(content_contract.required_clarifications)
     if "calendar" in services:
         if not re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text):
             clarifications.append("What start time should the event use?")
@@ -551,6 +557,7 @@ def classify_request(
         "composition_requested": composition_requested,
         "authority_message": authority_message or message,
         "request_analysis": statement.classifier_input(),
+        "content_contract": content_contract.plan_value(),
     }
 
 
@@ -569,6 +576,31 @@ def build_plan(
         message, timezone, authority_message=authority_message,
         request_analysis=statement,
     )
+    # Transformation shorthand such as "make it shorter" is valid only when
+    # relevance-gated conversation resolution supplied an actual source.  The
+    # lexical composition classifier identifies the operation class, but it
+    # must not manufacture missing content in a new session.
+    contract_requested = bool(
+        (policy.get("content_contract") or {}).get("requested")
+    )
+    resolved_transformation_source = bool(
+        referenced_output
+        or "Prior same-user, same-session context (reference only):" in message
+    )
+    if (
+        policy["intent_kind"] == "workspace_action"
+        and statement.composition_requested
+        and not contract_requested
+        and not resolved_transformation_source
+        and not statement.explicit_services
+    ):
+        policy["intent_kind"] = "out_of_scope"
+        policy["intent_evidence"] = {
+            **(policy.get("intent_evidence") or {}),
+            "basis": "composition transformation has no resolved source",
+            "confidence": "high",
+            "ambiguous": False,
+        }
     if policy["intent_kind"] != "workspace_action":
         intent = policy["informational_intent"] or policy["intent_kind"]
         step = PlanStep(
@@ -735,6 +767,11 @@ def build_plan(
                     statement.email_recipients,
                     add_meet=policy["calendar_adds_meet"],
                 )
+            if service == "composition":
+                exact_tool_arguments = {
+                    **exact_tool_arguments,
+                    "content_contract": policy["content_contract"],
+                }
             allowed_tools = OPERATION_TOOLS.get((service, operation), [])
             contract = write_contract_for(service, operation, allowed_tools)
             steps.append(PlanStep(
@@ -759,6 +796,10 @@ def build_plan(
                         if contract else None
                     ),
                     "tool_arguments": exact_tool_arguments,
+                    "content_contract": (
+                        policy["content_contract"]
+                        if service == "composition" else None
+                    ),
                     "workflow_hints": {
                         "answer_from_rag": rag_answer_only,
                         "extract_unique_sender_names": (

@@ -237,7 +237,9 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if (request.method == "POST"
             and request.url.path.startswith("/admin/candidate-builds/")
-            and request.url.path.endswith("/attestation")):
+            and request.url.path.endswith((
+                "/attestation", "/validation-failure",
+            ))):
         supplied = request.headers.get("x-candidate-attestation-token", "")
         expected = get_settings().candidate_ci_attestation_token
         if expected and secrets.compare_digest(supplied, expected):

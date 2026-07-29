@@ -151,3 +151,47 @@ def test_review_remediation_role_is_a_valid_provider_resume_point():
     assert decision.reason_code == "provider_retry_from_checkpoint"
     assert decision.resume_point["active_role"] == "review_remediation_author"
     assert decision.resume_point["next_round"] == 0
+
+
+def test_trusted_ci_feedback_starts_from_frozen_files_and_remediates(monkeypatch):
+    calls = []
+
+    async def fake_role(
+        job, tools, role, prior_candidate=None, review_feedback=None, **_kwargs,
+    ):
+        calls.append(role)
+        if role == "review_remediation_author":
+            assert prior_candidate["files"][0]["content"] == "value = 1\n"
+            assert (
+                job["sanitized_input"]["trusted_ci_feedback"]["diagnostic_codes"]
+                == ["backend_validation_failed"]
+            )
+            return _candidate(2), 8, ["repair-model"]
+        assert prior_candidate["files"][0]["content"] == "value = 2\n"
+        return {"approved": True, "reason": "CI defect corrected"}, 3, ["review-model"]
+
+    monkeypatch.setattr("app.improvements.builder._groq_tool_json", fake_role)
+    candidate, tokens, roles, models = asyncio.run(generate_candidate_draft({
+        "mode": "multi_role",
+        "model_name": "llama-3.3-70b-versatile",
+        "token_budget": 12_000,
+        "sanitized_input": {
+            "component": "planner",
+            "selected_option": {"change_scope": ["app", "tests"]},
+            "trusted_ci_feedback": {
+                "diagnostic_codes": ["backend_validation_failed"],
+                "contains_raw_user_content": False,
+            },
+        },
+        "checkpoint_files": _candidate(1)["files"],
+    }))
+
+    assert calls == [
+        "review_remediation_author", "independent_safety_reviewer",
+    ]
+    assert candidate["files"][0]["content"] == "value = 2\n"
+    assert tokens == 11
+    assert roles == [
+        "review_remediation_author", "independent_safety_reviewer",
+    ]
+    assert models == ["repair-model", "review-model"]

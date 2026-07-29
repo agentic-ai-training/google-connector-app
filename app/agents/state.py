@@ -37,3 +37,5 @@ class AgentState(TypedDict, total=False):
     expected_write_tools: list[str]
     write_completion_mode: str
     tool_selection_retry_count: int
+    content_contract: dict
+    completion_token_budget: int
