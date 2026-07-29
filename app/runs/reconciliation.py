@@ -31,6 +31,7 @@ _INTRINSICALLY_IDEMPOTENT_WRITES = frozenset({
     "share_drive_file",
     "move_drive_file",
     "trash_drive_file",
+    "resolve_chat_destination",
 })
 
 

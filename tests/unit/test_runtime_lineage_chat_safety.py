@@ -626,6 +626,38 @@ async def test_legacy_write_attempt_without_result_evidence_requires_reconciliat
     assert decision.reason_code == "legacy_write_evidence_requires_reconciliation"
 
 
+@pytest.mark.asyncio
+async def test_explicit_failed_chat_resolver_is_safe_to_resume():
+    decision = await reconcile_failed_step(
+        {"id": "run-1", "error_category": "tool_failure"},
+        {
+            "id": "chat-step",
+            "service": "chat",
+            "operation": "send",
+            "read_only": False,
+            "error_category": "tool_failure",
+            "input_data": {
+                "allowed_tools": [
+                    "resolve_chat_destination",
+                    "send_chat_message",
+                ],
+            },
+            "output_data": {"tool_executions": [{
+                "tool": "resolve_chat_destination",
+                "arguments": {"destination": "person@example.com"},
+                "result": {
+                    "error": "Got an unexpected keyword argument requestId",
+                    "tool": "resolve_chat_destination",
+                },
+            }]},
+        },
+    )
+
+    assert decision.state == "safe_to_retry"
+    assert decision.resume_step_id == "chat-step"
+    assert decision.reason_code == "idempotent_write_explicitly_failed"
+
+
 def test_successful_unintended_write_reduces_side_effect_integrity():
     steps = [{
         "id": "step-1", "title": "Send Gmail message",
