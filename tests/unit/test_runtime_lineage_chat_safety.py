@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +6,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from datetime import datetime
+
+from googleapiclient.errors import HttpError
 
 from app.agents.supervisor import make_service_node, safe_write_failure_message
 from app.runs.incident import build_incident, completion_from_steps
@@ -15,6 +18,7 @@ from app.runs.worker import _create_recent_senders_sheet, _dependency_context
 from app.tools.calendar_normalization import (
     normalize_calendar_datetime, normalize_calendar_window, normalize_timezone,
 )
+from app.tools.contracts import bind_ordered_output_lineage, write_contract_for
 from app.tools.registry import _resolve_chat_space
 
 
@@ -23,7 +27,22 @@ class _Reply:
         self.value = value
 
     def execute(self):
+        if isinstance(self.value, Exception):
+            raise self.value
         return self.value
+
+
+class _HttpResponse:
+    def __init__(self, status):
+        self.status = status
+        self.reason = "Not Found"
+
+
+def _http_error(status: int, message: str) -> HttpError:
+    return HttpError(
+        _HttpResponse(status),
+        json.dumps({"error": {"message": message}}).encode(),
+    )
 
 
 def test_chat_email_is_recipient_not_gmail_service_or_calendar_context():
@@ -44,6 +63,9 @@ def test_chat_email_is_recipient_not_gmail_service_or_calendar_context():
     assert plan.steps[0].arguments["semantic_authorization"] == {
         "authorized": True,
         "basis": "current_turn_explicit_service",
+    }
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "destination": "achintyat256@gmail.com",
     }
     assert validate_plan(plan) == []
 
@@ -97,14 +119,194 @@ def test_chat_direct_message_email_resolves_to_space(monkeypatch):
         findDirectMessage=lambda **kwargs: _Reply({
             "name": "spaces/direct-1", "requested": kwargs["name"],
         }),
+        get=lambda **kwargs: _Reply({"name": kwargs["name"]}),
     )
     monkeypatch.setattr(
         "app.tools.registry.g.chat_service",
         SimpleNamespace(spaces=lambda: spaces),
     )
 
-    assert _resolve_chat_space("person@example.com") == "spaces/direct-1"
-    assert _resolve_chat_space("spaces/existing") == "spaces/existing"
+    assert _resolve_chat_space("person@example.com") == {
+        "name": "spaces/direct-1",
+        "created": False,
+        "kind": "direct_message",
+        "recipient": "users/person@example.com",
+        "readbackVerified": True,
+    }
+    assert _resolve_chat_space("spaces/existing") == {
+        "name": "spaces/existing",
+        "created": False,
+        "kind": "space_resource",
+        "readbackVerified": True,
+    }
+
+
+def test_missing_chat_dm_is_idempotently_created(monkeypatch):
+    setup_calls = []
+    missing = _http_error(404, "The specified direct message doesn't exist.")
+    spaces = SimpleNamespace(
+        findDirectMessage=lambda **_kwargs: _Reply(missing),
+        setup=lambda **kwargs: (
+            setup_calls.append(kwargs) or _Reply({"name": "spaces/new-dm"})
+        ),
+        get=lambda **kwargs: _Reply({"name": kwargs["name"]}),
+    )
+    monkeypatch.setattr(
+        "app.tools.registry.g.chat_service",
+        SimpleNamespace(spaces=lambda: spaces),
+    )
+
+    resolved = _resolve_chat_space("Person@Example.com")
+
+    assert resolved == {
+        "name": "spaces/new-dm",
+        "created": True,
+        "kind": "direct_message",
+        "recipient": "users/person@example.com",
+        "readbackVerified": True,
+    }
+    assert setup_calls[0]["body"] == {
+        "space": {
+            "spaceType": "DIRECT_MESSAGE",
+            "singleUserBotDm": False,
+        },
+        "memberships": [{
+            "member": {
+                "name": "users/person@example.com",
+                "type": "HUMAN",
+            },
+        }],
+    }
+    assert setup_calls[0]["requestId"]
+
+
+def test_unrelated_chat_404_is_not_treated_as_missing_dm(monkeypatch):
+    spaces = SimpleNamespace(
+        findDirectMessage=lambda **_kwargs: _Reply(
+            _http_error(404, "A different resource was not found.")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tools.registry.g.chat_service",
+        SimpleNamespace(spaces=lambda: spaces),
+    )
+
+    with pytest.raises(HttpError):
+        _resolve_chat_space("person@example.com")
+
+
+def test_chat_hostname_alone_is_not_misclassified_as_disabled():
+    value = safe_write_failure_message("resolve_chat_destination", {
+        "error": (
+            "404 https://chat.googleapis.com/v1/spaces:findDirectMessage "
+            "The specified direct message doesn't exist."
+        ),
+    })
+    assert "could not find or create" in value
+    assert "disabled" not in value
+
+
+def test_chat_scope_error_requires_reconnect():
+    value = safe_write_failure_message("resolve_chat_destination", {
+        "error": "403 insufficient authentication scopes",
+    })
+    assert "reconnect Google" in value
+    assert "creation access" in value
+
+
+def test_chat_send_binds_resolved_space_lineage():
+    contract = write_contract_for(
+        "chat", "send",
+        ["resolve_chat_destination", "send_chat_message"],
+    )
+    call, evidence = bind_ordered_output_lineage(
+        contract,
+        {
+            "name": "send_chat_message",
+            "args": {"space_id": "wrong", "text": "hello"},
+        },
+        [{
+            "tool": "resolve_chat_destination",
+            "result": {"name": "spaces/direct-1", "created": True},
+        }],
+    )
+
+    assert call["args"]["space_id"] == "spaces/direct-1"
+    assert evidence["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_contract_binds_trusted_recipient_and_resolved_space(monkeypatch):
+    resolutions = []
+    sends = []
+
+    @tool(description="Resolve Chat destination")
+    def resolve_chat_destination(destination: str):
+        resolutions.append(destination)
+        return {
+            "name": "spaces/direct-1",
+            "kind": "direct_message",
+            "created": True,
+            "readbackVerified": True,
+        }
+
+    @tool(description="Send Chat message")
+    def send_chat_message(space_id: str, text: str):
+        sends.append((space_id, text))
+        return {
+            "name": "spaces/direct-1/messages/message-1",
+            "resolvedSpace": space_id,
+            "text": text,
+        }
+
+    class _LLM:
+        calls = 0
+
+        def bind_tools(self, _tools):
+            return self
+
+        async def ainvoke(self, _messages):
+            self.calls += 1
+            if self.calls == 1:
+                return AIMessage(content="", tool_calls=[
+                    {
+                        "name": "resolve_chat_destination",
+                        "args": {"destination": "hallucinated@example.com"},
+                        "id": "resolve", "type": "tool_call",
+                    },
+                    {
+                        "name": "send_chat_message",
+                        "args": {"space_id": "spaces/wrong", "text": "hello"},
+                        "id": "send", "type": "tool_call",
+                    },
+                ])
+            return AIMessage(content="Sent.")
+
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"chat": [resolve_chat_destination, send_chat_message]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
+
+    result = await make_service_node("chat")({
+        "message": "send hello", "model_to_use": "groq_fast",
+        "services": ["chat"],
+        "allowed_tools": ["resolve_chat_destination", "send_chat_message"],
+        "tool_arguments": {"destination": "approved@example.com"},
+        "requires_write": True, "operation": "send",
+        "expected_write_tools": [
+            "resolve_chat_destination", "send_chat_message",
+        ],
+        "write_completion_mode": "ordered", "session_id": "test",
+    })
+
+    assert result["task_complete"] is True
+    assert resolutions == ["approved@example.com"]
+    assert sends == [("spaces/direct-1", "hello")]
+    assert result["tool_executions"][0]["projection"][
+        "trusted_argument_bound"
+    ] is True
+    assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
 
 
 @pytest.mark.asyncio

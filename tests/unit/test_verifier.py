@@ -121,7 +121,10 @@ def test_calendar_expected_state_and_mismatch(monkeypatch):
 
 def _chat_service(message):
     messages = SimpleNamespace(get=lambda **_: Reply(message))
-    spaces = SimpleNamespace(messages=lambda: messages)
+    spaces = SimpleNamespace(
+        messages=lambda: messages,
+        get=lambda **kwargs: Reply({"name": kwargs["name"]}),
+    )
     return SimpleNamespace(spaces=lambda: spaces)
 
 
@@ -160,6 +163,35 @@ def test_chat_email_destination_verifies_resolved_space(monkeypatch):
         },
     }
     assert _run([execution], "chat", "send").passed
+
+
+def test_chat_destination_resolution_is_read_back(monkeypatch):
+    monkeypatch.setattr(
+        "app.runs.verifier.google.chat_service",
+        _chat_service({}),
+    )
+    execution = {
+        "tool": "resolve_chat_destination",
+        "arguments": {"destination": "person@example.com"},
+        "result": {
+            "name": "spaces/direct",
+            "kind": "direct_message",
+            "created": True,
+            "readbackVerified": True,
+        },
+    }
+
+    outcome = _run([execution], "chat", "send")
+
+    assert outcome.passed
+    assert outcome.evidence["checks"][0] == {
+        "tool": "resolve_chat_destination",
+        "space_name": "spaces/direct",
+        "kind": "direct_message",
+        "created": True,
+        "resolver_readback_verified": True,
+        "match": True,
+    }
 
 
 def _drive_service(permission):

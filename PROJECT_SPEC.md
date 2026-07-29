@@ -735,9 +735,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/contacts",
     "https://www.googleapis.com/auth/chat.messages",
     "https://www.googleapis.com/auth/chat.spaces.readonly",
+    "https://www.googleapis.com/auth/chat.spaces.create",
     "https://www.googleapis.com/auth/script.projects",
     "https://www.googleapis.com/auth/script.external_request",
     "https://www.googleapis.com/auth/drive.labels.readonly",
+    "https://www.googleapis.com/auth/meetings.space.created",
+    "https://www.googleapis.com/auth/meetings.space.readonly",
 ]
 
 def _load_creds():
@@ -1044,6 +1047,15 @@ Tool name: `send_chat_message`
 Input: `space_id: str, text: str`
 Calls `chat_service.spaces().messages().create()`
 Returns: confirmation
+
+**Story 5.8.3 — resolve_destination.py (implemented reliability addendum)**
+Tool name: `resolve_chat_destination`
+Input: `destination: str`
+Accepts a verified `spaces/...` resource, exact accessible display name, or direct-
+message email. For email, call `spaces.findDirectMessage`; only its specific missing-DM
+404 may call idempotent `spaces.setup`. Read back the returned space and bind its
+`spaces/...` name into `send_chat_message`. This ordered write contract requires
+`chat.spaces.create`; existing users reconnect once after the scope is deployed.
 
 ---
 

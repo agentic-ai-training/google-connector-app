@@ -237,6 +237,25 @@ def _chat_verification(args: dict, result: dict) -> tuple[bool, dict]:
     }
 
 
+def _chat_space_verification(args: dict, result: dict) -> tuple[bool, dict]:
+    resource_name = _first(result, "name")
+    value = google.chat_service.spaces().get(name=resource_name).execute()
+    observed_name = value.get("name")
+    matches = bool(
+        resource_name
+        and re.fullmatch(r"spaces/[^/]+", str(resource_name))
+        and observed_name == resource_name
+    )
+    return matches, {
+        "tool": "resolve_chat_destination",
+        "space_name": _safe_id(observed_name),
+        "kind": str(result.get("kind") or "")[:100],
+        "created": bool(result.get("created")),
+        "resolver_readback_verified": result.get("readbackVerified") is True,
+        "match": matches,
+    }
+
+
 def _drive_share_verification(args: dict, result: dict) -> tuple[bool, dict]:
     file_id = args.get("file_id")
     google.drive_service.files().get(fileId=file_id, fields="id").execute()
@@ -339,6 +358,8 @@ def _verify_write(tool: str, args: dict, result: dict) -> tuple[bool, dict]:
         return _calendar_verification(tool, args, result)
     if tool == "send_chat_message":
         return _chat_verification(args, result)
+    if tool == "resolve_chat_destination":
+        return _chat_space_verification(args, result)
     if tool == "share_drive_file":
         return _drive_share_verification(args, result)
     return _generic_verification(tool, args, result)

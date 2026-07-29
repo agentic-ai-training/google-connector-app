@@ -1,6 +1,6 @@
 # Governed Candidate and Canary Threat Model
 
-Status: implemented and reviewed against the Sprint 30–34 runtime on 2026-07-22.
+Status: implemented and reviewed through the Sprint 39 runtime on 2026-07-29.
 
 ## Trust boundaries
 
@@ -23,6 +23,7 @@ Status: implemented and reviewed against the Sprint 30–34 runtime on 2026-07-2
 |---|---|---|---|
 | Prompt injection in sanitized evidence or repository text | No user bodies; bounded reads; retrieved text has no system authority; local tool allowlist | Candidate diff, staged-file manifest, independent review, prompt-injection and policy tests | Reject/discard in-memory files; request a new strategy |
 | Malicious or hallucinated patch | Approved roots; path/symlink/size/file/call/round/token/time limits; syntax/policy validation; no execution during generation | SHA-256 manifest, exact diff, secret/PII scans, trusted multi-suite CI | Candidate cannot advance; delete draft branch/preview |
+| Disconnected or base-inconsistent patch | `bounded-repo-tools-v9-runtime-adoption-gate` requires a new module to be imported/adopted by an existing runtime path and validates create/replace/delete against the frozen base tree | Adoption errors, base-tree manifest, complete observed model chain | Reject before trusted CI; regenerate from the same sanitized strategy |
 | Secret exfiltration | No production secrets in builder; exact DNS allowlist in process; secret-like paths/content rejected; callback stores sanitized codes only | Git history/secret scans; credential-minimal workflow definition; notification ledger | Rotate the isolated Groq/callback credential; candidate stays untrusted |
 | Sandbox escape or dependency compromise | Ephemeral checkout; no generated-code execution while Groq key exists; resource limits; dependencies installed before model interaction | CI workflow review, dependency/security audits, bounded failure telemetry | Revoke builder secrets and disable candidate builder flag |
 | Poisoned reproduction fixture | Synthetic/no-network adapters; fixture paths are reviewed candidate inputs, not authority; expected postconditions are deterministic | Golden/replay diffs and trusted test logs | Reject candidate or replace fixture; no Workspace mutation occurred |

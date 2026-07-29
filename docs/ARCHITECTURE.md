@@ -2,16 +2,25 @@
 
 ## Request lifecycle
 
-1. `POST /runs` creates a tenant-scoped, idempotent run and a validated service DAG.
-2. Materially missing time, timezone, duration, or Chat destination pauses in
+1. A deterministic statement analyzer runs for every request. It extracts explicit
+   services, delivery channels, recipients, temporal expressions, composition intent,
+   and current-turn write authority before classification or planning.
+2. Previous messages are not appended unconditionally. A relevance gate projects only
+   the bounded session facts needed to resolve anaphora or omitted context; the current
+   turn remains the authority for external writes.
+3. A guarded router separates Workspace actions, Workspace-scoped product questions,
+   and bounded composition (drafts, applications, essays, roadmaps, summaries, and
+   pointers intended for a Workspace artifact). It does not provide open-domain chat.
+4. `POST /runs` creates a tenant-scoped, idempotent run and a validated service DAG.
+5. Materially missing time, timezone, duration, or Chat destination pauses in
    `awaiting_clarification`.
-3. High-risk writes pause in `awaiting_approval`; approval is bound to the SHA-256
+6. High-risk writes pause in `awaiting_approval`; approval is bound to the SHA-256
    hash of the exact plan and expires after 30 minutes.
-4. A PostgreSQL worker claims work with `FOR UPDATE SKIP LOCKED`, renews its lease,
+7. A PostgreSQL worker claims work with `FOR UPDATE SKIP LOCKED`, renews its lease,
    executes dependency-ready steps, and writes append-only events.
-5. Tool/model attempts, artifacts, verification, completion, and incident evidence
+8. Tool/model attempts, artifacts, verification, completion, and incident evidence
    are stored separately. Browser disconnection cannot cancel the worker.
-6. SSE or polling replays durable events by run ID. Resume resets only failed steps;
+9. SSE or polling replays durable events by run ID. Resume resets only failed steps;
    completed steps and verified artifacts remain intact.
 
 The legacy `/chat` route remains available behind `LEGACY_CHAT_ENABLED` for rollback,
@@ -23,6 +32,10 @@ but it rejects high-risk mutations so those must use the approved durable path.
 - User Google content is untrusted tenant evidence in `rag_chunks`, scoped by user ID.
 - The OKF Markdown bundle is trusted operational knowledge. It is loaded, validated,
   versioned, retrieved, and cited separately from user RAG.
+- RAG is gated per request. Live/latest Google operations bypass it. When historical
+  semantic evidence is needed, source-aware ingestion preserves Gmail thread metadata,
+  document heading parents, Sheet row/header structure, Chat threads, Calendar/Meet
+  records, ownership/ACL lineage, content hashes, and chunker/embedding versions.
 - Neon/PostgreSQL stores durable workflow facts and high-cardinality reporting data.
 - Prometheus/Grafana stores aggregate metrics; LangSmith stores agent/LLM traces.
 
@@ -87,6 +100,20 @@ resource/destination/text hash/references, and Drive sharing compares the permis
 type/role/principal. Mismatch is `postcondition_failure`. Durable evidence contains IDs,
 counts, booleans, and hashes—not cell values, messages, titles, or recipients.
 
+Chat sends use an ordered contract:
+
+```text
+resolve_chat_destination -> bind verified spaces/... name -> send_chat_message
+```
+
+An email destination first uses `spaces.findDirectMessage`. Only a provider-confirmed
+404 stating that the direct message does not exist may invoke idempotent `spaces.setup`;
+unrelated 404/403 responses are not reclassified. The resolver is itself read back with
+`spaces.get`, recorded as an artifact, and the send tool accepts only the verified
+`spaces/...` name. This requires `chat.spaces.create`; users whose encrypted credential
+predates that scope must reconnect once. A hostname in an error is never by itself
+evidence that the Chat API is disabled.
+
 Resume is an explicit state machine:
 
 ```text
@@ -106,3 +133,9 @@ and finalization gates prevent investigation-only loops. The runner may suggest 
 but the server recomputes eligibility from the checkpoint, remaining round/token
 authority, terminal policy codes, and absence of a commit/deployment. A valid reviewer
 checkpoint resumes at its persisted round with frozen author files.
+
+The active candidate policies are `adaptive-roles-v3-model-chain-evidence` and
+`bounded-repo-tools-v9-runtime-adoption-gate`. The portal reports the configured primary
+and every actually used Groq-hosted fallback. Finalization rejects files whose declared
+create/replace/delete operation disagrees with the base tree and rejects new modules
+that are not adopted by an existing runtime path.

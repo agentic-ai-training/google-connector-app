@@ -1,5 +1,6 @@
 """Pure write-operation contracts shared by planning, execution, and verification."""
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -63,7 +64,8 @@ WRITE_CONTRACTS: dict[tuple[str, str], WriteContract] = {
         "tasks", "complete", ("complete_task",), "all",
     ),
     ("chat", "send"): WriteContract(
-        "chat", "send", ("send_chat_message",), "all",
+        "chat", "send",
+        ("resolve_chat_destination", "send_chat_message"), "ordered",
     ),
     ("meet", "create"): WriteContract(
         "meet", "create", ("create_meet_space",), "all",
@@ -141,9 +143,34 @@ def bind_ordered_output_lineage(
     The model may select dependent tools in one response, before it has observed
     the create result. The executor, not the model, owns resource-ID lineage.
     """
+    if contract is None:
+        return call, {}
     if (
-        contract is None
-        or contract.service != "sheets"
+        contract.service == "chat"
+        and contract.operation == "send"
+        and call.get("name") == "send_chat_message"
+    ):
+        resolved = next((
+            item.get("result") for item in reversed(executions)
+            if item.get("tool") == "resolve_chat_destination"
+            and isinstance(item.get("result"), dict)
+            and re.fullmatch(r"spaces/[^/]+", str(item["result"].get("name") or ""))
+            and not item["result"].get("error")
+        ), None)
+        if not resolved:
+            return call, {}
+        updated = {**call, "args": {
+            **(call.get("args") or {}),
+            "space_id": resolved["name"],
+        }}
+        return updated, {
+            "lineage_source_tool": "resolve_chat_destination",
+            "lineage_target_tool": "send_chat_message",
+            "lineage_field": "space_id",
+            "lineage_bound": True,
+        }
+    if (
+        contract.service != "sheets"
         or contract.operation != "create_and_write"
         or call.get("name") != "write_google_sheet"
     ):

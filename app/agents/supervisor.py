@@ -107,9 +107,8 @@ def safe_write_failure_message(tool_name: str, result: object) -> str:
             "Google Sheets could not find the spreadsheet referenced by the "
             "population operation"
         )
-    if tool_name == "send_chat_message" and (
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
         "chat api has not been used" in error
-        or "chat.googleapis.com" in error
         or "service_disabled" in error
         or "accessnotconfigured" in error
     ):
@@ -117,14 +116,33 @@ def safe_write_failure_message(tool_name: str, result: object) -> str:
             "Google Chat API is disabled for the configured Google Cloud "
             "project; enable chat.googleapis.com, wait for propagation, and retry"
         )
-    if tool_name == "send_chat_message" and (
-        "does not match the pattern" in error or "spaces/" in error
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
+        "direct message doesn't exist" in error
+        or "did not return a direct-message space" in error
+        or "chat_direct_message_not_found" in error
+    ):
+        return (
+            "Google Chat could not find or create a direct message for the "
+            "requested recipient"
+        )
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
+        "insufficient authentication scopes" in error
+        or "insufficient_permission" in error
+        or "insufficient permission" in error
+    ):
+        return (
+            "Google Chat direct-message setup requires newly granted Chat space "
+            "creation access; reconnect Google and approve the requested scope"
+        )
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
+        "does not match the pattern" in error
+        or "chat destination must be" in error
     ):
         return (
             "Google Chat could not resolve the requested destination to an "
             "accessible Chat space"
         )
-    if tool_name == "send_chat_message" and (
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
         "permission" in error or "forbidden" in error or "403" in error
     ):
         return (
@@ -162,7 +180,8 @@ def get_toolsets() -> dict[str, list[BaseTool]]:
                    tools.append_to_google_sheet, tools.create_google_sheet],
         "tasks": [tools.list_tasks, tools.create_task, tools.complete_task],
         "contacts": [tools.search_contacts, tools.get_contact],
-        "chat": [tools.list_chat_spaces, tools.send_chat_message],
+        "chat": [tools.list_chat_spaces, tools.resolve_chat_destination,
+                 tools.send_chat_message],
         "meet": [tools.create_meet_space, tools.get_meet_space,
                  tools.list_meet_conferences, tools.list_meet_participants],
     }
@@ -688,6 +707,23 @@ def make_service_node(service: str, pool=None):
                             status="error",
                         ))
                         continue
+                    trusted_arguments = state.get("tool_arguments") or {}
+                    trusted_projection = {}
+                    if (
+                        call["name"] == "resolve_chat_destination"
+                        and trusted_arguments.get("destination")
+                    ):
+                        call = {
+                            **call,
+                            "args": {
+                                **(call.get("args") or {}),
+                                "destination": trusted_arguments["destination"],
+                            },
+                        }
+                        trusted_projection = {
+                            "trusted_argument_bound": True,
+                            "trusted_argument_fields": ["destination"],
+                        }
                     call, lineage = bind_ordered_output_lineage(
                         contract, call, executions,
                     )
@@ -716,6 +752,7 @@ def make_service_node(service: str, pool=None):
                         "compact_result": compact_result,
                         "projection": {
                             **(envelope.metadata() if tool else {}),
+                            **trusted_projection,
                             **lineage,
                         },
                     })

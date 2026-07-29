@@ -642,6 +642,7 @@ async def _execute_step(app, pool, run, step, dependencies):
         "user_id": user_id, "run_id": str(run_id), "step_id": str(step["id"]),
         "forced_service": step["service"], "messages": [],
         "allowed_tools": (step.get("input_data") or {}).get("allowed_tools", []),
+        "tool_arguments": (step.get("input_data") or {}).get("tool_arguments", {}),
         "operation": step.get("operation") or "execute",
         "requires_write": not step.get("read_only", True),
         "expected_write_tools": [],
