@@ -1508,3 +1508,31 @@ Production evidence on 2026-07-29:
   Gmail `search -> send` DAG with the exact source query and destination.
   It recorded zero tool attempts and zero artifacts and was cancelled before
   approval; no Gmail message was read or sent.
+
+## Sprint 48 — Collection-valued read verification
+
+Production run `63308852` proved that the Sprint 47 Gmail DAG and deterministic
+source lookup ran, but exposed a verifier contract mismatch: `search_gmail`
+correctly returned a list of messages, while the shared verifier treated every
+non-mapping result as explicit failure evidence. The fetched source artifact
+`19faa92cd9c37ff8` was retained, the Gmail send step never started, and no
+destination message was attempted.
+
+- [x] Accept collection-valued results from read tools as valid evidence.
+- [x] Continue rejecting absent results and mappings containing explicit
+  `error` or `success: false` evidence.
+- [x] Continue requiring write tools to return structured mappings before
+  tool-specific postcondition and read-after-write verification.
+- [x] Add regression coverage for a Gmail search list followed by an exact
+  Gmail message mapping.
+- [x] Add negative coverage proving explicit read errors and non-mapping write
+  results still fail closed.
+- [ ] Publish, deploy, and attest the immutable correction.
+
+Guardrail: result shape alone is not failure evidence for an allowlisted read.
+Read failure must be absent or explicit; external writes retain the stricter
+structured-result and postcondition contracts.
+
+Local evidence on 2026-07-29: 237 unit tests and 37 PostgreSQL-backed integration
+tests pass; planner goldens pass 38/38 and no-network workflow replays pass 16/16.
+Python compilation, Flake8, Bandit, and dependency audit pass.

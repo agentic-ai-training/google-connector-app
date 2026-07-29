@@ -109,6 +109,46 @@ def _gmail_message(message_id, recipient, subject, body):
     }
 
 
+def test_list_valued_gmail_search_is_valid_read_evidence():
+    outcome = _run([{
+        "tool": "search_gmail",
+        "arguments": {
+            "query": "to:source@example.com in:sent",
+            "max_results": 1,
+        },
+        "result": [{"id": "source-1", "snippet": "bounded"}],
+    }, {
+        "tool": "get_gmail_message",
+        "arguments": {"message_id": "source-1"},
+        "result": {
+            "id": "source-1",
+            "subject": "Exact subject",
+            "body_plain": "Exact body",
+        },
+    }], "gmail", "search")
+
+    assert outcome.passed
+    assert outcome.message == "Read-only tool postconditions passed"
+
+
+def test_read_error_mapping_and_non_mapping_write_still_fail():
+    read_failure = _run([{
+        "tool": "search_gmail",
+        "arguments": {"query": "in:sent"},
+        "result": {"error": "provider unavailable"},
+    }], "gmail", "search")
+    write_failure = _run([{
+        "tool": "send_gmail",
+        "arguments": {"to": "destination@example.com"},
+        "result": [{"id": "not-a-valid-write-contract"}],
+    }], "gmail", "send")
+
+    assert not read_failure.passed
+    assert read_failure.category == "tool_failure"
+    assert not write_failure.passed
+    assert write_failure.category == "tool_failure"
+
+
 def test_gmail_send_verifies_recipient_subject_and_body(monkeypatch):
     message = _gmail_message(
         "sent-1", "destination@example.com", "Exact subject", "Exact body",
