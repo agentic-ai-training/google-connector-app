@@ -117,6 +117,15 @@ def safe_write_failure_message(tool_name: str, result: object) -> str:
             "project; enable chat.googleapis.com, wait for propagation, and retry"
         )
     if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
+        "google chat app not found" in error
+        or "configure your chat app" in error
+    ):
+        return (
+            "Google Chat API is enabled, but its Chat API Configuration is "
+            "incomplete; configure the Chat app identity with interactive "
+            "features disabled, save it, wait for propagation, and retry"
+        )
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
         "direct message doesn't exist" in error
         or "did not return a direct-message space" in error
         or "chat_direct_message_not_found" in error

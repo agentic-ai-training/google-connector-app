@@ -5,16 +5,21 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from googleapiclient.errors import HttpError
 
 from app.agents.supervisor import make_service_node, safe_write_failure_message
 from app.runs.incident import build_incident, completion_from_steps
-from app.runs.planner import build_plan, validate_plan
+from app.runs.planner import (
+    build_plan,
+    calendar_create_arguments,
+    validate_plan,
+)
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.worker import (
+    _create_deterministic_calendar_event,
     _create_recent_senders_sheet,
     _dependency_context,
     _reconcile_verified_failed_siblings,
@@ -91,6 +96,59 @@ def test_calendar_natural_language_is_normalized_with_india_alias():
         "2026-07-30T10:15:00+05:30",
         "Asia/Kolkata",
     )
+
+
+def test_calendar_clarifications_produce_deterministic_create_arguments():
+    arguments = calendar_create_arguments(
+        (
+            "create a Meet invite tommorow 10 AM to person@example.com\n\n"
+            "User clarifications:\n"
+            "How long should the event last?: 1 minute\n"
+            "Which timezone should be used?: Asia/Kolkata"
+        ),
+        "Asia/Kolkata",
+        ["person@example.com"],
+        add_meet=True,
+    )
+
+    assert arguments == {
+        "title": "Meeting with person@example.com",
+        "start_datetime": "tomorrow 10 AM",
+        "duration_minutes": 1,
+        "timezone": "Asia/Kolkata",
+        "attendees": ["person@example.com"],
+        "add_meet": True,
+    }
+
+
+def test_exact_multiservice_request_projects_chat_and_calendar_arguments():
+    message = (
+        "create a sheet of the names of last 20 people who did mails to me "
+        "and google chat that drive link and a meet invite with a calender "
+        "schedule of tommorow 10 AM to achintyat256@gmail.com\n\n"
+        "User clarifications:\n"
+        "How long should the event last?: 1 minute\n"
+        "Which existing Google Chat space or direct-message email should receive "
+        "the message?: achintyat256@gmail.com\n"
+        "Which timezone should be used?: Asia/Kolkata"
+    )
+    analysis = analyze_request_statement(message)
+    plan, _ = build_plan(
+        message, authority_message=message, request_analysis=analysis,
+    )
+    steps = {step.service: step for step in plan.steps}
+
+    assert steps["chat"].arguments["tool_arguments"] == {
+        "destination": "achintyat256@gmail.com",
+    }
+    assert steps["calendar"].arguments["tool_arguments"] == {
+        "title": "Meeting with achintyat256@gmail.com",
+        "start_datetime": "tomorrow 10 AM",
+        "duration_minutes": 1,
+        "timezone": "Asia/Kolkata",
+        "attendees": ["achintyat256@gmail.com"],
+        "add_meet": True,
+    }
 
 
 def test_chat_api_disabled_error_is_actionable_and_sanitized():
@@ -215,6 +273,19 @@ def test_chat_hostname_alone_is_not_misclassified_as_disabled():
     })
     assert "could not find or create" in value
     assert "disabled" not in value
+
+
+def test_chat_app_configuration_failure_is_actionable():
+    value = safe_write_failure_message("resolve_chat_destination", {
+        "error": (
+            "HttpError 404: Google Chat app not found. "
+            "To configure your Chat app, open the Configuration tab."
+        ),
+    })
+
+    assert "enabled" in value.casefold()
+    assert "configuration is incomplete" in value.casefold()
+    assert "interactive features disabled" in value.casefold()
 
 
 def test_chat_scope_error_requires_reconnect():
@@ -560,6 +631,68 @@ async def test_recent_senders_sheet_is_deterministic_and_lineage_bound(monkeypat
         ["grace@example.com", "grace@example.com"],
     ]
     assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_fully_specified_calendar_create_bypasses_model(monkeypatch):
+    calls = []
+
+    @tool(description="Create event")
+    def create_calendar_event(
+        title: str,
+        start_datetime: str,
+        end_datetime: str,
+        attendees: list[str],
+        add_meet: bool,
+        timezone: str,
+    ):
+        return {}
+
+    class _Envelope:
+        compact_result = {
+            "id": "event-1",
+            "htmlLink": "https://calendar/event-1",
+            "hangoutLink": "https://meet.google.com/abc-defg-hij",
+        }
+
+        def metadata(self):
+            return {"truncated": False}
+
+    async def execute(_tool, call, _state, _pool):
+        calls.append(call)
+        return None, dict(_Envelope.compact_result), _Envelope()
+
+    monkeypatch.setattr(
+        "app.runs.worker.get_toolsets",
+        lambda: {"calendar": [create_calendar_event]},
+    )
+    monkeypatch.setattr("app.runs.worker.execute_tool_call", execute)
+    result = await _create_deterministic_calendar_event(
+        object(),
+        {"id": "run-1", "session_id": "s", "user_id": "u"},
+        {
+            "id": "calendar-step",
+            "input_data": {
+                "request": (
+                    "create a Meet invite tommorow 10 AM to person@example.com\n\n"
+                    "User clarifications:\n"
+                    "How long should the event last?: 1 minute\n"
+                    "Which timezone should be used?: Asia/Kolkata"
+                ),
+                "tool_arguments": {},
+                "workflow_hints": {"add_meet_conference": True},
+            },
+        },
+    )
+
+    arguments = calls[0]["args"]
+    assert datetime.fromisoformat(arguments["end_datetime"]) - datetime.fromisoformat(
+        arguments["start_datetime"]
+    ) == timedelta(minutes=1)
+    assert arguments["attendees"] == ["person@example.com"]
+    assert arguments["add_meet"] is True
+    assert result["task_complete"] is True
+    assert "Meet:" in result["output"]
 
 
 @pytest.mark.asyncio

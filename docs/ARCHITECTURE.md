@@ -116,6 +116,16 @@ This requires `chat.spaces.create`; users whose encrypted credential
 predates that scope must reconnect once. A hostname in an error is never by itself
 evidence that the Chat API is disabled.
 
+Google requires a configured Chat app identity for write calls even when the API is
+enabled and the request uses user authentication. A provider `Google Chat app not
+found` response is classified as incomplete Chat API Configuration, not API
+disablement or a missing recipient.
+
+Fully specified Calendar creates are projected by the typed planner into title, start,
+duration, timezone, attendees, and Meet intent. The worker normalizes the window and
+executes the idempotent Calendar tool directly; model quota is not spent reconstructing
+those already-approved arguments.
+
 Once every required tool in an ordered write contract has succeeded, execution returns
 directly to deterministic read-after-write verification. It does not spend another
 model turn merely to paraphrase success. A post-tool model quota failure therefore
