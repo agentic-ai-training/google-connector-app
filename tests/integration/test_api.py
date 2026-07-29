@@ -1358,6 +1358,7 @@ def test_expired_write_lease_requires_reconciliation_and_blocks_resume():
 
 def test_resume_preserves_completed_steps_and_requeues_exact_tool_selection_failure():
     from app.api.main import app
+    from app.config.settings import get_settings
     from app.db.connection import get_pool
     from app.runs.repository import create_run
 
@@ -1393,7 +1394,8 @@ def test_resume_preserves_completed_steps_and_requeues_exact_tool_selection_fail
                 )
                 await conn.execute(
                     """UPDATE agent_runs SET status='partial',current_phase='failed',
-                       error_category='tool_selection',completed_at=now() WHERE id=$1""",
+                       error_category='tool_selection',completed_at=now(),
+                       executor_version='retired-executor' WHERE id=$1""",
                     run["id"],
                 )
             return str(run["id"]), str(steps[0]["id"]), str(steps[1]["id"])
@@ -1410,19 +1412,29 @@ def test_resume_preserves_completed_steps_and_requeues_exact_tool_selection_fail
 
         async def inspect():
             pool = await get_pool()
-            return [
+            steps = [
                 dict(row) for row in await pool.fetch(
                     """SELECT id,status FROM agent_run_steps
                        WHERE id=ANY($1::uuid[]) ORDER BY id""",
                     [completed_id, failed_id],
                 )
             ]
+            executor_version = await pool.fetchval(
+                "SELECT executor_version FROM agent_runs WHERE id=$1",
+                run_id,
+            )
+            return steps, executor_version
 
+        rows, executor_version = client.portal.call(inspect)
         statuses = {
-            str(row["id"]): row["status"] for row in client.portal.call(inspect)
+            str(row["id"]): row["status"] for row in rows
         }
         assert statuses[completed_id] == "completed"
         assert statuses[failed_id] == "pending"
+        settings = get_settings()
+        assert executor_version == (
+            settings.executor_version or settings.deployment_version
+        )
 
 
 def test_expired_read_lease_with_exhausted_budget_fails_without_side_effect_risk():

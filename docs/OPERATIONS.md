@@ -266,3 +266,8 @@ when the operation is proven absent or its idempotency contract makes repetition
 The approval card lists the service, operation, targets, times and resource identifiers
 that are safe to display. Message bodies and document contents are represented only by
 presence and size.
+
+When an older run is resumed, inspect the `run_reconciled` event. A safe retry records
+both `previous_executor_version` and `resume_executor_version`; the current worker can
+then claim it. `manual_required` decisions retain their original pin and never enter
+the queue.
