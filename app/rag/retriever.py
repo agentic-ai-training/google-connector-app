@@ -1,6 +1,9 @@
+import asyncio
 import json
+import time
 from datetime import datetime, timezone
 
+from app.config.settings import get_settings
 from app.mlops.metrics import empty_context
 from app.rag.embedder import NomicEmbedder
 
@@ -29,7 +32,11 @@ def _recency_bonus(item: dict) -> float:
     return 0.003 / (1.0 + age_days / 30.0)
 
 
-async def hybrid_retrieve(query, pool=None, filters=None, top_k=5, user_id=None):
+async def hybrid_retrieve(
+    query, pool=None, filters=None, top_k=5, user_id=None,
+    diagnostics: dict | None = None,
+    embedding_timeout_seconds: float | None = None,
+):
     if not user_id:
         return []
     if pool is None:
@@ -37,11 +44,28 @@ async def hybrid_retrieve(query, pool=None, filters=None, top_k=5, user_id=None)
         pool = await get_pool()
     filters = filters or {}
     vector = None
+    embedding_started = time.perf_counter()
     try:
-        vector = await NomicEmbedder().aembed_query(query)
-    except Exception:
+        timeout = (
+            get_settings().rag_query_embedding_timeout_seconds
+            if embedding_timeout_seconds is None else embedding_timeout_seconds
+        )
+        async with asyncio.timeout(max(0.1, float(timeout))):
+            vector = await NomicEmbedder().aembed_query(query)
+        if diagnostics is not None:
+            diagnostics["dense_status"] = "available"
+    except Exception as exc:
         # PostgreSQL full-text retrieval remains available while Ollama is cold.
         vector = None
+        if diagnostics is not None:
+            diagnostics["dense_status"] = (
+                "timeout" if isinstance(exc, TimeoutError) else "unavailable"
+            )
+            diagnostics["dense_error_type"] = type(exc).__name__
+    if diagnostics is not None:
+        diagnostics["query_embedding_duration_ms"] = int(
+            (time.perf_counter() - embedding_started) * 1000
+        )
     async with pool.acquire() as conn:
         dense_rows = []
         if vector is not None:
@@ -68,6 +92,12 @@ async def hybrid_retrieve(query, pool=None, filters=None, top_k=5, user_id=None)
                  AND to_tsvector('english',content) @@ websearch_to_tsquery('english',$1)
                ORDER BY score DESC LIMIT $4""",
             query, user_id, filters.get("source"), top_k * 3,
+        )
+    if diagnostics is not None:
+        diagnostics["dense_candidates"] = len(dense_rows)
+        diagnostics["lexical_candidates"] = len(lexical_rows)
+        diagnostics["effective_mode"] = (
+            "hybrid" if vector is not None else "keyword"
         )
     fused = {}
     for channel, rows in (("dense", dense_rows), ("lexical", lexical_rows)):

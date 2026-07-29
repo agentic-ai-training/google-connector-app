@@ -1404,6 +1404,11 @@ reached an asyncpg timestamp column.
   returned/used evidence, and private index readiness/sync status.
 - [x] Add the exact production request to planner goldens and no-network replay, add
   endpoint/worker/verification isolation tests, and run every repository guardrail.
+- [x] Bound dense query embedding independently from PostgreSQL retrieval so a slow
+  Railway Ollama request degrades to explicitly labelled keyword evidence rather than
+  cancelling the whole RAG node after 20 seconds.
+- [x] Record requested versus effective retrieval mode, dense availability/error type,
+  query-embedding duration, and dense/lexical candidate counts in run diagnostics.
 - [ ] Deploy migration, API/worker, and web changes; enqueue the consenting production
   user's bounded backfill; verify source-aware chunks, retrieval evidence, exact-copy
   completion, and actionable errors without duplicating the already-sent artifact.

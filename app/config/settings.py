@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     max_embedding_jobs_global: int = 5000
     max_embedding_jobs_per_user: int = 500
     max_embedding_payload_chars: int = 250000
+    rag_query_embedding_timeout_seconds: float = 8.0
     groq_daily_token_budget: int = 100000
     groq_quality_reserve_tokens: int = 15000
     candidate_builder_enabled: bool = True
