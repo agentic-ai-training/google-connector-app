@@ -460,12 +460,12 @@ def _resolve_chat_space(destination: str) -> dict:
                 raise
             created = True
             found = spaces.setup(
-                requestId=_request_id("chat-dm-setup", user_name),
                 body={
                     "space": {
                         "spaceType": "DIRECT_MESSAGE",
                         "singleUserBotDm": False,
                     },
+                    "requestId": _request_id("chat-dm-setup", user_name),
                     "memberships": [{
                         "member": {"name": user_name, "type": "HUMAN"},
                     }],

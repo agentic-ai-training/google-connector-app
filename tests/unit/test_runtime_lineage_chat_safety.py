@@ -144,11 +144,14 @@ def test_chat_direct_message_email_resolves_to_space(monkeypatch):
 def test_missing_chat_dm_is_idempotently_created(monkeypatch):
     setup_calls = []
     missing = _http_error(404, "The specified direct message doesn't exist.")
+
+    def setup(*, body):
+        setup_calls.append({"body": body})
+        return _Reply({"name": "spaces/new-dm"})
+
     spaces = SimpleNamespace(
         findDirectMessage=lambda **_kwargs: _Reply(missing),
-        setup=lambda **kwargs: (
-            setup_calls.append(kwargs) or _Reply({"name": "spaces/new-dm"})
-        ),
+        setup=setup,
         get=lambda **kwargs: _Reply({"name": kwargs["name"]}),
     )
     monkeypatch.setattr(
@@ -165,7 +168,11 @@ def test_missing_chat_dm_is_idempotently_created(monkeypatch):
         "recipient": "users/person@example.com",
         "readbackVerified": True,
     }
-    assert setup_calls[0]["body"] == {
+    setup_body = setup_calls[0]["body"]
+    assert setup_body["requestId"]
+    assert {
+        key: value for key, value in setup_body.items() if key != "requestId"
+    } == {
         "space": {
             "spaceType": "DIRECT_MESSAGE",
             "singleUserBotDm": False,
@@ -177,7 +184,6 @@ def test_missing_chat_dm_is_idempotently_created(monkeypatch):
             },
         }],
     }
-    assert setup_calls[0]["requestId"]
 
 
 def test_unrelated_chat_404_is_not_treated_as_missing_dm(monkeypatch):
@@ -307,6 +313,58 @@ async def test_chat_contract_binds_trusted_recipient_and_resolved_space(monkeypa
         "trusted_argument_bound"
     ] is True
     assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_completed_write_contract_does_not_require_post_tool_model_call(
+    monkeypatch,
+):
+    @tool(description="Create a Calendar event")
+    def create_calendar_event(title: str):
+        return {"id": "event-1", "summary": title}
+
+    class _LLM:
+        calls = 0
+
+        def bind_tools(self, _tools):
+            return self
+
+        async def ainvoke(self, _messages):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError(
+                    "A completed write contract must not require another model call"
+                )
+            return AIMessage(content="", tool_calls=[{
+                "name": "create_calendar_event",
+                "args": {"title": "Verified meeting"},
+                "id": "calendar-create",
+                "type": "tool_call",
+            }])
+
+    llm = _LLM()
+    monkeypatch.setattr(
+        "app.agents.supervisor.get_toolsets",
+        lambda: {"calendar": [create_calendar_event]},
+    )
+    monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: llm)
+
+    result = await make_service_node("calendar")({
+        "message": "create a meeting",
+        "model_to_use": "groq_fast",
+        "services": ["calendar"],
+        "allowed_tools": ["create_calendar_event"],
+        "requires_write": True,
+        "operation": "create",
+        "expected_write_tools": ["create_calendar_event"],
+        "write_completion_mode": "all",
+        "session_id": "test",
+        "allow_small_fallback": False,
+    })
+
+    assert result["task_complete"] is True
+    assert llm.calls == 1
+    assert result["tool_executions"][0]["result"]["id"] == "event-1"
 
 
 @pytest.mark.asyncio

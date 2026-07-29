@@ -166,6 +166,9 @@ Access for the same OAuth project, save, wait for propagation, and reconnect.
    - missing `chat.spaces.create`/insufficient scope: reconnect once;
    - provider-confirmed direct-message 404: the resolver should call idempotent
      `spaces.setup`;
+   - local `unexpected keyword argument requestId`: the discovery client was called
+     incorrectly; `requestId` belongs in the `spaces.setup` request body, and no Google
+     request or DM creation occurred;
    - unrelated 403/404: preserve the provider category; never label it disabled merely
      because its URL contains `chat.googleapis.com`.
 3. Verify the run contains `resolve_chat_destination` followed by
@@ -175,6 +178,9 @@ Access for the same OAuth project, save, wait for propagation, and reconnect.
    reconciliation permits it.
 5. If setup says the recipient is ineligible, confirm the address and whether the
    recipient can use Google Chat. Never autocorrect a near-match address.
+6. If a Calendar/Chat/other write tool succeeded, inspect its deterministic readback
+   before considering a later model quota error. Completed write contracts proceed
+   directly to verification and must not require a post-tool model call.
 
 ## Artifact cleanup
 

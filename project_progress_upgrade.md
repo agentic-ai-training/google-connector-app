@@ -1209,3 +1209,27 @@ source-aware chunking, policy, context-packing, DP allocation, dual-worker,
 Grafana-definition, Docker Compose, secret-history, and isolated migration
 downgrade/forward-repair guardrails pass. Next.js lint/build/audit and Flutter
 analyze/test/debug APK pass. Docker Desktop builds both the API and worker images.
+
+## Sprint 41 — Production Chat setup request and verified-write completion repair
+
+Production run `f07b9ddd` reached the new resolver but proved that the generated
+discovery client accepts `requestId` only inside `SetupSpaceRequest.body`, matching the
+REST schema. Passing it as a Python method keyword raised locally before any setup HTTP
+request. The same run created and read-back-verified its Calendar event, then incorrectly
+marked that step failed when an unnecessary post-tool quality-model turn hit quota.
+
+- [x] Move the deterministic Chat setup request ID into the request body and enforce the
+  real discovery-client call signature in regression tests.
+- [x] Stop model execution immediately when the ordered write contract is satisfied;
+  use the existing deterministic verifier, not an extra model response, to decide
+  success.
+- [x] Preserve pre-tool quota protection: a complex/high-risk write still pauses if the
+  quality model is unavailable before the required tool contract completes.
+- [x] Preserve artifact verification, confirmation, idempotency, lineage, and
+  no-blind-retry rules.
+- [x] Update architecture, operations, the original specification addendum, and this
+  upgrade ledger with the production evidence and corrected boundary.
+
+Guardrail: model quota may prevent a write before its contract begins, but it cannot
+override successful tool evidence plus deterministic readback after the contract has
+completed.
