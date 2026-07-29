@@ -24,12 +24,22 @@ from app.runs.worker import (
     _dependency_context,
     _reconcile_verified_failed_siblings,
     _remaining_unresolved_steps,
+    _send_deterministic_chat_message,
+    _verified_sheet_url,
 )
 from app.tools.calendar_normalization import (
     normalize_calendar_datetime, normalize_calendar_window, normalize_timezone,
 )
 from app.tools.contracts import bind_ordered_output_lineage, write_contract_for
 from app.tools.registry import _resolve_chat_space
+
+
+@pytest.fixture(autouse=True)
+def _isolate_worker_events(monkeypatch):
+    async def append_event(*_args, **_kwargs):
+        return 1
+
+    monkeypatch.setattr("app.runs.worker.append_event", append_event)
 
 
 class _Reply:
@@ -96,6 +106,145 @@ def test_calendar_natural_language_is_normalized_with_india_alias():
         "2026-07-30T10:15:00+05:30",
         "Asia/Kolkata",
     )
+
+
+def test_verified_sheet_url_reads_completed_dependency_evidence():
+    assert _verified_sheet_url([{
+        "service": "sheets",
+        "output_data": {
+            "tool_executions": [{
+                "tool": "create_google_sheet",
+                "result": {
+                    "spreadsheetId": "sheet-1",
+                    "spreadsheetUrl": (
+                        "https://docs.google.com/spreadsheets/d/sheet-1/edit"
+                    ),
+                },
+            }],
+        },
+    }]) == "https://docs.google.com/spreadsheets/d/sheet-1/edit"
+
+
+@pytest.mark.asyncio
+async def test_complete_chat_workflow_resolves_then_sends_verified_sheet(
+    monkeypatch,
+):
+    calls = []
+
+    @tool(description="Resolve DM")
+    def resolve_chat_destination(destination: str):
+        return {}
+
+    @tool(description="Send Chat")
+    def send_chat_message(space_id: str, text: str):
+        return {}
+
+    class _Envelope:
+        def __init__(self, result):
+            self.compact_result = result
+
+        def metadata(self):
+            return {"truncated": False}
+
+    async def execute(_tool, call, _state, _pool):
+        calls.append(call)
+        result = (
+            {"name": "spaces/dm-1"}
+            if call["name"] == "resolve_chat_destination"
+            else {"name": "spaces/dm-1/messages/message-1"}
+        )
+        return None, result, _Envelope(result)
+
+    monkeypatch.setattr(
+        "app.runs.worker.get_toolsets",
+        lambda: {"chat": [resolve_chat_destination, send_chat_message]},
+    )
+    monkeypatch.setattr("app.runs.worker.execute_tool_call", execute)
+    result = await _send_deterministic_chat_message(
+        object(),
+        {"id": "run-1", "session_id": "s", "user_id": "u"},
+        {
+            "id": "chat-step",
+            "input_data": {
+                "tool_arguments": {"destination": "person@example.com"},
+            },
+        },
+        [{
+            "service": "sheets",
+            "output_data": {
+                "tool_executions": [{
+                    "tool": "create_google_sheet",
+                    "result": {
+                        "spreadsheetId": "sheet-1",
+                        "spreadsheetUrl": (
+                            "https://docs.google.com/spreadsheets/d/sheet-1/edit"
+                        ),
+                    },
+                }],
+            },
+        }],
+    )
+    assert [call["name"] for call in calls] == [
+        "resolve_chat_destination", "send_chat_message",
+    ]
+    assert calls[1]["args"] == {
+        "space_id": "spaces/dm-1",
+        "text": "https://docs.google.com/spreadsheets/d/sheet-1/edit",
+    }
+    assert result["task_complete"] is True
+    assert result["tool_executions"][1]["projection"]["lineage_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_resolver_failure_never_attempts_send(monkeypatch):
+    calls = []
+
+    @tool(description="Resolve DM")
+    def resolve_chat_destination(destination: str):
+        return {}
+
+    @tool(description="Send Chat")
+    def send_chat_message(space_id: str, text: str):
+        return {}
+
+    class _Envelope:
+        compact_result = {"error": "not found"}
+
+        def metadata(self):
+            return {"truncated": False}
+
+    async def execute(_tool, call, _state, _pool):
+        calls.append(call)
+        return None, {"error": "not found"}, _Envelope()
+
+    monkeypatch.setattr(
+        "app.runs.worker.get_toolsets",
+        lambda: {"chat": [resolve_chat_destination, send_chat_message]},
+    )
+    monkeypatch.setattr("app.runs.worker.execute_tool_call", execute)
+    result = await _send_deterministic_chat_message(
+        object(),
+        {"id": "run-1", "session_id": "s", "user_id": "u"},
+        {
+            "id": "chat-step",
+            "input_data": {
+                "tool_arguments": {"destination": "person@example.com"},
+            },
+        },
+        [{
+            "service": "sheets",
+            "output_data": {
+                "output": (
+                    "https://docs.google.com/spreadsheets/d/sheet-1/edit"
+                ),
+            },
+        }],
+    )
+    assert [call["name"] for call in calls] == [
+        "resolve_chat_destination",
+    ]
+    assert result["task_complete"] is False
+    assert result["error_evidence"]["message_attempted"] is False
 
 
 def test_calendar_clarifications_produce_deterministic_create_arguments():

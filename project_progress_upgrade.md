@@ -1268,3 +1268,43 @@ accepts that project-level configuration.
 
 Guardrail: the deterministic Calendar path activates only when every required typed
 argument is present. Otherwise, the existing guarded planner path remains in control.
+
+## Sprint 43 — Service-wide durable hybrid execution
+
+The typed Calendar repair is generalized without turning the product into a brittle
+collection of natural-language special cases.
+Production run `2bffbd6d` then proved the distinction: Calendar completed with zero
+model tokens, while the already-complete ordered Chat inputs still entered the quality
+model and paused on quota before any Chat call. The ordered adapter below closes that
+gap without weakening write safety.
+
+- [x] Add a pure typed preflight that validates persisted arguments against the
+  registered tool schema for every eligible single-tool read and write contract.
+- [x] Preserve explicit composite handlers and ordered lineage for Sheet and Chat
+  workflows; do not pretend an incomplete multi-tool operation is deterministic.
+- [x] Execute a fully bound Chat composite deterministically when the approved
+  recipient and a verified dependency Sheet URL are both present: resolve/create the
+  DM, lineage-bind the exact `spaces/...` result, then send the verified URL without a
+  quality-model round trip.
+- [x] Select the bounded allowlisted service agent when typed preflight is incomplete,
+  invalid, ambiguous, or multi-tool, and record a sanitized reason.
+- [x] Forbid model fallback after any tool attempt. Provider failures, uncertain
+  writes, and postcondition failures enter verification, reconciliation, or explicit
+  resume so an external action cannot be duplicated.
+- [x] Persist the execution path and fallback reason and emit append-only selection
+  events with the pre-fallback external-attempt count.
+- [x] Generate a sanitized immutable approval preview with service, operation, tools,
+  recipients/resources/times, and content presence/size; render it before approval.
+- [x] Retain the same approval hash, semantic authority, idempotency, bounded tool
+  allowlist, projection, verification, artifacts, incidents, and tenant isolation on
+  both execution paths.
+- [x] Add regression tests for exact write/read selection, incomplete-argument
+  fallback, ordered-contract fallback, and content-safe approval previews.
+
+Guardrail: fallback is available for planning before the first external call, not as
+an alternate writer after deterministic execution fails.
+
+Local evidence on 2026-07-29: 213 unit tests and 33 PostgreSQL-backed integration
+tests pass; planner goldens pass 33/33 and no-network workflow replays pass 14/14.
+Python compilation and Flake8 pass, Bandit reports no medium/high findings, and the
+Next.js lint, production build, and critical-severity audit gate pass.

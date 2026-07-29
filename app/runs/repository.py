@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.config.settings import get_settings
 from app.runs.context import analyze_conversation_context
+from app.runs.approval_preview import build_approval_summary
 from app.runs.planner import action_hash, build_plan, validate_plan
 from app.runs.request_analysis import EMAIL_PATTERN, RequestStatementAnalysis
 from app.runs.request_analysis import analyze_request_statement
@@ -340,8 +341,7 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                        (run_id,requested_from,action_hash,action_summary,expires_at)
                        VALUES($1,$2,$3,$4::jsonb,now()+interval '30 minutes')""",
                     run_id, user_id, digest,
-                    _json({"objective": message, "risk": policy["risk_level"],
-                           "services": policy["services"]}),
+                    _json(build_approval_summary(plan, message, policy)),
                 )
                 await conn.execute(
                     """INSERT INTO agent_run_events
@@ -442,8 +442,7 @@ async def clarify_run(pool, run_id, user_id, answers):
                    (run_id,requested_from,action_hash,action_summary,expires_at)
                    VALUES($1,$2,$3,$4::jsonb,now()+interval '30 minutes')""",
                 run_id, user_id, digest,
-                _json({"objective": authority_message, "risk": policy["risk_level"],
-                       "services": policy["services"]}),
+                _json(build_approval_summary(plan, authority_message, policy)),
             )
         return status
 

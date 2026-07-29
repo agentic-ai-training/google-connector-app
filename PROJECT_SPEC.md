@@ -1958,3 +1958,17 @@ NEON_DATABASE_URL=postgresql://xxx.neon.tech/neondb
 8. Do not hardcode any API keys — always read from environment variables via `get_settings()`
 9. All async database operations use asyncpg — do not mix with synchronous psycopg2 calls in async contexts
 10. The pgvector HNSW index parameters `m=16, ef_construction=64` are correct for the expected data size — do not change them
+## Addendum — Service-wide durable hybrid execution
+
+All registered Workspace services use a shared execution selection policy. A
+single-tool operation with complete schema-valid arguments executes through a typed
+adapter without spending model tokens. Ordered composites use explicit contracts and
+lineage. If arguments are incomplete or the operation genuinely needs planning, the
+worker may select the bounded service agent before making any external call.
+
+Deterministic failure never means “let the model try the write again.” After a tool
+attempt, failures and uncertain results enter verification/reconciliation and durable
+resume rules. Typed and agent paths have the same approval hash, authorization,
+idempotency, projection, postconditions, artifact ledger, incident generation and
+tenant isolation. Approval UI must preview sanitized concrete actions and must never
+display complete private message/document content.
