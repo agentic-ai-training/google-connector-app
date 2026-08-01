@@ -209,7 +209,9 @@ flowchart LR
 
 Rejected, expired, or rolled-back proposals cannot dispatch or resume a builder. This
 prevents a stale retry checkpoint from consuming quota after its governing decision has
-already ended.
+already ended. A checkpoint whose model/tool policy version differs from the active
+builder is also cancelled; changing limits or tool semantics requires a fresh cloned
+build, never in-place continuation of old token and round counters.
 
 ## Policy decisions before planning
 

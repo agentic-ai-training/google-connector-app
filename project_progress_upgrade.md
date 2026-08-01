@@ -1689,7 +1689,9 @@ tokens while reading zero source bytes and staging placeholder code.
 - [x] Reject sexual-image/video delivery with unknown adult status, consent, or ownership
   before planning, model selection, RAG, or Google API access; record `policy_refusal`.
 - [x] Cancel unfinished candidate builds when their proposal is rejected, expired, or
-  rolled back, and reject new dispatch for an ineligible proposal.
+  rolled back, and reject new dispatch for an ineligible proposal. Cancel old-policy
+  checkpoints instead of resuming them under incompatible role/token limits; a retry
+  must clone the evidence into a fresh current-policy build.
 - [x] Activate `bounded-repo-tools-v11-runtime-read-noop-gates`: ranked runtime
   localization, mandatory exact source read before application staging, adopted-runtime
   integration, placeholder-body rejection, assertion-bearing behavioral tests, syntax,

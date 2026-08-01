@@ -5,6 +5,7 @@ import logging
 from contextlib import suppress
 from datetime import date
 
+from app.improvements.builder import MODEL_POLICY_VERSION, TOOL_POLICY_VERSION
 from app.improvements.failure_intelligence import record_failure_incident
 
 
@@ -527,11 +528,20 @@ async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
                 WHERE b.proposal_id=p.id AND b.status IN ('queued','investigating')
                   AND p.status IN ('rejected','expired','rolled_back')"""
         )
+        await conn.execute(
+            """UPDATE candidate_builds SET status='cancelled',updated_at=now(),
+                     error_message='Builder policy changed; clone under the current policy.'
+                WHERE status IN ('queued','investigating')
+                  AND (model_policy_version IS DISTINCT FROM $1
+                       OR tool_policy_version IS DISTINCT FROM $2)""",
+            MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
+        )
         rows = await conn.fetch(
             """SELECT b.id FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
                WHERE b.status='queued'
                  AND p.status NOT IN ('rejected','expired','rolled_back')
+                 AND b.model_policy_version=$2 AND b.tool_policy_version=$3
                  AND b.checkpoint#>>'{last_runner_failure,retryable}'='true'
                  AND b.updated_at + (
                    LEAST(86400, GREATEST(60, COALESCE(
@@ -541,7 +551,7 @@ async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
                  ) <= now()
                ORDER BY b.updated_at,b.id
                FOR UPDATE SKIP LOCKED LIMIT $1""",
-            max(1, min(int(limit), 10)),
+            max(1, min(int(limit), 10)), MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
         )
         build_ids = [str(row["id"]) for row in rows]
         for build_id in build_ids:
