@@ -2281,6 +2281,7 @@ def test_candidate_callback_leases_and_records_failure_without_proposal_deployme
     from app.api.main import app
     from app.config.settings import get_settings
     from app.db.connection import get_pool
+    from app.improvements.builder import MODEL_POLICY_VERSION, TOOL_POLICY_VERSION
 
     marker = str(uuid.uuid4())
     build_id = uuid.uuid4()
@@ -2324,7 +2325,7 @@ def test_candidate_callback_leases_and_records_failure_without_proposal_deployme
                            VALUES($1,$2,'A','multi_role','failed',$3,$4,$5,$6,
                                   12000,$7::jsonb,$8::jsonb,'integration-test')""",
                         build_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
-                        "adaptive-roles-v1", "bounded-repo-tools-v6-turn-checkpoints",
+                        MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
                         json.dumps({"component": "candidate_builder"}),
                         json.dumps(checkpoint),
                     )
