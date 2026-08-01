@@ -278,6 +278,12 @@ request/output pairs. On reload or History navigation the client rebuilds the tr
 from the durable session before restoring an active run, so a clarification panel cannot
 survive beside a missing request.
 
+Completing clarification or granting approval is a safe pre-execution boundary. A
+non-canary control run is re-pinned there to the current immutable deployment so a
+Railway rollout cannot strand it on a worker version that no longer exists. Candidate
+cohorts remain pinned, and retries after any external attempt still require deterministic
+reconciliation rather than this pre-execution rule.
+
 ## Exact prior-delivery lineage
 
 When a current command explicitly refers to a previous delivered message, context

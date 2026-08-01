@@ -73,6 +73,7 @@ def test_recurring_calendar_uses_typed_answers_without_repeating_prose():
     arguments = plan.steps[0].arguments["tool_arguments"]
     assert arguments["start_datetime"] == "2030-08-01T10:00:00+05:30"
     assert arguments["duration_minutes"] == 10
+    assert arguments["title"] == "Brush my teeth"
     assert arguments["recurrence"] == ["RRULE:FREQ=DAILY;UNTIL=20400801T235959Z"]
 
 
