@@ -1835,3 +1835,11 @@ path; planner goldens pass 44/44; no-network workflow replays pass 16/16; source
 chunking, policy, context-packing, DP allocation, dual-worker isolation, Grafana schema,
 Python compilation/Flake8, and Next.js lint/build guardrails pass. Publication, trusted
 CI, production deployment, and a fresh live-user replay remain the release steps.
+
+Release evidence on 2026-08-02: PR #122 passed both normal and governed-candidate
+backend/web/Flutter workflows, including candidate attestation, and merged to `main` as
+`78fc56e1700bc098107675e49c56f56c85eb65bb`. The main CI and deploy workflows passed.
+Vercel frontend health, Railway API health, and the Railway worker startup ledger all
+attest that same immutable commit. No Google read or write was performed during release
+verification; a fresh authenticated user replay remains operational evidence rather
+than an implementation or deployment blocker.
