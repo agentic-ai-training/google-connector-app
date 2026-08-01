@@ -1658,11 +1658,11 @@ Production evidence on 2026-07-30:
 - Final production run `d91c528a-5428-47cf-b3ce-39019b372959` stopped at
   `awaiting_clarification`, asked separately for passage layout and gloss language,
   and recorded zero model calls and zero external artifacts.
-- The revised session dashboard is version-controlled and validated, but Grafana Cloud
-  publication is pending because `GRAFANA_SERVICE_ACCOUNT_TOKEN` is absent from both
-  the local untracked vault and the linked Railway service. This does not affect
-  runtime OKF evidence, which is already returned by the API and rendered by the
-  deployed frontend.
+- The revised dashboards are version-controlled, validated, and published to the
+  `google-connector-monitoring` Grafana Cloud folder. The synchronizer now reconciles
+  server-side dashboard versions and maps the portable Prometheus UID to
+  `grafanacloud-prom`; both production dashboards were read back successfully. This is
+  separate from runtime OKF evidence returned by the API and deployed frontend.
 
 ## Sprint 52 — Semantic-frame runtime and source-grounded candidate hardening
 

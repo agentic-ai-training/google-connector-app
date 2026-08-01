@@ -121,6 +121,8 @@ token with dashboard write access and save it in the untracked root `.env.local`
 ```bash
 GRAFANA_URL=https://pluckypanther2969.grafana.net
 GRAFANA_SERVICE_ACCOUNT_TOKEN=... # enter locally; never paste into chat
+GRAFANA_FOLDER_UID=google-connector-monitoring
+GRAFANA_PROMETHEUS_DATASOURCE_UID=grafanacloud-prom
 ```
 
 The synchronizer loads `.env.local` without replacing variables explicitly exported by
@@ -131,9 +133,11 @@ python scripts/sync_grafana_dashboards.py --apply \
   --confirmation 'SYNC GRAFANA DASHBOARDS'
 ```
 
-The synchronizer validates required dashboard fields, requires HTTPS, overwrites only
-the two stable dashboard UIDs, and never prints the token. Without `--apply` it performs
-no network request.
+The synchronizer validates required dashboard fields, requires HTTPS, reconciles the
+current server version before overwriting either stable dashboard UID, and never prints
+the token. `GRAFANA_PROMETHEUS_DATASOURCE_UID` rebinds the portable local
+`prometheus` UID to the hosted stack without changing the checked-in dashboard model.
+Without `--apply` the command performs no network request.
 
 ## Rollback
 
