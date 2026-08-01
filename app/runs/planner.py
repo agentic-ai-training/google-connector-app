@@ -462,13 +462,19 @@ def calendar_create_arguments(
     start_date = parse_calendar_date(start_day_value, normalized_timezone)
     if not start_date:
         return {}
-    title_match = re.search(
-        r"\b(?:to|for)\s+(.+?)(?:\s+for\s+(?:the\s+)?next\s+\d+\s+years?)?$",
+    purpose_matches = re.findall(
+        r"\bto\s+(.+?)(?:\s+for\s+(?:the\s+)?next\s+\d+\s+years?)?$",
         message, re.IGNORECASE,
+    )
+    fallback_title = re.search(
+        r"\bfor\s+(?!me\b|(?:the\s+)?next\b)(.+?)$", message, re.IGNORECASE,
+    )
+    purpose = purpose_matches[-1].strip() if purpose_matches else (
+        fallback_title.group(1).strip() if fallback_title else ""
     )
     title = (
         f"Meeting with {recipient_list[0]}" if recipient_list
-        else (title_match.group(1).strip().capitalize() if title_match else "Calendar event")
+        else (purpose.capitalize() if purpose else "Calendar event")
     )
     relative_start = start_day_value.casefold() in {
         "today", "tomorrow", "tommorow",

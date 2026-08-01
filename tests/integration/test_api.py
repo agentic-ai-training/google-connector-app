@@ -1106,6 +1106,45 @@ def test_durable_high_risk_run_requires_action_bound_approval():
         assert any(event["event_type"] == "approval_rejected" for event in events)
 
 
+def test_approval_repins_unstarted_control_run_to_current_executor():
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run, decide_run
+
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            user_id = f"approval-repin-{uuid.uuid4()}@example.com"
+            run, _ = await create_run(
+                pool, user_id, "Send an email to person@example.com",
+                f"approval-repin-{uuid.uuid4()}", f"approval-repin-{uuid.uuid4()}",
+            )
+            async with pool.acquire() as conn:
+                approval = await conn.fetchrow(
+                    "SELECT action_hash FROM run_approvals WHERE run_id=$1", run["id"],
+                )
+                await conn.execute(
+                    "UPDATE agent_runs SET executor_version='stale-control' WHERE id=$1",
+                    run["id"],
+                )
+            status = await decide_run(
+                pool, run["id"], user_id, True, approval["action_hash"],
+            )
+            async with pool.acquire() as conn:
+                version = await conn.fetchval(
+                    "SELECT executor_version FROM agent_runs WHERE id=$1", run["id"],
+                )
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run["id"])
+            return status, version
+
+        status, version = client.portal.call(exercise)
+        assert status == "queued"
+        assert version == (
+            get_settings().executor_version or get_settings().deployment_version
+        )
+
+
 def test_run_idempotency_and_cross_user_isolation():
     from app.api.main import app
 
@@ -1136,6 +1175,7 @@ def test_run_idempotency_and_cross_user_isolation():
 
 def test_recurring_calendar_clarifications_are_typed_and_rebuild_from_original():
     from app.api.main import app
+    from app.config.settings import get_settings
     from app.db.connection import get_pool
     from app.runs.planner import (
         CALENDAR_DURATION_QUESTION,
@@ -1184,6 +1224,9 @@ def test_recurring_calendar_clarifications_are_typed_and_rebuild_from_original()
         assert clarified.status_code == 200
         after = client.get(f"/runs/{run_id}", headers=headers).json()
         assert after["status"] == "awaiting_approval"
+        assert after["executor_version"] == (
+            get_settings().executor_version or get_settings().deployment_version
+        )
         assert after["plan"]["objective"] == message
         assert after["plan"]["services"] == ["calendar"]
         assert after["steps"][0]["input_data"]["tool_arguments"]["recurrence"] == [

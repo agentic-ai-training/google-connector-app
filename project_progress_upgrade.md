@@ -1732,6 +1732,9 @@ candidate staging deferred trivial compiler failures until after expensive revie
 - [x] Rebuild clarification plans from the immutable original request and structured
   answer map; never append repeated clarification prose or let question wording add a
   service.
+- [x] Re-pin a non-canary control run to the current immutable executor when
+  clarification completes or the user grants approval; preserve candidate-canary
+  pinning and never re-pin after an external attempt.
 - [x] Add typed Calendar fields and deterministic personal recurring-event arguments,
   including ten-year horizons, recurrence rules, complete-date validation, and past-date
   re-clarification.
