@@ -297,6 +297,14 @@ def _clarification_answer(answers: dict | None, question: str) -> str:
     return str((answers or {}).get(question) or "").strip()
 
 
+def _timezone_clarification_answer(answers: dict | None) -> str:
+    """Resolve the typed timezone value without coupling it to one prompt label."""
+    for question, value in (answers or {}).items():
+        if "timezone" in str(question).casefold() and str(value or "").strip():
+            return str(value).strip()
+    return ""
+
+
 def _add_years(value: date, years: int) -> date:
     try:
         return value.replace(year=value.year + years)
@@ -547,7 +555,7 @@ def classify_request(
     answers = clarification_answers or {}
     resolved_timezone = resolve_timezone(
         message,
-        _clarification_answer(answers, CALENDAR_TIMEZONE_QUESTION) or timezone,
+        _timezone_clarification_answer(answers) or timezone,
     )
     services = [
         service for service, terms in SERVICES.items()

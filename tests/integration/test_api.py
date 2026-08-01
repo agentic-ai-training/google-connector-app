@@ -363,6 +363,63 @@ def test_multi_service_clarification_rejects_recipient_typo_and_normalizes_timez
         client.portal.call(cleanup)
 
 
+def test_gmail_today_timezone_clarification_is_typed_and_accepted():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"gmail-timezone-clarification-{uuid.uuid4()}@example.com"
+    session_id = f"gmail-timezone-clarification-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "How many senders sent me promotional mails today?",
+        })
+        assert created.status_code == 202
+        run_id = created.json()["run_id"]
+        before = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert before["status"] == "awaiting_clarification"
+        assert before["clarification_fields"] == [{
+            "key": "Which timezone should define today?",
+            "label": "Which timezone should define today?",
+            "type": "timezone",
+            "required": True,
+            "value": "",
+            "options": [],
+            "placeholder": "Choose the timezone that should define the date",
+        }]
+
+        accepted = client.post(
+            f"/runs/{run_id}/clarify", headers=headers,
+            json={"answers": {
+                "Which timezone should define today?": "Asia/Kolkata",
+            }},
+        )
+        assert accepted.status_code == 200
+        assert accepted.json()["status"] == "queued"
+        rebuilt = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert rebuilt["status"] == "queued"
+        assert rebuilt["clarification_questions"] == []
+        assert rebuilt["clarification_answers"] == {
+            "Which timezone should define today?": "Asia/Kolkata",
+        }
+        assert rebuilt["plan"]["steps"][0]["arguments"]["tool_arguments"][
+            "timezone"
+        ] == "Asia/Kolkata"
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id),
+                )
+
+        client.portal.call(cleanup)
+
+
 def test_service_only_reply_resolves_recent_same_session_ambiguity():
     from app.api.main import app
     from app.db.connection import get_pool

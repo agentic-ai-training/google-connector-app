@@ -191,8 +191,11 @@ def _clarification_fields(questions: list[str], answers: dict) -> list[dict]:
                 "options": ["daily", "weekdays", "weekly", "monthly", "yearly"],
                 "placeholder": "Choose a recurrence",
             })
-        elif question == CALENDAR_TIMEZONE_QUESTION:
-            field["type"] = "timezone"
+        elif "timezone" in question.casefold():
+            field.update({
+                "type": "timezone",
+                "placeholder": "Choose the timezone that should define the date",
+            })
         elif "Chat space" in question or "direct-message email" in question:
             field.update({"type": "email_or_space", "placeholder": "person@example.com or spaces/..."})
         fields.append(field)
