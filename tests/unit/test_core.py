@@ -81,6 +81,7 @@ from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
     _groq_tool_json, generate_candidate_draft,
     CandidateBuilderFailure, builder_budget_snapshot,
+    MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
     candidate_contract_errors, candidate_model_order, candidate_review_projection,
     choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
@@ -1518,9 +1519,11 @@ def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
         def transaction(self):
             return Transaction()
 
-        async def fetch(self, query, limit):
+        async def fetch(self, query, limit, model_policy, tool_policy):
             assert "FOR UPDATE SKIP LOCKED" in query
             assert limit == 2
+            assert model_policy == MODEL_POLICY_VERSION
+            assert tool_policy == TOOL_POLICY_VERSION
             return [{"id": "build-one"}]
 
         async def execute(self, query, *args):
@@ -1548,10 +1551,12 @@ def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
     result = asyncio.run(dispatch_retryable_candidate_builds(Pool()))
     assert result == 1
     assert dispatched == ["build-one"]
-    assert len(executed) == 3
+    assert len(executed) == 4
     assert "Proposal is no longer eligible" in executed[0][0]
-    assert "last_retry_dispatch" in executed[1][1][0]
-    assert json.loads(executed[2][1][0])["last_retry_dispatch"]["state"] == (
+    assert "Builder policy changed" in executed[1][0]
+    assert executed[1][1] == (MODEL_POLICY_VERSION, TOOL_POLICY_VERSION)
+    assert "last_retry_dispatch" in executed[2][1][0]
+    assert json.loads(executed[3][1][0])["last_retry_dispatch"]["state"] == (
         "dispatched"
     )
 

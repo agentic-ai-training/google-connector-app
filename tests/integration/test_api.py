@@ -1922,6 +1922,8 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
     from app.api.main import app
     from app.db.connection import get_pool
     from app.improvements.builder import (
+        MODEL_POLICY_VERSION,
+        TOOL_POLICY_VERSION,
         store_candidate_checkpoint,
         store_candidate_draft,
     )
@@ -1958,7 +1960,7 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
                        VALUES($1,$2,'A','multi_role','investigating',$3,$4,$5,$6,
                               24000,$7::jsonb,'integration-test')""",
                     build_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
-                    "adaptive-roles-v1", "bounded-repo-tools-v5-durable-phases",
+                    MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
                     json.dumps({"component": "candidate_builder"}),
                 )
 
