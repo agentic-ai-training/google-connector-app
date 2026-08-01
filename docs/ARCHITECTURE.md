@@ -1,5 +1,8 @@
 # Upgrade architecture
 
+For a production-system-design tutorial and a component-by-component assessment of
+this architecture, see [Production Agentic AI System Design](TEACHING_AGENTIC_SYSTEM_DESIGN.md).
+
 ## Request lifecycle
 
 1. A deterministic statement analyzer runs for every request. It extracts explicit

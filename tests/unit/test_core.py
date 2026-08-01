@@ -2646,6 +2646,16 @@ def test_promotional_sender_count_is_timezone_bounded_and_deterministic():
         "max_messages": 500,
     }
     assert validate_plan(plan) == []
+    clarified_plan, clarified_policy = build_plan(
+        message,
+        clarification_answers={
+            "Which timezone should define today?": "Asia/Kolkata",
+        },
+    )
+    assert clarified_policy["required_clarifications"] == []
+    assert clarified_plan.steps[0].arguments["tool_arguments"]["timezone"] == (
+        "Asia/Kolkata"
+    )
     typo_plan, typo_policy = build_plan(
         "how many senders sent me promotional maisl today?", "Asia/Kolkata",
     )
