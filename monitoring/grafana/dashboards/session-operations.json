@@ -151,5 +151,5 @@
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-sessions","version":8
+  "title":"Google Connector Session Operations","uid":"google-connector-session-operations","version":8
 }

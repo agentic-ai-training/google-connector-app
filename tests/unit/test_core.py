@@ -18,6 +18,7 @@ from scripts.run_ragas_eval import _score_payload
 from scripts.sync_grafana_dashboards import (
     build_dashboard_payload,
     load_local_credentials,
+    remap_datasource_uid,
 )
 from app.improvements.candidates import (
     candidate_runtime_surfaces, infer_candidate_kind,
@@ -1670,7 +1671,7 @@ def test_offline_dp_allocation_enforces_risk_budget_and_fairness():
 def test_versioned_grafana_dashboards_are_publishable():
     for name, expected_uid in (
         ("google-connector.json", "google-connector-agent"),
-        ("session-operations.json", "google-connector-sessions"),
+        ("session-operations.json", "google-connector-session-operations"),
     ):
         payload = build_dashboard_payload(
             Path("monitoring/grafana/dashboards") / name, "agent-observability"
@@ -1679,6 +1680,19 @@ def test_versioned_grafana_dashboards_are_publishable():
         assert payload["folderUid"] == "agent-observability"
         assert payload["dashboard"]["uid"] == expected_uid
         assert payload["dashboard"]["panels"]
+
+
+def test_grafana_datasource_uid_remapping_is_key_scoped():
+    dashboard = {
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "description": "prometheus",
+    }
+    remapped = remap_datasource_uid(
+        dashboard, "prometheus", "grafanacloud-prom",
+    )
+    assert remapped["datasource"]["uid"] == "grafanacloud-prom"
+    assert remapped["datasource"]["type"] == "prometheus"
+    assert remapped["description"] == "prometheus"
 
 
 def test_failure_analyzer_normalizes_json_objects():
