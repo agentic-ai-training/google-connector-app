@@ -201,6 +201,34 @@ def test_tool_budget_exhaustion_gets_one_compact_role_restart():
     assert terminal.reason_code == "active_role_token_authority_exhausted"
 
 
+def test_prior_compact_retry_reason_prevents_restart_when_legacy_progress_dropped_count():
+    job = {
+        "model_name": "llama-3.3-70b-versatile",
+        "token_budget": 12_000,
+        "tokens_used": 29_724,
+        "candidate_commit": None,
+        "candidate_deployment_id": None,
+        "checkpoint": {
+            "last_runner_failure": {"retry_reason": "compact_role_restart"},
+            "generation_checkpoint": {
+                "phase": "role_in_progress",
+                "active_role": "investigator_and_patch_author",
+                "next_round": 3,
+                "messages": [{"role": "user", "content": "bounded prompt"}],
+                "file_count": 0,
+                "role_tokens_used": 13_000,
+            },
+        },
+    }
+
+    decision = candidate_retry_decision(
+        job, error_type="tool_token_budget_exhausted", runner_retryable=True,
+    )
+
+    assert decision.eligible is False
+    assert decision.reason_code == "active_role_token_authority_exhausted"
+
+
 def test_trusted_ci_feedback_starts_from_frozen_files_and_remediates(monkeypatch):
     calls = []
 

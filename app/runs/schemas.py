@@ -207,6 +207,7 @@ class CandidateBuildCheckpoint(BaseModel):
     json_tool_protocol: bool = False
     tool_calls: int = Field(default=0, ge=0, le=30)
     read_bytes: int = Field(default=0, ge=0, le=120_000)
+    read_paths: list[str] = Field(default_factory=list, max_length=50)
     role_tokens_used: int = Field(default=0, ge=0)
     role_models_used: list[str] = Field(default_factory=list, max_length=5)
     models_used: list[str] = Field(default_factory=list, max_length=5)
@@ -216,6 +217,7 @@ class CandidateBuildCheckpoint(BaseModel):
     remaining_effective_tokens: int | None = Field(default=None, ge=0)
     active_role_token_budget: int | None = Field(default=None, ge=0)
     remaining_active_role_tokens: int | None = Field(default=None, ge=0)
+    budget_restart_count: int = Field(default=0, ge=0, le=1)
     staged_file_count: int | None = Field(default=None, ge=0, le=50)
     last_contract_errors: list[SafeDiagnostic] = Field(
         default_factory=list, max_length=20,

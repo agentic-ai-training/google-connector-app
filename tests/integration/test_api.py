@@ -2467,6 +2467,31 @@ def test_candidate_callback_compacts_one_exhausted_role_before_retry():
             assert failed.json()["status"] == "queued"
             assert failed.json()["retry_reason"] == "compact_role_restart"
 
+            leased = client.post(
+                f"/admin/candidate-builder/{build_id}/input", headers=headers,
+            )
+            assert leased.status_code == 200
+            assert (
+                leased.json()["build"]["generation_checkpoint"]
+                ["budget_restart_count"]
+            ) == 1
+            progress = client.post(
+                f"/admin/candidate-builder/{build_id}/checkpoint", headers=headers,
+                json={
+                    "phase": "role_in_progress",
+                    "active_role": "investigator_and_patch_author",
+                    "next_round": 1,
+                    "messages": [{"role": "user", "content": "compact progress"}],
+                    "tool_calls": 22,
+                    "read_bytes": 1_500,
+                    "read_paths": ["app/tools/registry.py"],
+                    "role_tokens_used": 100,
+                    "tokens_used": 14_082,
+                    "budget_restart_count": 1,
+                },
+            )
+            assert progress.status_code == 200
+
             async def inspect_and_cleanup():
                 pool = await get_pool()
                 async with pool.acquire() as conn:
@@ -2480,10 +2505,10 @@ def test_candidate_callback_compacts_one_exhausted_role_before_retry():
                     return checkpoint["generation_checkpoint"]
 
             compact = client.portal.call(inspect_and_cleanup)
-            assert compact["role_tokens_used"] == 0
+            assert compact["role_tokens_used"] == 100
             assert compact["budget_restart_count"] == 1
-            assert compact["next_round"] == 0
-            assert compact["tool_calls"] == 21
+            assert compact["next_round"] == 1
+            assert compact["tool_calls"] == 22
             assert compact["read_paths"] == ["app/tools/registry.py"]
     finally:
         settings.candidate_builder_callback_token = original_token

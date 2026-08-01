@@ -427,4 +427,6 @@ authority but cumulative candidate authority remains, the scheduler permits one 
 role restart: it preserves cumulative usage, tool counters, source paths, frozen files,
 and failure codes; removes verbose model dialogue; resets only the active-role counter;
 and instructs the role to stage an integrated patch early. A second role-budget
-exhaustion is terminal. This is bounded checkpoint compaction, not a quota reset.
+exhaustion is terminal. The typed callback schema retains both the restart count and
+exact read paths; older checkpoints infer a consumed restart from their durable failure
+record. This is bounded checkpoint compaction, not a quota reset.
