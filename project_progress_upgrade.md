@@ -1702,8 +1702,9 @@ tokens while reading zero source bytes and staging placeholder code.
   remediation; preserve code as the hard enforcement plane.
 - [x] Update architecture and the deep teaching/dictionary guide with the implemented
   compiler-style flow and its DSA foundations.
-- [ ] Publish through trusted CI, deploy the immutable release, verify safe production
-  replays, and observe at least one real candidate through source-read and no-op gates.
+- [~] Publish through trusted CI and deploy the immutable release (completed in Sprint
+  53); observing a fresh real V12 candidate through source-read and no-op gates remains
+  evidence-dependent.
 
 No future labelled-data dependency is required for the checked items. RAG, DP, prompt,
 and policy winners still require measured consenting traffic before promotion; that
@@ -1747,7 +1748,7 @@ candidate staging deferred trivial compiler failures until after expensive revie
 - [x] Add unit and PostgreSQL integration regressions for exact prior-write lineage,
   missing-context clarification, typed recurrence, session restoration data, Chat error
   taxonomy, and eager candidate rejection.
-- [ ] Publish through trusted CI, deploy the immutable release, verify repaired production
+- [x] Publish through trusted CI, deploy the immutable release, verify repaired production
   behavior, and retire/cancel the unsafe V11 placeholder candidate under policy rollover.
 
 Pre-release local evidence on 2026-08-01: 255 unit tests and all 293 tests with the
@@ -1757,3 +1758,12 @@ chunking, context-packing/DP/policy evaluations, dual-worker isolation, Next.js
 lint/build/audit, Flutter analyze/test/debug APK, migration 014 round-trip, Compose,
 Grafana dashboard, secret-history, and API/worker/builder/candidate Docker image gates
 pass.
+
+Production evidence on 2026-08-01: PRs #115 and #116 passed trusted backend, web,
+Flutter, and candidate-attestation checks and merged as `998d11c` then `65355a4`.
+Railway API/worker and Vercel attestation pass at `65355a4`; direct API health and the
+worker startup ledger report that exact immutable version. Candidate build
+`7761a80c-d27a-4574-b5a7-e744a346e0f4` is cancelled under the V12 policy rollover and
+cannot retry. Run `f70adb6f` accepted its stored clarifications and approval without an
+external attempt, then was explicitly cancelled by the user; it retains zero artifacts
+and was not revived by maintenance.
