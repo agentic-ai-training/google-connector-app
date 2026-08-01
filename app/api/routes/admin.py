@@ -355,7 +355,7 @@ async def candidate_builder_input(build_id: str):
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
-            """SELECT b.*,p.proposal_key,p.risk_level,
+            """SELECT b.*,p.proposal_key,p.risk_level,p.status AS proposal_status,
                       (SELECT c.candidate_deployment_id
                          FROM improvement_canaries c
                         WHERE c.proposal_id=p.id
@@ -371,6 +371,14 @@ async def candidate_builder_input(build_id: str):
         )
         if not row:
             raise HTTPException(409, "Candidate build is unavailable or already finalized")
+        if row["proposal_status"] in {"rejected", "expired", "rolled_back"}:
+            await conn.execute(
+                """UPDATE candidate_builds SET status='cancelled',updated_at=now(),
+                       error_message='Proposal is no longer eligible for candidate work.'
+                     WHERE id=$1""",
+                build_id,
+            )
+            raise HTTPException(409, "Candidate proposal is no longer eligible")
         if row["status"] == "failed":
             failure = _json_object(row["checkpoint"]).get("last_runner_failure", {})
             decision = candidate_retry_decision(

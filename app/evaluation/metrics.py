@@ -40,7 +40,11 @@ def evaluate_plan(plan, expected: dict[str, Any]) -> dict[str, float]:
         for index, step in enumerate(plan.steps)
     )
     max_tokens = float(expected.get("max_tokens", 1500 * max(1, len(plan.steps))))
-    cost_score = min(1.0, max_tokens / max(1.0, float(plan.estimated_max_tokens)))
+    actual_tokens = float(plan.estimated_max_tokens)
+    cost_score = (
+        1.0 if max_tokens == 0 and actual_tokens == 0
+        else min(1.0, max_tokens / max(1.0, actual_tokens))
+    )
     return {
         "service_recall": round(service_recall, 4),
         "service_precision": round(service_precision, 4),

@@ -180,14 +180,60 @@ authority, terminal policy codes, and absence of a commit/deployment. A valid re
 checkpoint resumes at its persisted round with frozen author files.
 
 The active candidate policies are `adaptive-roles-v3-model-chain-evidence` and
-`bounded-repo-tools-v10-symbol-patch-sandbox`. The portal reports the configured primary
+`bounded-repo-tools-v11-runtime-read-noop-gates`. The portal reports the configured primary
 and every actually used Groq-hosted fallback. Finalization rejects files whose declared
 create/replace/delete operation disagrees with the base tree and rejects new modules
-that are not adopted by an existing runtime path.
+that are not adopted by an existing runtime path. Application patches additionally
+require an observed source read; placeholder-only application functions and
+assertion-free tests are rejected structurally. A ranked runtime-boundary localizer
+reduces broad repository reads, but it never substitutes for reading the exact symbol.
 
 The portal places every current human gate directly below the candidate ledger. A single
 highlighted list covers retries, draft-PR publication, isolated-canary deployment,
 traffic activation, and promotion.
+
+```mermaid
+flowchart LR
+    I[Sanitized incident] --> L[Rank runtime boundaries]
+    L --> R[Read exact source and test neighborhood]
+    R --> P[Patch adopted runtime path]
+    P --> T[Add behavioral regression]
+    T --> S[Structural/no-op/source-read gates]
+    S --> F[Freeze files and hashes]
+    F --> C[Trusted no-secret CI]
+    C --> H{Human release gate}
+    H --> D[Isolated candidate deployment]
+    D --> A{Human canary activation}
+    A --> M[Measure and auto-stop on safety regression]
+```
+
+Rejected, expired, or rolled-back proposals cannot dispatch or resume a builder. This
+prevents a stale retry checkpoint from consuming quota after its governing decision has
+already ended.
+
+## Policy decisions before planning
+
+Some requests must terminate before classification can create an executable Workspace
+plan. The pre-planning policy frame records a durable, zero-provider decision and exposes
+no Google tool allowlist. In particular, the agent does not initiate delivery of sexual
+imagery or video when adult status, consent, and ownership cannot be established. This
+is recorded as `policy_refusal`, not `tool_selection`, and consumes no LLM, RAG, or
+Workspace API quota. The trusted OKF policy documents the human-readable rationale;
+versioned code remains the non-bypassable enforcement boundary.
+
+## Semantic-frame coverage and canonical verification
+
+The planner validates coverage against the canonical service frame after resolving
+polysemy and service collapse. “People who mailed me” maps to Gmail sender metadata,
+not Contacts; a Sheet URL satisfies the requested Drive-link dependency; Calendar can
+own Meet conference creation. This prevents both omitted work and invented services.
+
+Gmail count/list operations project category, local-day timezone, uniqueness, and
+bounded scan limits into metadata-only tools. Calendar verification compares normalized
+instants rather than raw offset strings and verifies recurrence rules when requested.
+External Chat configuration failures reconcile to `manual_required` instead of exposing
+a misleading automatic resume loop. A contextual request for a link pauses when the
+selected antecedent contains no URL.
 
 ## Dynamic content planning
 

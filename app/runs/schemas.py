@@ -25,7 +25,7 @@ class ExecutionPlan(BaseModel):
     objective: str
     intent_kind: Literal[
         "workspace_action", "workspace_guidance", "product_information",
-        "scope_chat", "ambiguous", "out_of_scope",
+        "scope_chat", "ambiguous", "out_of_scope", "policy_refusal",
     ] = "workspace_action"
     assumptions: list[str] = Field(default_factory=list)
     required_clarifications: list[str] = Field(default_factory=list)

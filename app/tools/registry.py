@@ -99,7 +99,36 @@ def list_recent_gmail_senders(
     query: str = "-in:sent",
     unique: bool = True,
     scan_limit: int = 200,
+    category: str | None = None,
+    period: str = "all",
+    timezone: str | None = None,
 ):
+    allowed_categories = {"primary", "promotions", "social", "updates", "forums"}
+    normalized_category = category.casefold().strip() if category else None
+    if normalized_category and normalized_category not in allowed_categories:
+        raise ValueError(f"Unsupported Gmail category: {category}")
+    if period not in {"all", "today"}:
+        raise ValueError("period must be 'all' or 'today'")
+    query_parts = [query]
+    if normalized_category:
+        query_parts.append(f"category:{normalized_category}")
+    local_date = None
+    if period == "today":
+        if not timezone:
+            raise ValueError("timezone is required when period is today")
+        try:
+            zone = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown timezone: {timezone}") from exc
+        now = datetime.now(zone)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        query_parts.extend([
+            f"after:{int(start.timestamp())}",
+            f"before:{int(end.timestamp())}",
+        ])
+        local_date = start.date().isoformat()
+    effective_query = " ".join(item for item in query_parts if item).strip()
     requested = max(1, min(int(max_results), 100))
     remaining = max(requested, min(int(scan_limit), 500))
     senders = []
@@ -109,7 +138,7 @@ def list_recent_gmail_senders(
     while len(senders) < requested and scanned < remaining:
         response = g.gmail_service.users().messages().list(
             userId="me",
-            q=query,
+            q=effective_query,
             maxResults=min(100, remaining - scanned),
             pageToken=page_token,
         ).execute()
@@ -153,6 +182,10 @@ def list_recent_gmail_senders(
         "returned": len(senders),
         "unique": unique,
         "scanned": scanned,
+        "category": normalized_category,
+        "period": period,
+        "timezone": timezone,
+        "local_date": local_date,
     }
 
 
@@ -244,6 +277,64 @@ def count_gmail_senders(
     }
 
 
+@tool(
+    "count_gmail_messages",
+    description=(
+        "Count Gmail message IDs only, optionally within a category and the "
+        "current local day. This never retrieves message bodies."
+    ),
+)
+def count_gmail_messages(
+    category: str | None = None,
+    period: str = "all",
+    timezone: str | None = None,
+    max_messages: int = 2000,
+):
+    allowed_categories = {"primary", "promotions", "social", "updates", "forums"}
+    normalized_category = category.casefold().strip() if category else None
+    if normalized_category and normalized_category not in allowed_categories:
+        raise ValueError(f"Unsupported Gmail category: {category}")
+    if period not in {"all", "today"}:
+        raise ValueError("period must be 'all' or 'today'")
+    query_parts = ["-in:sent"]
+    local_date = None
+    if normalized_category:
+        query_parts.append(f"category:{normalized_category}")
+    if period == "today":
+        if not timezone:
+            raise ValueError("timezone is required when period is today")
+        try:
+            zone = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown timezone: {timezone}") from exc
+        now = datetime.now(zone)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        query_parts.extend([
+            f"after:{int(start.timestamp())}", f"before:{int(end.timestamp())}",
+        ])
+        local_date = start.date().isoformat()
+    limit = max(1, min(int(max_messages), 10_000))
+    count = 0
+    page_token = None
+    exhausted = False
+    while count < limit:
+        response = g.gmail_service.users().messages().list(
+            userId="me", q=" ".join(query_parts),
+            maxResults=min(500, limit - count), pageToken=page_token,
+        ).execute()
+        count += len(response.get("messages", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            exhausted = True
+            break
+    return {
+        "message_count": count, "complete": exhausted, "period": period,
+        "category": normalized_category, "timezone": timezone,
+        "local_date": local_date, "scan_limit": limit,
+    }
+
+
 @tool("get_gmail_message", description="Google Workspace operation")
 def get_gmail_message(message_id:str): return _gmail(g.gmail_service.users().messages().get(userId="me",id=message_id,format="full").execute())
 @tool("send_gmail", description="Google Workspace operation")
@@ -277,11 +368,11 @@ def list_calendar_events(start_date:str,end_date:str,calendar_id:str="primary"):
 @tool("get_calendar_event", description="Google Workspace operation")
 def get_calendar_event(event_id:str,calendar_id:str="primary"): return g.calendar_service.events().get(calendarId=calendar_id,eventId=event_id).execute()
 @tool("create_calendar_event", description="Google Workspace operation")
-def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True,calendar_id:str="primary",timezone:str|None=None):
+def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendees:list[str]|None=None,description:str|None=None,add_meet:bool=True,calendar_id:str="primary",timezone:str|None=None,recurrence:list[str]|None=None):
     start_datetime, end_datetime, timezone = normalize_calendar_window(
         start_datetime, end_datetime, timezone
     )
-    request_id = _request_id('calendar',calendar_id,title,start_datetime,end_datetime,attendees,description,timezone)
+    request_id = _request_id('calendar',calendar_id,title,start_datetime,end_datetime,attendees,description,timezone,recurrence)
     existing = g.calendar_service.events().list(
         calendarId=calendar_id, privateExtendedProperty=f"agentRequestId={request_id}",
         maxResults=1, singleEvents=True,
@@ -289,10 +380,11 @@ def create_calendar_event(title:str,start_datetime:str,end_datetime:str,attendee
     if existing:
         return existing[0]
     body={"summary":title,"start":{"dateTime":start_datetime,**({"timeZone":timezone} if timezone else {})},"end":{"dateTime":end_datetime,**({"timeZone":timezone} if timezone else {})},"description":description,"attendees":[{"email":x} for x in attendees or []],"extendedProperties":{"private":{"agentRequestId":request_id}}}
+    if recurrence: body["recurrence"] = recurrence
     if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{request_id}"}}
     return g.calendar_service.events().insert(calendarId=calendar_id,body=body,conferenceDataVersion=1,sendUpdates="all").execute()
 @tool("update_calendar_event", description="Google Workspace operation")
-def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None,calendar_id:str="primary",timezone:str|None=None,attendees:list[str]|None=None,add_meet:bool|None=None):
+def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|None=None,end_datetime:str|None=None,description:str|None=None,calendar_id:str="primary",timezone:str|None=None,attendees:list[str]|None=None,add_meet:bool|None=None,recurrence:list[str]|None=None):
     if start_datetime is not None or end_datetime is not None or timezone is not None:
         timezone = normalize_timezone(timezone)
     if start_datetime is not None:
@@ -305,6 +397,7 @@ def update_calendar_event(event_id:str,title:str|None=None,start_datetime:str|No
     if end_datetime is not None: body["end"]={"dateTime":end_datetime,**({"timeZone":timezone} if timezone else {})}
     if description is not None: body["description"]=description
     if attendees is not None: body["attendees"]=[{"email":x} for x in attendees]
+    if recurrence is not None: body["recurrence"] = recurrence
     if add_meet: body["conferenceData"]={"createRequest":{"requestId":f"agent-{_request_id('calendar-update',calendar_id,event_id)}"}}
     return g.calendar_service.events().patch(calendarId=calendar_id,eventId=event_id,body=body,conferenceDataVersion=1 if add_meet else 0,sendUpdates="all").execute()
 @tool("delete_calendar_event", description="Google Workspace operation")
@@ -558,6 +651,7 @@ def list_meet_participants(conference_record: str, max_results: int = 100):
 
 _TOOL_NAMES = (
     "search_gmail", "list_recent_gmail_senders", "count_gmail_senders",
+    "count_gmail_messages",
     "get_gmail_message", "send_gmail", "reply_gmail",
     "label_gmail", "trash_gmail", "list_gmail_threads",
     "list_calendar_events", "get_calendar_event", "create_calendar_event",

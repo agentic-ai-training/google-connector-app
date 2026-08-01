@@ -56,6 +56,17 @@ async def reconcile_failed_step(
         "failure_category": step.get("error_category") or run.get("error_category"),
         "artifact_count": len(artifacts or []),
     }
+    external_configuration_error = str(step.get("error_message") or "").casefold()
+    if step.get("service") == "chat" and any(marker in external_configuration_error for marker in (
+        "chat api configuration is incomplete",
+        "chat api is disabled",
+        "google chat is turned off",
+        "requires newly granted chat space creation access",
+    )):
+        return ReconciliationDecision(
+            "manual_required", "chat_external_configuration_required", None,
+            {**evidence, "safe_resume_blocked": True},
+        )
     if step.get("read_only"):
         return ReconciliationDecision(
             "safe_to_retry", "read_only_operation", step_id, evidence,

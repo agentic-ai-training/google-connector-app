@@ -93,6 +93,16 @@ class BoundedRepositoryTools:
                 {"query": {"type": "string"}},
                 ["query"],
             ),
+            _tool(
+                "localize_runtime_boundary",
+                "Rank existing runtime and test surfaces for incident terms before reading source",
+                {
+                    "terms": {"type": "array", "items": {"type": "string"}},
+                    "service": {"type": "string"},
+                    "operation": {"type": "string"},
+                },
+                ["terms"],
+            ),
             _tool("stage_candidate_file", "Stage an in-memory candidate file", {
                 "path": {"type": "string"},
                 "change_type": {"type": "string", "enum": ["create", "replace", "delete"]},
@@ -141,6 +151,7 @@ class BoundedRepositoryTools:
             "read_repository_symbol": self.read_symbol,
             "find_symbol_references": self.find_references,
             "inspect_test_neighborhood": self.inspect_test_neighborhood,
+            "localize_runtime_boundary": self.localize_runtime_boundary,
             "stage_candidate_file": self.stage,
             "apply_candidate_patch": self.apply_patch,
             "inspect_candidate_diff": self.diff,
@@ -183,7 +194,7 @@ class BoundedRepositoryTools:
             value["truncated"] = bool(value.get("truncated")) or len(matches) > 30
         elif name in {
             "index_repository_symbols", "find_symbol_references",
-            "inspect_test_neighborhood",
+            "inspect_test_neighborhood", "localize_runtime_boundary",
         }:
             field = (
                 "symbols" if "symbols" in value else
@@ -372,6 +383,40 @@ class BoundedRepositoryTools:
                 *({"surface": "test", **item} for item in tests),
             ],
             "truncated": False,
+        }
+
+    def localize_runtime_boundary(
+        self, terms: list[str], service: str = "", operation: str = "",
+    ) -> dict:
+        """Return compact ranked locations; callers must still read exact source."""
+        needles = []
+        for value in [service, operation, *(terms or [])]:
+            value = str(value or "").casefold().strip()
+            if 2 <= len(value) <= 100 and value not in needles:
+                needles.append(value)
+        if not needles:
+            raise ValueError("At least one bounded localization term is required")
+        scored: dict[tuple[str, int], dict] = {}
+        for needle in needles[:12]:
+            for match in self.search(needle, ["app/", "tests/"])["matches"][:60]:
+                key = (match["path"], int(match["line"]))
+                item = scored.setdefault(key, {
+                    **match, "score": 0, "matched_terms": [],
+                })
+                item["score"] += 3 if needle in {service, operation} else 1
+                item["matched_terms"].append(needle)
+        ranked = sorted(
+            scored.values(),
+            key=lambda item: (-item["score"], item["path"], item["line"]),
+        )[:60]
+        return {
+            "matches": ranked,
+            "terms": needles,
+            "next_required_action": (
+                "Read the highest-relevance existing implementation symbol/file and "
+                "its regression-test neighborhood before staging application code."
+            ),
+            "truncated": len(scored) > len(ranked),
         }
 
     def stage(self, path: str, change_type: str, content: str = "") -> dict:
