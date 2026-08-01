@@ -110,7 +110,16 @@ def candidate_retry_decision(
     if tokens_used >= effective_builder_token_budget(job):
         return CandidateRetryDecision(False, "effective_token_authority_exhausted", resume)
     if code == "tool_token_budget_exhausted":
-        restart_count = int(checkpoint.get("budget_restart_count") or 0)
+        prior_failure = job.get("checkpoint") or {}
+        if not isinstance(prior_failure, dict):
+            prior_failure = {}
+        prior_reason = (prior_failure.get("last_runner_failure") or {}).get(
+            "retry_reason"
+        )
+        restart_count = max(
+            int(checkpoint.get("budget_restart_count") or 0),
+            1 if prior_reason == "compact_role_restart" else 0,
+        )
         if runner_retryable and restart_count < 1:
             return CandidateRetryDecision(
                 True,

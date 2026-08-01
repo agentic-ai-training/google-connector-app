@@ -1789,9 +1789,12 @@ deployed schema identified `UndefinedColumnError`: the branch referenced nonexis
 - [x] Permit one cumulative-budget-preserving compact role restart after candidate
   `tool_token_budget_exhausted`; preserve tool/read evidence and make the second active-
   role exhaustion terminal.
+- [x] Preserve compact-restart count and exact read paths through the typed GitHub
+  checkpoint callback; legacy checkpoints also infer the consumed restart from durable
+  failure evidence so they cannot obtain repeated fresh role authority.
 - [x] Add unit, PostgreSQL, golden-planner, policy, workflow replay, and documentation
   coverage for the repaired paths.
 
-Local evidence on 2026-08-01: 258 unit tests and all 299 tests with PostgreSQL enabled
+Local evidence on 2026-08-01: 259 unit tests and all 300 tests with PostgreSQL enabled
 pass. Planner goldens pass 43/43, policy comparison reports no regression, and workflow
 replays pass 16/16. Release/production evidence is pending publication of this sprint.

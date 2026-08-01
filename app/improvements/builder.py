@@ -879,6 +879,7 @@ async def _groq_tool_json(
             "last_tool_name": last_tool_name,
             "progress_gate": progress_gate,
             "resume_point": f"{role}:round:{next_round}",
+            "budget_restart_count": int(resume.get("budget_restart_count") or 0),
             **builder_budget_snapshot(
                 job, cumulative, active_used, token_budget,
             ),
@@ -1513,6 +1514,7 @@ async def store_candidate_checkpoint(
             "remaining_active_role_tokens": int(
                 candidate.get("remaining_active_role_tokens") or 0
             ),
+            "budget_restart_count": int(candidate.get("budget_restart_count") or 0),
             "last_contract_errors": [
                 str(value)[:100]
                 for value in (candidate.get("last_contract_errors") or [])[:20]
