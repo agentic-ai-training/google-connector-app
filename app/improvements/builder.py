@@ -19,6 +19,7 @@ from app.improvements.candidates import (
     validate_candidate_adoption, validate_candidate_files,
 )
 from app.improvements.builder_tools import BoundedRepositoryTools
+from app.improvements.failure_intelligence import sanitize_failure_evidence
 from app.mlops.metrics import (
     candidate_checkpoint_resumes, candidate_progress_gates,
 )
@@ -26,7 +27,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v12-eager-stage-compiler-gates"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v13-evidence-grounded-runtime-patches"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -683,7 +684,12 @@ async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dic
                 "stage": incident["stage"], "category": incident["category"],
                 "component": incident["component"], "service": incident["service"],
                 "operation": incident["operation"], "root_cause": incident["root_cause"],
+                "breaking_point": incident.get("breaking_point"),
                 "request_shape": incident.get("request_shape") or {},
+                "evidence": sanitize_failure_evidence(incident.get("evidence") or {}),
+                "failure_mechanism": incident.get("failure_mechanism"),
+                "architectural_boundary": incident.get("architectural_boundary"),
+                "source_version": incident.get("source_version"),
                 "selected_option": option, "contains_raw_user_content": False,
             }), actor,
         )
@@ -890,6 +896,13 @@ async def _groq_tool_json(
 
     for round_number in range(start_round, max_rounds):
         if tokens >= token_budget:
+            if role != "independent_safety_reviewer" and not tools.staged_files():
+                raise CandidateBuilderFailure(
+                    "files_required", role=role, round_number=round_number,
+                    staged_file_count=0, retry_class="structural",
+                    terminal_policy=True,
+                    resume_point=f"{role}:round:{round_number}",
+                )
             raise CandidateBuilderFailure(
                 "tool_token_budget_exhausted", role=role,
                 round_number=round_number,

@@ -34,6 +34,29 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _safe_tool_failure_detail(result: Any) -> str:
+    """Project provider failures to actionable, content-free diagnostics."""
+    if not isinstance(result, dict):
+        return "Provider returned no structured result"
+    raw = str(result.get("error") or "").casefold()
+    labels = (
+        ("invalid maxresults", "Google API 400: invalid maxResults value"),
+        ("service_disabled", "Google API service is disabled"),
+        ("accessnotconfigured", "Google API configuration is incomplete"),
+        ("rate limit", "Provider rate limit was reached"),
+        ("quota", "Provider quota was reached"),
+        ("insufficient permission", "Google permission or OAuth scope is insufficient"),
+        ("permission denied", "Google permission or OAuth scope is insufficient"),
+        ("not found", "Requested Google resource was not found"),
+        ("invalid argument", "Google API rejected an invalid argument"),
+        ("bad request", "Google API rejected the request arguments"),
+    )
+    return next(
+        (label for marker, label in labels if marker in raw),
+        "Provider returned explicit failure evidence",
+    )
+
+
 def _normalize_rows(values: Any) -> list[list[str]]:
     rows = []
     for raw_row in values if isinstance(values, list) else []:
@@ -431,12 +454,22 @@ async def verify_executions_detailed(
         )
     ]
     if failures:
+        failed_write = any(item.get("tool") in WRITE_TOOLS for item in failures)
+        details = sorted({
+            _safe_tool_failure_detail(item.get("result")) for item in failures
+        })
+        message = (
+            "At least one required tool returned explicit failure evidence: "
+            + "; ".join(details)
+        )
         return VerificationOutcome(
-            False, "At least one required tool returned explicit failure evidence",
-            artifacts, "tool_failure", "service_agent", "write_tool_execution",
+            False, message,
+            artifacts, "tool_failure", "service_agent",
+            "write_tool_execution" if failed_write else "read_tool_execution",
             {
                 "service": service, "operation": operation,
                 "failed_tools": [str(item.get("tool")) for item in failures][:20],
+                "provider_failure_classes": details,
             },
         )
     writes = [item for item in executions if item.get("tool") in WRITE_TOOLS]

@@ -82,8 +82,17 @@ def _gmail(msg):
 
 @tool("search_gmail", description="Google Workspace operation")
 def search_gmail(query:str,max_results:int=10,after_date:str|None=None):
-    q=f"{query} after:{after_date}" if after_date else query
-    ids=g.gmail_service.users().messages().list(userId="me",q=q,maxResults=max_results).execute().get("messages",[])
+    requested = max(1, min(int(max_results), 100))
+    q = re.sub(r"\bis:promotional\b", "category:promotions", query, flags=re.I)
+    if after_date and not re.search(r"\bafter:", q, re.I):
+        normalized_after = str(after_date).strip().replace("-", "/")
+        if not re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}|\d{9,12}", normalized_after):
+            raise ValueError(
+                "after_date must be YYYY-MM-DD, YYYY/MM/DD, or a Unix timestamp; "
+                "use a typed timezone-aware count operation for 'today'"
+            )
+        q = f"{q} after:{normalized_after}"
+    ids=g.gmail_service.users().messages().list(userId="me",q=q,maxResults=requested).execute().get("messages",[])
     return [_gmail(g.gmail_service.users().messages().get(userId="me",id=x["id"],format="full").execute()) for x in ids]
 
 

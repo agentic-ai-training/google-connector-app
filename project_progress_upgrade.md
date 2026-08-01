@@ -1798,3 +1798,40 @@ deployed schema identified `UndefinedColumnError`: the branch referenced nonexis
 Local evidence on 2026-08-01: 259 unit tests and all 300 tests with PostgreSQL enabled
 pass. Planner goldens pass 43/43, policy comparison reports no regression, and workflow
 replays pass 16/16. Release/production evidence is pending publication of this sprint.
+
+## Sprint 55 — Typed Gmail counts and evidence-grounded improvement review
+
+Production run `5908bf33` on deployment `cc687ad3` exposed a precedence defect rather
+than an OAuth or Google-service outage. The specific message-count frame matched, but a
+nearby generic `get` verb selected Gmail search. The quality model was quota-limited;
+its small fallback then emitted `max_results=0`, an ambiguous `after_date=today`, and an
+invalid promotion alias. Google correctly rejected the first read with HTTP 400. The
+failure portal persisted the occurrence but falsely labelled the read as a write-tool
+failure. The newest V12 candidate also proved that category-only candidate input omits
+the exact safe evidence needed to localize a verifier defect.
+
+- [x] Give quantified Gmail message-count frames precedence over nearby generic search
+  verbs while preserving sender-count, sender-list, and ordinary Gmail search routing.
+- [x] Execute message and sender counts through typed metadata tools after timezone
+  clarification, with no LLM or full-message-body path.
+- [x] Clamp generic Gmail search pagination, normalize the legacy promotions alias,
+  prevent duplicate date filters, and reject ambiguous relative dates at the adapter.
+- [x] Give Gmail metadata operations operation-specific postconditions and truthful
+  bounded-count semantics.
+- [x] Distinguish invalid arguments, read-tool failures, write-tool failures, and their
+  reconciliation boundaries; retain only allowlisted provider failure classes.
+- [x] Feed the candidate builder bounded verifier evidence, breaking point, source
+  version, mechanism, and architectural boundary; infer write shape from typed steps.
+- [x] Activate builder policy V13 and terminate source-free candidates as
+  `files_required` instead of granting another full empty investigation budget.
+- [x] Order failure/candidate records newest-first; make both ledgers collapsible and
+  display created/updated timestamps beside the existing highlighted human actions.
+- [x] Add the exact production wording to unit, PostgreSQL integration, planner-golden,
+  failure-intelligence, verifier-boundary, and documentation coverage.
+
+Local evidence on 2026-08-02: all 308 Python tests pass with PostgreSQL integration
+enabled; the exact clarification integration tests pass against the Neon-connected test
+path; planner goldens pass 44/44; no-network workflow replays pass 16/16; source-aware
+chunking, policy, context-packing, DP allocation, dual-worker isolation, Grafana schema,
+Python compilation/Flake8, and Next.js lint/build guardrails pass. Publication, trusted
+CI, production deployment, and a fresh live-user replay remain the release steps.
