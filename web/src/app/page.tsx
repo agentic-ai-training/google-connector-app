@@ -149,11 +149,17 @@ export default function Home(){
   },[currentRunId,currentRunStatus]);
   const clarifications=currentRun?.id===clarificationDraft.runId
     ?clarificationDraft.answers:{};
+  const clarificationFields=currentRun?.clarification_fields??
+    (currentRun?.clarification_questions??[]).map(question=>({
+      key:question,label:question,type:isTimezoneQuestion(question)?"timezone" as const:"text" as const,
+      required:true,value:"",options:[],placeholder:"Enter the requested information",
+    }));
   const clarificationValue=(question:string)=>clarifications[question]
+    ??clarificationFields.find(field=>field.key===question)?.value
     ??(isTimezoneQuestion(question)?browserTimezone():"");
   const clarificationAnswers=Object.fromEntries(
-    (currentRun?.clarification_questions??[]).map(
-      question=>[question,clarificationValue(question)],
+    clarificationFields.map(
+      field=>[field.key,clarificationValue(field.key)],
     ),
   );
   useEffect(()=>{
@@ -275,7 +281,14 @@ export default function Home(){
       {currentRun.recent_events?.some(event=>event.event_type==="fallback_model_used")&&<p className="mt-2 text-xs text-amber-600">A validated fallback model was used for a safe step.</p>}
       <ol className="mt-3 space-y-1">{currentRun.steps.map(step=><li key={step.id}><StepMark status={step.status}/> {step.title}</li>)}</ol>
       {currentRun.artifacts?.length>0&&<div className="mt-3 rounded-lg border p-3"><strong>Verified artifacts and recovery</strong><ul className="mt-1 space-y-3">{currentRun.artifacts.map(artifact=><li key={artifact.id}>{artifact.url?.startsWith("https://")?<a className="text-blue-600 underline" href={artifact.url} target="_blank" rel="noreferrer">{artifact.artifact_type}: {artifact.external_id}</a>:<span>{artifact.artifact_type}: {artifact.external_id}</span>} <span className="text-zinc-500">({artifact.verification_status}; {artifact.cleanup_state})</span><ArtifactActions run={currentRun} artifact={artifact} onRefresh={refreshRun}/></li>)}</ul></div>}
-      {currentRun.status==="awaiting_clarification"&&<div className="mt-4 rounded-xl border border-blue-400 bg-blue-50 p-3 text-blue-950"><strong>More information required</strong>{currentRun.clarification_questions?.map(question=><label key={question} className="mt-3 block"><span>{question}</span>{isTimezoneQuestion(question)?<select aria-label={question} className="mt-1 w-full rounded border bg-white p-2" value={clarificationValue(question)} onChange={event=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[question]:event.target.value}}))}>{[browserTimezone(),...COMMON_TIMEZONES].filter((value,index,values)=>values.indexOf(value)===index).map(value=><option key={value} value={value}>{value}</option>)}</select>:<input className="mt-1 w-full rounded border bg-white p-2" value={clarificationValue(question)} onChange={event=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[question]:event.target.value}}))}/>}</label>)}<button onClick={()=>void clarify(clarificationAnswers)} disabled={currentRun.clarification_questions?.some(question=>!clarificationValue(question).trim())} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">Apply answers</button></div>}
+      {currentRun.status==="awaiting_clarification"&&<div className="mt-4 rounded-xl border border-blue-400 bg-blue-50 p-3 text-blue-950"><strong>More information required</strong>{clarificationFields.map(field=>{
+        const update=(value:string)=>setClarificationDraft(draft=>({runId:currentRun.id,answers:{...(draft.runId===currentRun.id?draft.answers:{}),[field.key]:value}}));
+        const value=clarificationValue(field.key);
+        const options=field.type==="timezone"
+          ?[browserTimezone(),...COMMON_TIMEZONES].filter((item,index,values)=>values.indexOf(item)===index)
+          :field.options;
+        return <label key={field.key} className="mt-3 block"><span>{field.label}</span>{field.type==="select"||field.type==="timezone"?<select aria-label={field.label} className="mt-1 w-full rounded border bg-white p-2" value={value} onChange={event=>update(event.target.value)}><option value="" disabled>{field.placeholder||"Choose a value"}</option>{options.map(option=><option key={option} value={option}>{option}</option>)}</select>:<input aria-label={field.label} type={field.type==="date"?"date":field.type==="email_or_space"?"text":"text"} placeholder={field.placeholder} className="mt-1 w-full rounded border bg-white p-2" value={value} onChange={event=>update(event.target.value)}/>}</label>;
+      })}<button onClick={()=>void clarify(clarificationAnswers)} disabled={clarificationFields.some(field=>field.required&&!clarificationValue(field.key).trim())} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">Apply answers</button></div>}
       {currentRun.status==="awaiting_approval"&&<div className="mt-4 rounded-xl border border-amber-400 bg-amber-50 p-3 text-amber-950"><strong>Confirmation required</strong><p className="mt-1">Approve only these external writes for this immutable plan.</p><ul className="mt-2 list-disc space-y-1 pl-5">{((currentRun.approval?.action_summary?.actions as Array<{service?:string;operation?:string;arguments?:Record<string,unknown>}>|undefined)??[]).map((action,index)=><li key={`${action.service}-${action.operation}-${index}`}><span className="font-medium">{action.service} · {action.operation}</span>{action.arguments&&Object.keys(action.arguments).length>0?<span>: {Object.entries(action.arguments).map(([key,value])=>`${key}=${Array.isArray(value)?value.join(", "):String(value)}`).join(" · ")}</span>:<span>: exact details will be resolved before any external call</span>}</li>)}</ul><p className="mt-2 text-xs">If typed arguments are incomplete, the bounded planner may prepare them before the first external attempt. It cannot silently retry a failed write.</p><div className="mt-3 flex gap-2"><button onClick={()=>void decide(true)} className="rounded-lg bg-amber-600 px-4 py-2 text-white">Approve and continue</button><button onClick={()=>void decide(false)} className="rounded-lg border px-4 py-2">Reject</button></div></div>}
       {["queued","running"].includes(currentRun.status)&&<button onClick={()=>void cancel()} className="mt-3 rounded-lg border px-3 py-2">Cancel run</button>}
       {["failed","partial"].includes(currentRun.status)&&<button onClick={()=>void resume()} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-white">Resume from failed step</button>}

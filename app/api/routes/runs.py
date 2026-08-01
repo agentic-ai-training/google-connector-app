@@ -371,6 +371,8 @@ async def start_run(body: RunCreate, request: Request):
             context_diagnostics=context_analysis.diagnostics(),
             request_analysis=request_analysis,
             referenced_output=context_analysis.referenced_output,
+            referenced_subject=context_analysis.referenced_subject,
+            referenced_service=context_analysis.referenced_service,
         )
     except RunLimitExceeded as exc:
         try:
@@ -755,7 +757,9 @@ async def session_runs(session_id: str, request: Request):
         rows = await conn.fetch(
             """SELECT id,status,current_phase,technical_completion,
                       functional_completion,user_visible_completion,risk_level,
-                      error_category,queued_at,started_at,completed_at
+                      error_category,queued_at,started_at,completed_at,
+                      left(request,8000) AS request,
+                      left(coalesce(result->>'output',''),8000) AS output
                FROM agent_runs WHERE session_id=$1 AND user_id=$2 AND deleted_at IS NULL
                ORDER BY queued_at DESC LIMIT 100""",
             session_id, request.state.user_id,

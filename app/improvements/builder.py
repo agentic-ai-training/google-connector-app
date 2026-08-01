@@ -26,7 +26,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v11-runtime-read-noop-gates"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v12-eager-stage-compiler-gates"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -732,7 +732,7 @@ def _execute_builder_repository_tool(
     if (
         name in {"stage_candidate_file", "apply_candidate_patch"}
         and path.startswith("app/")
-        and tools.read_bytes <= 0
+        and path not in tools.read_paths
     ):
         return {
             "error": "runtime_source_read_required",
@@ -741,7 +741,21 @@ def _execute_builder_repository_tool(
                 "before staging application code."
             ),
         }
-    return tools.execute(name, arguments)
+    result = tools.execute(name, arguments)
+    if name in {"stage_candidate_file", "apply_candidate_patch"} and path:
+        validation_codes = staged_validation_codes(tools.validate_staged())
+        if validation_codes:
+            tools.discard(path)
+            return {
+                "error": "staged_candidate_rejected",
+                "contract_errors": validation_codes,
+                "discarded": path,
+                "detail": (
+                    "The compiler/policy gate rejected and discarded this staged "
+                    "revision. Read the exact source and submit a complete valid patch."
+                ),
+            }
+    return result
 
 
 async def _groq_json(
@@ -833,6 +847,7 @@ async def _groq_tool_json(
         tools.restore_counters(
             calls=int(resume.get("tool_calls") or 0),
             read_bytes=int(resume.get("read_bytes") or 0),
+            read_paths=list(resume.get("read_paths") or []),
         )
 
     last_tool_name = str(resume.get("last_tool_name") or "") or None
@@ -857,6 +872,7 @@ async def _groq_tool_json(
             "json_tool_protocol": json_tool_protocol,
             "tool_calls": tools.calls,
             "read_bytes": tools.read_bytes,
+            "read_paths": sorted(tools.read_paths)[:50],
             "role_models_used": models_used,
             "staged_file_count": len(tools.staged_files()),
             "last_contract_errors": last_contract_errors,
@@ -1120,6 +1136,10 @@ async def _groq_tool_json(
                         str(item.get("content") or ""),
                     )
                 except (ValueError, TypeError) as exc:
+                    try:
+                        tools.discard(str(item.get("path") or ""))
+                    except (ValueError, TypeError):
+                        pass
                     direct_stage_errors.append(
                         "projected_candidate_body_rejected"
                         if "Projected staged-file provenance" in str(exc)
@@ -1519,6 +1539,9 @@ async def store_candidate_checkpoint(
                 "json_tool_protocol": bool(candidate.get("json_tool_protocol")),
                 "tool_calls": int(candidate.get("tool_calls") or 0),
                 "read_bytes": int(candidate.get("read_bytes") or 0),
+                "read_paths": [
+                    str(path)[:500] for path in candidate.get("read_paths", [])[:50]
+                ],
                 "role_tokens_used": int(candidate.get("role_tokens_used") or 0),
                 "role_models_used": candidate.get("role_models_used") or [],
             })

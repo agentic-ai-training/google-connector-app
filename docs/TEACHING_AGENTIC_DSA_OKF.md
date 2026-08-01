@@ -1901,3 +1901,37 @@ relevance boundaries. If `N` indexed symbols are preprocessed, lookup can approa
 `O(q + r)` for query size `q` and returned matches `r`; repository-wide scanning is
 closer to total source size. Localization reduces tokens, but a candidate must still
 read exact source before patching because ranked metadata cannot prove runtime behavior.
+
+<a id="dictionary-typed-clarification"></a>
+## Typed clarification
+
+A clarification is a partial state update, not extra prompt prose. Model unanswered
+fields as a mapping from stable question keys to schemas such as date, timezone, enum,
+duration, email, or resource ID. Each transition validates only authorized keys, merges
+them into durable state, and recomputes the remaining fields from the immutable request.
+With a hash map, lookup and merge are expected `O(1)` per field and `O(k)` for `k`
+answers. The crucial invariant is idempotence: applying the same answer twice must not
+duplicate text, services, steps, or authority. In Python this fits a Pydantic
+discriminated union plus a pure `next_state(request, answers)` function.
+
+<a id="dictionary-payload-lineage"></a>
+## Payload lineage
+
+The provenance chain proving which exact bytes a later write may reuse. For a message it
+includes source run, source step, verified tool name, subject/text hash, and the
+destination-independent payload. It is a directed edge from a produced value to a
+consumer argument, not a similarity match. Following a direct indexed reference is
+expected `O(1)`; searching conversational prose is both slower and ambiguous. Sensitive
+payload stays encrypted and tenant-scoped while ordinary logs retain IDs and hashes. A
+receipt such as “message sent” is evidence of delivery, not the message payload.
+
+<a id="dictionary-eager-compiler-gate"></a>
+## Eager compiler gate
+
+A validation boundary applied immediately after each candidate edit instead of only at
+final submission. Parse Python/JSON/YAML, enforce allowed paths, reject placeholder
+bodies and assertion-free tests, then discard the invalid in-memory revision. If file
+validation costs `O(n)` in syntax-tree size, eager validation adds predictable local
+work but prevents multiple expensive model rounds from reviewing unusable code. This is
+the fail-fast principle applied to an agentic coding state machine: a transition advances
+only when its local invariants hold.

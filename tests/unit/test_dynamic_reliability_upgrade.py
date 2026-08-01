@@ -5,7 +5,16 @@ from app.improvements.builder_tools import BoundedRepositoryTools
 from app.improvements.candidates import validate_candidate_files
 from app.evaluation.metrics import evaluate_plan
 from app.runs.informational import workspace_chat_answer
-from app.runs.planner import build_plan, classify_request
+from app.runs.planner import (
+    CALENDAR_DURATION_QUESTION,
+    CALENDAR_END_DATE_QUESTION,
+    CALENDAR_RECURRENCE_QUESTION,
+    CALENDAR_START_DATE_QUESTION,
+    CALENDAR_START_TIME_QUESTION,
+    CALENDAR_TIMEZONE_QUESTION,
+    build_plan,
+    classify_request,
+)
 from app.runs.verifier import _calendar_verification
 from app.runs import verifier
 from app.tools import registry
@@ -42,6 +51,44 @@ def test_calendar_synonyms_and_recurrence_are_structured_before_execution():
     assert policy["intent_kind"] == "workspace_action"
     assert "On what date should the recurrence start?" in policy["required_clarifications"]
     assert "When should the recurrence end?" in policy["required_clarifications"]
+
+
+def test_recurring_calendar_uses_typed_answers_without_repeating_prose():
+    message = (
+        "create a recurring calender event for me for the next 10 years "
+        "to brush my teeth"
+    )
+    answers = {
+        CALENDAR_START_TIME_QUESTION: "10:00 AM",
+        CALENDAR_DURATION_QUESTION: "10 minutes",
+        CALENDAR_TIMEZONE_QUESTION: "Asia/Kolkata",
+        CALENDAR_RECURRENCE_QUESTION: "daily",
+        CALENDAR_START_DATE_QUESTION: "2030-08-01",
+        CALENDAR_END_DATE_QUESTION: "10 years later",
+    }
+    plan, policy = build_plan(message, clarification_answers=answers)
+
+    assert policy["required_clarifications"] == []
+    assert "User clarifications:" not in plan.objective
+    arguments = plan.steps[0].arguments["tool_arguments"]
+    assert arguments["start_datetime"] == "2030-08-01T10:00:00+05:30"
+    assert arguments["duration_minutes"] == 10
+    assert arguments["recurrence"] == ["RRULE:FREQ=DAILY;UNTIL=20400801T235959Z"]
+
+
+def test_past_typed_recurring_start_is_reasked_not_silently_changed():
+    policy = classify_request(
+        "create a recurring calendar event daily for the next 10 years",
+        clarification_answers={
+            CALENDAR_START_TIME_QUESTION: "10:00 AM",
+            CALENDAR_DURATION_QUESTION: "10 minutes",
+            CALENDAR_TIMEZONE_QUESTION: "Asia/Kolkata",
+            CALENDAR_RECURRENCE_QUESTION: "daily",
+            CALENDAR_START_DATE_QUESTION: "2020-08-01",
+            CALENDAR_END_DATE_QUESTION: "2030-08-01",
+        },
+    )
+    assert CALENDAR_START_DATE_QUESTION in policy["required_clarifications"]
 
 
 def test_link_reference_without_a_url_requires_clarification():
@@ -135,3 +182,12 @@ def test_candidate_builder_rejects_placeholder_code_and_noop_tests(tmp_path):
         "content": "def active():\n    return False\n",
     })
     assert accepted["staged"] == "app/runtime.py"
+
+    invalid = _execute_builder_repository_tool(tools, "stage_candidate_file", {
+        "path": "app/runtime.py",
+        "change_type": "replace",
+        "content": "def active(:\n    return False\n",
+    })
+    assert invalid["error"] == "staged_candidate_rejected"
+    assert "candidate_syntax_invalid" in invalid["contract_errors"]
+    assert "app/runtime.py" not in tools.staged

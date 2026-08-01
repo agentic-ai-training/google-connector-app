@@ -42,6 +42,7 @@ class BoundedRepositoryTools:
         self.max_elapsed_seconds = max_elapsed_seconds
         self.calls = 0
         self.read_bytes = 0
+        self.read_paths: set[str] = set()
         self.started = time.monotonic()
         self.staged: dict[str, dict[str, Any]] = {}
 
@@ -169,7 +170,9 @@ class BoundedRepositoryTools:
             raise ValueError("Candidate builder tool arguments must be an object")
         return handlers[name](**arguments)
 
-    def restore_counters(self, *, calls: int, read_bytes: int) -> None:
+    def restore_counters(
+        self, *, calls: int, read_bytes: int, read_paths: list[str] | None = None,
+    ) -> None:
         """Restore durable limits without allowing a retry to replenish authority."""
         calls = int(calls)
         read_bytes = int(read_bytes)
@@ -179,6 +182,10 @@ class BoundedRepositoryTools:
             raise BuilderToolLimitError("invalid candidate read-byte checkpoint")
         self.calls = calls
         self.read_bytes = read_bytes
+        self.read_paths = {
+            path for path in (read_paths or [])
+            if isinstance(path, str) and any(path.startswith(root) for root in ALLOWED_ROOTS)
+        }
 
     @staticmethod
     def project_result(name: str, result: Any, *, max_chars: int = 4_000) -> dict:
@@ -299,6 +306,7 @@ class BoundedRepositoryTools:
         content = "\n".join(lines[start - 1:end])
         size = len(content.encode())
         self.read_bytes += size
+        self.read_paths.add(path)
         if self.read_bytes > self.max_read_bytes:
             raise BuilderToolLimitError("candidate repository read-byte limit exceeded")
         return {"path": path, "start_line": start, "end_line": end, "content": content}
