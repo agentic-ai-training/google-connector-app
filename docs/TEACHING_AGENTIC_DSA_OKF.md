@@ -1056,6 +1056,77 @@ itself a capability forbidden by executable policy.
 12. Use Grafana aggregates and Neon run facts to reconstruct one failure without
     placing a run ID in a Prometheus label.
 
+## 31. Compiler-style semantic planning and candidate construction
+
+The current hardening treats both requests and patches like compiler inputs. A compiler
+does not search for one sentence and execute a canned answer. It converts many surface
+forms into a smaller intermediate representation, validates invariants, and only then
+executes or emits code.
+
+```mermaid
+flowchart LR
+    W[Words and spelling variants] --> F[Semantic frame]
+    F --> C[Canonical services and operations]
+    C --> G[Coverage and dependency graph]
+    G --> A[Approval and policy checks]
+    A --> E[Typed execution or bounded agent fallback]
+    E --> V[Canonical postconditions]
+```
+
+For example, `people who mailed me` produces the canonical frame
+`gmail.recent_senders`, not `contacts.search`; `Sheet drive link` collapses to the
+verified spreadsheet URL; and Calendar may own Meet creation. The coverage check runs
+after these reductions. Checking raw nouns would reject valid plans; checking nothing
+would permit silent omission.
+
+A useful Python representation is a frozen dataclass or Pydantic model:
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class SemanticFrame:
+    service: str
+    operation: str
+    entities: tuple[str, ...]
+    temporal_scope: str | None
+    delivery_channel: str | None
+
+def covered(expected: set[tuple[str, str]], actual: list[SemanticFrame]) -> bool:
+    return expected <= {(frame.service, frame.operation) for frame in actual}
+```
+
+Set containment is expected `O(e + a)` for `e` expected and `a` actual frames. The hard
+part is semantic correctness before the set operation, so production tests use families
+of paraphrases, misspellings, and adversarial collisions rather than one golden phrase.
+
+Candidate construction follows a second compiler pipeline:
+
+```mermaid
+flowchart TD
+    I[Sanitized incident IR] --> L[Rank source locations]
+    L --> R[Read exact symbol]
+    R --> P[Apply bounded patch]
+    P --> B[Behavioral regression]
+    B --> AST[AST and no-op gates]
+    AST --> H[Freeze hashes]
+    H --> CI[Trusted CI without provider secrets]
+    CI --> REL[Human-gated release state machine]
+```
+
+Localization is an inverted-index/ranking problem; symbol extraction is a tree traversal
+over Python's AST; a line patch is a sequence splice; frozen file identity is a content
+hash; CI and canary are state machines. The builder never receives a general terminal
+because shell authority plus untrusted generated code plus provider credentials would
+collapse the isolation boundary. Deterministic repository tools give it useful coding
+operations with smaller prompts and auditable limits.
+
+OKF contributes versioned explanations and workflows to both pipelines, but never
+replaces their compiler checks. A run pins one bundle hash so later replay can recover
+the exact human-approved policy text it saw. Application code still enforces tool
+allowlists, typed schemas, approval, idempotency, and policy refusal. This separation is
+why updating an OKF document cannot silently authorize a new Google mutation.
+
 # Deep DSA and agentic-systems dictionary
 
 Use this section as the lookup layer for every earlier lesson. Complexity assumes
@@ -1077,6 +1148,7 @@ hash distribution; worst-case behavior is different.
 [BFS](#dictionary-bfs) ·
 [cache](#dictionary-cache) ·
 [canary](#dictionary-canary) ·
+[canonicalization](#dictionary-canonicalization) ·
 [cardinality](#dictionary-cardinality) ·
 [chunk](#dictionary-chunk) ·
 [circuit breaker](#dictionary-circuit-breaker) ·
@@ -1092,6 +1164,7 @@ hash distribution; worst-case behavior is different.
 [dynamic programming](#dictionary-dynamic-programming) ·
 [embedding](#dictionary-embedding) ·
 [event sourcing](#dictionary-event-sourcing) ·
+[false success](#dictionary-false-success) ·
 [fingerprint](#dictionary-fingerprint) ·
 [graph](#dictionary-graph) ·
 [greedy](#dictionary-greedy) ·
@@ -1110,9 +1183,13 @@ hash distribution; worst-case behavior is different.
 [MDP](#dictionary-mdp) ·
 [memoization](#dictionary-memoization) ·
 [MMR](#dictionary-mmr) ·
+[model chain](#dictionary-model-chain) ·
 [MVCC](#dictionary-mvcc) ·
+[no-op test](#dictionary-noop-test) ·
 [normalization](#dictionary-normalization) ·
 [OKF](#dictionary-okf) ·
+[plan coverage](#dictionary-plan-coverage) ·
+[policy refusal](#dictionary-policy-refusal) ·
 [pre/postconditions](#dictionary-postcondition) ·
 [provenance](#dictionary-provenance) ·
 [queue](#dictionary-queue) ·
@@ -1127,9 +1204,11 @@ hash distribution; worst-case behavior is different.
 **S–W:** [schema](#dictionary-schema) ·
 [semaphore](#dictionary-semaphore) ·
 [serialization](#dictionary-serialization) ·
+[semantic frame](#dictionary-semantic-frame) ·
 [set](#dictionary-set) ·
 [sliding window](#dictionary-sliding-window) ·
 [state machine](#dictionary-state-machine) ·
+[source localization](#dictionary-source-localization) ·
 [tenant isolation](#dictionary-tenant-isolation) ·
 [token bucket](#dictionary-token-bucket) ·
 [topological sort](#dictionary-topological-sort) ·
@@ -1739,3 +1818,86 @@ The complete agreement around a mutation: validated arguments, risk and
 approval, idempotency key, preconditions, expected artifact, postconditions,
 retry class, reconciliation, and compensation. Tool schemas describe inputs;
 write contracts describe safe lifecycle semantics.
+
+<a id="dictionary-canonicalization"></a>
+## Canonicalization
+
+Mapping several equivalent representations to one stable representation. In this
+project, `tommorow` and `tomorrow`, `+05:30` and the equivalent UTC instant, or several
+phrases for Gmail sender extraction must converge before comparison. A Python
+canonicalizer should be pure and idempotent: `canon(canon(x)) == canon(x)`. Lookup-based
+normalization is expected `O(n)` over input tokens; date/time canonicalization also
+depends on timezone parsing. Canonicalization is not lossy guessing: ambiguity must
+produce clarification rather than a fabricated value.
+
+<a id="dictionary-false-success"></a>
+## False success
+
+A terminal state that claims completion although required evidence or user-visible
+outcomes are absent. Examples include accepting a model refusal as a Gmail read or
+marking a multi-service request complete after omitting Chat. Prevent it with explicit
+postconditions, required-tool evidence, plan coverage, and read-after-write checks. In
+Python, return a typed result such as `Outcome(passed: bool, evidence: dict)` rather than
+truth-testing a non-empty string. False success is more dangerous than an explicit
+failure because downstream systems and learning datasets treat the label as truth.
+
+<a id="dictionary-model-chain"></a>
+## Model chain
+
+An ordered list of model attempts governed by eligibility, risk, quota, and fallback
+rules. The configured primary is not proof of actual use; every attempt and token count
+must be recorded. A chain is a sequence with worst-case `O(m)` provider attempts for
+`m` eligible models, but retries multiply cost unless bounded separately. A safe chain
+never silently downgrades a complex mutation to a model that has not passed the same
+policy and tool-use evaluations.
+
+<a id="dictionary-noop-test"></a>
+## No-op test
+
+A test that passes without observing meaningful behavior—for example, a function body
+containing only `pass`, or a test that imports newly disconnected code and asserts
+nothing. Python AST traversal can reject obvious forms in `O(k)` nodes, but semantic
+no-op detection also needs trusted CI, mutation/failing-before evidence, and runtime
+integration checks. A syntactically valid test is not necessarily a regression test.
+
+<a id="dictionary-plan-coverage"></a>
+## Plan coverage
+
+The invariant that every canonical requested outcome is represented by at least one
+plan step or an explicitly documented service collapse. Represent expected and actual
+frames as sets; subset checking is expected `O(e + a)`. Coverage must run after semantic
+canonicalization: raw noun coverage would mistake “people who mailed me” for Contacts.
+Coverage proves inclusion, not correct ordering, so DAG dependency and argument
+validation remain separate checks.
+
+<a id="dictionary-policy-refusal"></a>
+## Policy refusal
+
+A pre-execution decision that a requested action crosses a non-bypassable safety or
+authority boundary. It is not a model refusal, tool failure, or provider error. The plan
+must expose zero tools and zero provider budget, while durable telemetry records the
+policy version and sanitized reason. In Python, make it a distinct enum/state instead
+of encoding it as an error string; this prevents retry schedulers and candidate failure
+clustering from treating a correct refusal as a broken tool.
+
+<a id="dictionary-semantic-frame"></a>
+## Semantic frame
+
+A structured intermediate representation of meaning: service, operation, entities,
+time, channel, risk, and dependencies. It separates the unbounded vocabulary of user
+language from the finite executable registry. Frames can be frozen dataclasses or
+Pydantic models; equality and hashing then support coverage and deduplication. A frame
+must retain evidence/confidence because identical words can have different meanings.
+The common mistake is to call a bag of regex matches a semantic frame without resolving
+collisions or missing required slots.
+
+<a id="dictionary-source-localization"></a>
+## Source localization
+
+Ranking the existing files, symbols, references, and neighboring tests most likely to
+contain a defect. It is information retrieval over code: tokenize incident terms,
+search an inverted index or AST symbol table, score matches, then read only the highest
+relevance boundaries. If `N` indexed symbols are preprocessed, lookup can approach
+`O(q + r)` for query size `q` and returned matches `r`; repository-wide scanning is
+closer to total source size. Localization reduces tokens, but a candidate must still
+read exact source before patching because ranked metadata cannot prove runtime behavior.

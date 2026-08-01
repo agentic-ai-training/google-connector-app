@@ -28,7 +28,7 @@ CHAT_DELIVERY_PATTERN = re.compile(
 )
 
 WRITE_PATTERNS = (
-    r"\bsend\b", r"\breply\b", r"\bcreate\b", r"\bwrite\b", r"\bappend\b",
+    r"\bsend\b", r"\breply\b", r"\b(?:create|make|add|set|put)\b", r"\bwrite\b", r"\bappend\b",
     r"\bupdate\b", r"\bmodify\b", r"\bshare\b", r"\binvite\b", r"\bschedule\b",
     r"\bdelete\b", r"\btrash\b", r"\bmove\b", r"\bcomplete\b", r"\bcancel\b",
 )
@@ -79,7 +79,9 @@ SERVICE_POSTCONDITIONS = {
 }
 
 SERVICE_OPERATION_PATTERNS = {
-    "gmail": [("sender_count",
+    "gmail": [("message_count",
+               r"\b(?:count|how many|number of)\b.{0,100}\b(?:mail|email|message)s?\b"),
+              ("sender_count",
                r"\b(?:count|how many)\b.{0,100}\b(?:senders?|people|persons?)\b|"
                r"\b(?:senders?|people|persons?)\b.{0,100}\b(?:count|how many)\b"),
               ("trash", r"\b(trash|delete)\b"),
@@ -87,7 +89,7 @@ SERVICE_OPERATION_PATTERNS = {
               ("reply", r"\brepl(?:y|ies)\b"), ("send", r"\bsend\b"),
               ("search", r"\b(search|find|latest|recent|last|get|read|list)\b")],
     "calendar": [("delete", r"\b(delete|cancel)\b"), ("update", r"\b(update|move|reschedule)\b"),
-                 ("create", r"\b(create|schedule|invite|book)\b"),
+                 ("create", r"\b(create|make|add|set|put|schedule|invite|book)\b"),
                  ("availability", r"\b(available|availability|free|busy)\b"),
                  ("list", r"\b(list|show|get|find)\b")],
     "drive": [("trash", r"\b(delete|trash)\b"), ("share", r"\bshare\b"), ("move", r"\bmove\b"),
@@ -110,6 +112,7 @@ SERVICE_OPERATION_PATTERNS = {
 
 OPERATION_TOOLS = {
     ("composition", "compose"): [],
+    ("gmail", "message_count"): ["count_gmail_messages"],
     ("gmail", "sender_count"): ["count_gmail_senders"],
     ("gmail", "recent_senders"): ["list_recent_gmail_senders"],
     ("gmail", "search"): ["search_gmail", "get_gmail_message", "list_gmail_threads"],
@@ -149,7 +152,7 @@ OPERATION_TOOLS = {
     ("meet", "conferences"): ["list_meet_conferences", "get_meet_space"],
     ("meet", "get"): ["get_meet_space"],
 }
-READ_OPERATIONS = {"compose", "search", "sender_count", "recent_senders", "get", "read", "list",
+READ_OPERATIONS = {"compose", "search", "message_count", "sender_count", "recent_senders", "get", "read", "list",
                    "availability", "list_spaces",
                    "participants", "conferences"}
 DEFAULT_READ_OPERATION = {
@@ -480,7 +483,7 @@ def classify_request(
             services.remove("calendar")
         if "gmail" in services and not GMAIL_DELIVERY_PATTERN.search(authority_text):
             services.remove("gmail")
-        if "chat" in services and not CHAT_DELIVERY_PATTERN.search(authority_text):
+        if "chat" in services and "chat" not in statement.delivery_channels:
             services.remove("chat")
         services.insert(0, "composition")
     write = (
@@ -519,6 +522,20 @@ def classify_request(
             clarifications.append("How long should the event last?")
         if not re.search(r"\b(?:timezone|utc|gmt|ist|est|edt|pst|pdt|cet|asia/|america/|europe/)\b", text):
             clarifications.append("Which timezone should be used?")
+        if re.search(r"\b(?:recurr(?:ing|ence)|repeat(?:ing|ed)?|every)\b", text):
+            if not re.search(
+                r"\b(?:daily|weekdays?|weekly|monthly|yearly|annually|"
+                r"every\s+(?:day|week|month|year|monday|tuesday|wednesday|"
+                r"thursday|friday|saturday|sunday))\b",
+                text,
+            ):
+                clarifications.append(
+                    "What recurrence should be used (daily, weekdays, weekly, monthly, or yearly)?"
+                )
+            if not re.search(r"\b(?:today|tomorrow|tommorow|on\s+\d{4}-\d{2}-\d{2})\b", text):
+                clarifications.append("On what date should the recurrence start?")
+            if not re.search(r"\b(?:until|through|for\s+\d+\s+(?:occurrences?|weeks?|months?))\b", text):
+                clarifications.append("When should the recurrence end?")
     if (
         "chat" in services and write and "space" not in text
         and not statement.chat_destination_emails
@@ -534,7 +551,11 @@ def classify_request(
         and not resolved_timezone
     ):
         clarifications.append("Which timezone should define today?")
-    if intent_kind != "workspace_action":
+    if intent_kind == "ambiguous":
+        clarifications.append(
+            "What exact Workspace outcome should be performed for this service?"
+        )
+    if intent_kind not in {"workspace_action", "ambiguous"}:
         services = ["general"]
         write = False
         high_risk = False
@@ -576,6 +597,16 @@ def build_plan(
         message, timezone, authority_message=authority_message,
         request_analysis=statement,
     )
+    if (
+        statement.contextual_reference
+        and re.search(r"\blink\b", statement.normalized_text)
+        and referenced_output is not None
+        and not re.search(r"https?://[^\s<>()]+", referenced_output)
+    ):
+        policy["required_clarifications"] = list(dict.fromkeys([
+            *policy["required_clarifications"],
+            "Which exact link should be used? The referenced content contains no URL.",
+        ]))
     # Transformation shorthand such as "make it shorter" is valid only when
     # relevance-gated conversation resolution supplied an actual source.  The
     # lexical composition classifier identifies the operation class, but it
@@ -630,6 +661,7 @@ def build_plan(
         return ExecutionPlan(
             objective=message,
             intent_kind=policy["intent_kind"],
+            required_clarifications=policy["required_clarifications"],
             services=["general"],
             rag_mode="none",
             steps=[step],
@@ -694,7 +726,7 @@ def build_plan(
                 r"\b(?:last|latest|recent)\s+(\d{1,3})\b", message.lower(),
             )
             exact_tool_arguments = {}
-            if service == "gmail" and operation == "sender_count":
+            if service == "gmail" and operation in {"message_count", "sender_count"}:
                 category_match = re.search(
                     r"\b(promotions?|promotional|social|updates?|forums?|primary)\b",
                     message.casefold(),
@@ -715,6 +747,15 @@ def build_plan(
                     "max_messages": 500,
                 }
             if service == "gmail" and operation == "recent_senders":
+                category_match = re.search(
+                    r"\b(promotions?|promotional|social|updates?|forums?|primary)\b",
+                    message.casefold(),
+                )
+                category = {
+                    "promotion": "promotions", "promotional": "promotions",
+                    "update": "updates", "forum": "forums",
+                }.get(category_match.group(1), category_match.group(1)) \
+                    if category_match else None
                 exact_tool_arguments = {
                     "max_results": (
                         min(int(count_match.group(1)), 100) if count_match else 20
@@ -723,6 +764,12 @@ def build_plan(
                     "unique": not bool(re.search(
                         r"\b(?:keep|include) duplicates?\b", message.lower(),
                     )),
+                    "category": category,
+                    "period": (
+                        "today" if re.search(r"\btoday\b", message.casefold())
+                        else "all"
+                    ),
+                    "timezone": policy["timezone"],
                 }
             gmail_copy = (
                 service == "gmail"
@@ -772,6 +819,8 @@ def build_plan(
                     **exact_tool_arguments,
                     "content_contract": policy["content_contract"],
                 }
+                if statement.contextual_reference and referenced_output:
+                    exact_tool_arguments["reuse_text"] = referenced_output
             allowed_tools = OPERATION_TOOLS.get((service, operation), [])
             contract = write_contract_for(service, operation, allowed_tools)
             steps.append(PlanStep(
@@ -840,6 +889,23 @@ def build_plan(
     success_criteria = [
         criterion for step in steps for criterion in step.postconditions
     ] + ["Partial results and the first failed step are reported accurately"]
+    planned_services = {step.service for step in steps}
+    # Coverage is checked against the classifier's canonical service frame,
+    # not every lexical noun.  For example, "people who mailed me" is a
+    # Gmail sender query rather than Contacts, and a semantic request for
+    # historical documents is intentionally answered by the RAG composition
+    # step rather than a live Docs operation.
+    expected_services = {"composition"} if rag_answer_only else set(policy["services"])
+    if policy["sheet_url_is_drive_link"]:
+        expected_services.discard("drive")
+    if policy["calendar_adds_meet"]:
+        expected_services.discard("meet")
+    missing_services = expected_services - planned_services
+    if missing_services:
+        raise ValueError(
+            "Plan coverage rejected missing requested services: "
+            + ", ".join(sorted(missing_services))
+        )
     plan = ExecutionPlan(
         objective=message,
         intent_kind=policy["intent_kind"],

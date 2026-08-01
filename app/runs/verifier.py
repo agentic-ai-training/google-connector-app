@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -182,15 +183,28 @@ def _calendar_verification(tool: str, args: dict, result: dict) -> tuple[bool, d
         value.get("hangoutLink")
         or value.get("conferenceData", {}).get("entryPoints")
     )
+    expected_recurrence = sorted(str(item) for item in (args.get("recurrence") or []))
+    observed_recurrence = sorted(str(item) for item in (value.get("recurrence") or []))
+    def same_instant(expected, observed):
+        if expected is None:
+            return True
+        try:
+            expected_value = datetime.fromisoformat(str(expected).replace("Z", "+00:00"))
+            observed_value = datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+            return expected_value == observed_value
+        except (TypeError, ValueError):
+            return expected == observed
     checks = {
         "id_match": value.get("id") == event_id,
         "active": value.get("status") != "cancelled",
-        "start_match": expected_start is None or observed_start == expected_start,
-        "end_match": expected_end is None or observed_end == expected_end,
+        "start_match": same_instant(expected_start, observed_start),
+        "end_match": same_instant(expected_end, observed_end),
         "timezone_match": timezone is None or observed_timezone == timezone,
         "attendees_match": not expected_attendees
         or expected_attendees == observed_attendees,
         "conference_match": not conference_requested or conference_present,
+        "recurrence_match": not expected_recurrence
+        or expected_recurrence == observed_recurrence,
     }
     return all(checks.values()), {
         "tool": tool,

@@ -79,12 +79,20 @@ _GUIDANCE_PATTERNS = (
     r"\bexplain (?:how|what)\b", r"\bguide me\b", r"\bwhat is\b",
 )
 _ACTION_PATTERN = (
-    r"\b(search|find|list|show|get|read|send|reply|create|make|build|write|append|"
+    r"\b(search|find|fetch|list|show|get|give|tell|read|send|sent|receive|received|"
+    r"add|set|put|reply|create|make|build|write|append|"
     r"update|modify|share|invite|schedule|delete|trash|move|complete|cancel|check|"
     r"count|draft|compose|rewrite|revise|shorten|shorter|expand|longer|polish|"
     r"brainstorm|outline|"
     r"summarize|summarise)\b"
     r"|\bhow many\b"
+)
+_DISALLOWED_SEXUAL_DELIVERY = re.compile(
+    r"\b(?:send|share|post|email|chat|message)\b.{0,80}"
+    r"\b(?:nudes?|explicit\s+(?:image|photo|video)s?|sexual\s+content)\b|"
+    r"\b(?:nudes?|explicit\s+(?:image|photo|video)s?|sexual\s+content)\b.{0,80}"
+    r"\b(?:send|share|post|email|chat|message)\b",
+    re.IGNORECASE,
 )
 _WORKSPACE_TERMS = tuple(SERVICE_LABELS) + (
     "email", "emails", "emials", "mail", "mails", "maisl",
@@ -115,6 +123,11 @@ def classify_workspace_intent(message: str, detected_services: list[str]) -> tup
     def routed(kind: str, basis: str, confidence: str = "high") -> tuple[str, dict]:
         return kind, {**evidence, "basis": basis, "confidence": confidence,
                       "ambiguous": kind == "ambiguous"}
+    if _DISALLOWED_SEXUAL_DELIVERY.search(text):
+        return routed(
+            "policy_refusal",
+            "sexual-content delivery lacks verifiable adult consent and ownership",
+        )
     if product:
         return routed("product_information", "trusted product-information pattern")
     if any(re.search(pattern, text) for pattern in _SCOPE_CHAT_PATTERNS):
@@ -158,6 +171,11 @@ def informational_answer(
 ) -> str:
     """Compose an authoritative answer, optionally focused on mentioned services."""
     text = " ".join(message.casefold().split())
+    if intent == "policy_refusal":
+        return (
+            "I can’t transmit sexual content when adult status, consent, and ownership "
+            "cannot be verified. No Workspace or model call was made."
+        )
     parts = []
     if intent in {"identity", "identity_and_capabilities"}:
         parts.append(f"My name is {PRODUCT_NAME}.")
@@ -196,6 +214,11 @@ def workspace_chat_answer(
 ) -> str:
     """Answer locally from trusted metadata; never invoke Google, RAG, or an LLM."""
     text = " ".join(message.casefold().split())
+    if intent == "policy_refusal":
+        return (
+            "I won’t initiate sexual-content delivery when adult status, consent, "
+            "and ownership cannot be verified. No model or Google call was made."
+        )
     if intent == "scope_chat":
         if re.fullmatch(r"(?:what|why|how|huh)[?!. ]*", text):
             return ("I may be missing the Workspace action you mean. Tell me the Google "

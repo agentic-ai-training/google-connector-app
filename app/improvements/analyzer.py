@@ -520,17 +520,26 @@ async def improvement_analysis_loop(pool, stop_event: asyncio.Event):
 async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
     """Re-dispatch due GitHub builders without creating duplicate candidates."""
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute(
+            """UPDATE candidate_builds b SET status='cancelled',updated_at=now(),
+                     error_message='Proposal is no longer eligible for candidate work.'
+                 FROM improvement_proposals p
+                WHERE b.proposal_id=p.id AND b.status IN ('queued','investigating')
+                  AND p.status IN ('rejected','expired','rolled_back')"""
+        )
         rows = await conn.fetch(
-            """SELECT id FROM candidate_builds
-               WHERE status='queued'
-                 AND checkpoint#>>'{last_runner_failure,retryable}'='true'
-                 AND updated_at + (
+            """SELECT b.id FROM candidate_builds b
+               JOIN improvement_proposals p ON p.id=b.proposal_id
+               WHERE b.status='queued'
+                 AND p.status NOT IN ('rejected','expired','rolled_back')
+                 AND b.checkpoint#>>'{last_runner_failure,retryable}'='true'
+                 AND b.updated_at + (
                    LEAST(86400, GREATEST(60, COALESCE(
-                     NULLIF(checkpoint#>>'{last_runner_failure,retry_after_seconds}','')::int,
+                     NULLIF(b.checkpoint#>>'{last_runner_failure,retry_after_seconds}','')::int,
                      1800
                    ))) * interval '1 second'
                  ) <= now()
-               ORDER BY updated_at,id
+               ORDER BY b.updated_at,b.id
                FOR UPDATE SKIP LOCKED LIMIT $1""",
             max(1, min(int(limit), 10)),
         )

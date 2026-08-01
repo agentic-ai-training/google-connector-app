@@ -174,7 +174,7 @@ def get_toolsets() -> dict[str, list[BaseTool]]:
     return {
         "composition": [],
         "gmail": [tools.search_gmail, tools.list_recent_gmail_senders,
-                  tools.count_gmail_senders,
+                  tools.count_gmail_senders, tools.count_gmail_messages,
                   tools.get_gmail_message, tools.send_gmail,
                   tools.reply_gmail, tools.label_gmail, tools.trash_gmail,
                   tools.list_gmail_threads],

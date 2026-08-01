@@ -1,5 +1,6 @@
 """Validation helpers for concrete governed-improvement candidates."""
 
+import ast
 import hashlib
 import json
 import re
@@ -34,6 +35,36 @@ def validate_candidate_files(files: list[dict]) -> list[str]:
         content = item.get("content")
         if content and SECRET_PATTERN.search(content):
             errors.append(f"Candidate content contains a secret-like assignment: {path}")
+        if content and path.endswith(".py"):
+            try:
+                tree = ast.parse(content, filename=path)
+            except SyntaxError:
+                continue
+            functions = [
+                node for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
+            if path.startswith("app/") and functions and all(
+                all(isinstance(stmt, (ast.Pass, ast.Expr)) for stmt in node.body)
+                for node in functions
+            ):
+                errors.append(f"Candidate application file is placeholder-only: {path}")
+            tests = [node for node in functions if node.name.startswith("test")]
+            for test in tests:
+                meaningful = any(
+                    isinstance(node, ast.Assert)
+                    or (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and (
+                            node.func.attr.startswith("assert")
+                            or node.func.attr == "raises"
+                        )
+                    )
+                    for node in ast.walk(test)
+                )
+                if not meaningful:
+                    errors.append(f"Candidate test has no assertion: {path}:{test.name}")
     return errors
 
 

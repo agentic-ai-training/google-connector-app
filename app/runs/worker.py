@@ -1358,8 +1358,15 @@ async def _execute_step(app, pool, run, step, dependencies):
                 """UPDATE agent_run_steps SET status='completed',output_data=$1::jsonb,
                    duration_ms=$2,completed_at=now(),error_category=NULL,error_message=NULL
                    WHERE id=$3""",
-                json.dumps({"output": output, "verification": evidence,
-                            "source": "registered_capability_catalog"}),
+                json.dumps({
+                    "output": output,
+                    "verification": evidence,
+                    "source": (
+                        "pre_execution_policy"
+                        if input_data.get("intent_kind") == "policy_refusal"
+                        else "registered_capability_catalog"
+                    ),
+                }),
                 elapsed_ms, step["id"],
             )
         await append_event(
@@ -1374,7 +1381,7 @@ async def _execute_step(app, pool, run, step, dependencies):
             payload={"artifact_count": 0, "model_calls": 0, "tool_calls": 0},
         )
         return output
-    if step.get("operation") in {"recent_senders", "sender_count"}:
+    if step.get("operation") in {"recent_senders", "sender_count", "message_count"}:
         await append_event(
             pool, run_id, user_id, "typed_execution_selected",
             step_id=step["id"], phase="execution",
@@ -1386,11 +1393,11 @@ async def _execute_step(app, pool, run, step, dependencies):
             },
         )
         tools = {tool.name: tool for tool in get_toolsets()["gmail"]}
-        tool_name = (
-            "list_recent_gmail_senders"
-            if step.get("operation") == "recent_senders"
-            else "count_gmail_senders"
-        )
+        tool_name = {
+            "recent_senders": "list_recent_gmail_senders",
+            "sender_count": "count_gmail_senders",
+            "message_count": "count_gmail_messages",
+        }[step.get("operation")]
         tool = tools[tool_name]
         if isinstance(tool, GoogleWorkspaceBaseTool):
             tool.db_pool = pool
@@ -1409,7 +1416,18 @@ async def _execute_step(app, pool, run, step, dependencies):
             "compact_result": envelope.compact_result,
             "projection": envelope.metadata(),
         }]
-        if step.get("operation") == "sender_count":
+        if step.get("operation") == "message_count":
+            count = raw_result.get("message_count", 0)
+            qualifier = "" if raw_result.get("complete") else "at least "
+            category = raw_result.get("category")
+            period = raw_result.get("period")
+            description = f" {category}" if category else ""
+            timeframe = " today" if period == "today" else ""
+            output = (
+                f"You received {qualifier}{count}{description} Gmail message"
+                f"{'s' if count != 1 else ''}{timeframe}."
+            )
+        elif step.get("operation") == "sender_count":
             count = raw_result.get("unique_sender_count", 0)
             qualifier = "" if raw_result.get("complete") else "at least "
             category = raw_result.get("category")
@@ -1616,10 +1634,33 @@ async def _execute_step(app, pool, run, step, dependencies):
                 "projected_required_tools": projected_contract.get("required_tools", []),
             },
         )
+    if (
+        result is None
+        and step.get("operation") == "compose"
+        and input_data.get("tool_arguments", {}).get("reuse_text")
+    ):
+        result = {
+            "output": str(input_data["tool_arguments"]["reuse_text"]),
+            "tool_results": [], "tool_executions": [], "task_complete": True,
+            "execution_path": "typed_context_reuse",
+        }
     if result is None:
         result = await app.state.agent_graph.ainvoke(
             initial, config={"configurable": {"thread_id": f"{run_id}:{step['step_key']}"}}
         )
+    if not str(result.get("output") or "").strip():
+        # LangGraph providers may place the final visible answer only on the last
+        # message. Recover that bounded content before declaring an empty-output
+        # failure; tool results are never used as a substitute here.
+        for message_item in reversed(result.get("messages") or []):
+            content = (
+                message_item.get("content")
+                if isinstance(message_item, dict)
+                else getattr(message_item, "content", None)
+            )
+            if isinstance(content, str) and content.strip():
+                result = {**result, "output": content.strip()}
+                break
     output = result.get("output", "")
     composition_error = (
         _composition_output_error(

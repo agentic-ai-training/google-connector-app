@@ -1267,12 +1267,16 @@ def test_candidate_builder_corrects_invalid_python_before_review(monkeypatch, tm
     (tmp_path / "app" / "generated.py").write_text("value = 0\n")
     get_settings.cache_clear()
     try:
+        tools = BoundedRepositoryTools(tmp_path)
+        tools.execute("read_repository_file", {
+            "path": "app/generated.py", "start_line": 1, "end_line": 20,
+        })
         candidate, _, _ = asyncio.run(_groq_tool_json(
             {
                 "model_name": "openai/gpt-oss-20b", "token_budget": 1_000,
                 "sanitized_input": {"title": "syntax correction test"},
             },
-            BoundedRepositoryTools(tmp_path), "coordinator",
+            tools, "coordinator",
         ))
         assert candidate["files"][0]["content"] == "value = 1\n"
         assert any(
@@ -1544,9 +1548,10 @@ def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
     result = asyncio.run(dispatch_retryable_candidate_builds(Pool()))
     assert result == 1
     assert dispatched == ["build-one"]
-    assert len(executed) == 2
-    assert "last_retry_dispatch" in executed[0][1][0]
-    assert json.loads(executed[1][1][0])["last_retry_dispatch"]["state"] == (
+    assert len(executed) == 3
+    assert "Proposal is no longer eligible" in executed[0][0]
+    assert "last_retry_dispatch" in executed[1][1][0]
+    assert json.loads(executed[2][1][0])["last_retry_dispatch"]["state"] == (
         "dispatched"
     )
 
@@ -2551,6 +2556,7 @@ def test_people_sheet_chat_calendar_meet_request_uses_contextual_dag():
     assert steps["gmail"].arguments["allowed_tools"] == ["list_recent_gmail_senders"]
     assert steps["gmail"].arguments["tool_arguments"] == {
         "max_results": 20, "query": "-in:sent", "unique": True,
+        "category": None, "period": "all", "timezone": None,
     }
     assert steps["sheets"].dependencies == [steps["gmail"].id]
     assert steps["chat"].dependencies == [steps["sheets"].id]

@@ -1663,3 +1663,53 @@ Production evidence on 2026-07-30:
   the local untracked vault and the linked Railway service. This does not affect
   runtime OKF evidence, which is already returned by the API and rendered by the
   deployed frontend.
+
+## Sprint 52 — Semantic-frame runtime and source-grounded candidate hardening
+
+The July 30 production history and candidate `25927029-08f8-4485-a5b6-d1e8f330fb02`
+showed a shared failure pattern: lexical nouns could displace the requested operation,
+provider prose could be accepted without evidence, and a candidate could spend 32,155
+tokens while reading zero source bytes and staging placeholder code.
+
+- [x] Expand action morphology without adding sentence-specific answers; canonicalize
+  Gmail sender language, Calendar create synonyms, bounded composition, and explicit
+  delivery channels before plan construction.
+- [x] Add canonical plan-coverage validation after service collapse so incidental nouns
+  cannot invent Contacts/Docs steps and requested canonical services cannot disappear.
+- [x] Add metadata-only Gmail message counts and category/local-day aware sender lists;
+  do not retrieve bodies for count/name questions.
+- [x] Recover provider-visible composition content from the final graph message before
+  declaring an empty-output postcondition failure.
+- [x] Require an exact URL clarification when a contextual “send the link” antecedent
+  contains no URL.
+- [x] Add Calendar recurrence fields and verification; compare equivalent ISO offsets as
+  instants rather than strings.
+- [x] Classify persistent Chat project/configuration blocks as manual reconciliation so
+  resume cannot repeat an externally blocked operation.
+- [x] Reject sexual-image/video delivery with unknown adult status, consent, or ownership
+  before planning, model selection, RAG, or Google API access; record `policy_refusal`.
+- [x] Cancel unfinished candidate builds when their proposal is rejected, expired, or
+  rolled back, and reject new dispatch for an ineligible proposal.
+- [x] Activate `bounded-repo-tools-v11-runtime-read-noop-gates`: ranked runtime
+  localization, mandatory exact source read before application staging, adopted-runtime
+  integration, placeholder-body rejection, assertion-bearing behavioral tests, syntax,
+  rollback, and frozen-hash evidence.
+- [x] Bound author, remediation, and reviewer roles separately so repeated review cannot
+  consume the entire 48k authority without a concrete patch.
+- [x] Add approved OKF concepts for the delivery boundary and source-grounded candidate
+  remediation; preserve code as the hard enforcement plane.
+- [x] Update architecture and the deep teaching/dictionary guide with the implemented
+  compiler-style flow and its DSA foundations.
+- [ ] Publish through trusted CI, deploy the immutable release, verify safe production
+  replays, and observe at least one real candidate through source-read and no-op gates.
+
+No future labelled-data dependency is required for the checked items. RAG, DP, prompt,
+and policy winners still require measured consenting traffic before promotion; that
+evidence requirement is not unfinished implementation.
+
+Local release evidence on 2026-08-01: 249 unit tests pass; 286 tests pass with the
+isolated PostgreSQL integration suite enabled; 42/42 planner goldens and 16/16 workflow
+replays pass. Python compilation, Flake8, Bandit medium/high checks, dependency audit,
+web lint/build/audit, Flutter analyze/test/debug APK, migration downgrade/forward repair,
+Compose validation, Grafana dashboard validation, secret-history checks, and all four
+Docker image builds pass.

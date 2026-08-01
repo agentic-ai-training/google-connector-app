@@ -26,7 +26,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v10-symbol-patch-sandbox"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v11-runtime-read-noop-gates"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -40,6 +40,9 @@ BUILDER_AUTHOR_HARD_FILE_ROUND = 7
 BUILDER_MAX_REVIEW_REMEDIATIONS = 1
 BUILDER_CORRECTION_RESERVE_TOKENS = 1_024
 BUILDER_FINALIZATION_RESERVE_TOKENS = 4_096
+BUILDER_AUTHOR_ROLE_TOKEN_LIMIT = 12_000
+BUILDER_REMEDIATION_ROLE_TOKEN_LIMIT = 8_000
+BUILDER_REVIEWER_ROLE_TOKEN_LIMIT = 6_000
 BUILDER_FINISH_TOOL_NAMES = frozenset({
     "stage_candidate_file",
     "apply_candidate_patch",
@@ -713,9 +716,32 @@ def _candidate_prompt(job: dict, sources: list[dict], role: str) -> str:
             "Prefer symbol indexing, symbol reads, reference lookup, test-neighborhood lookup, and bounded line patches over reading or emitting whole files.",
             "Use structural validation as a local compiler check; trusted no-secret CI remains the only test authority.",
             "For a new tool include schema, least scopes, adapter, registry, projection, verifier, tests, and draft OKF.",
+            "Localize the runtime boundary, then read exact existing implementation and test source before staging application code.",
+            "Never create a disconnected app module, placeholder body, assertion-free test, or test that only exercises new code in isolation.",
+            "Every runtime candidate must change an adopted execution path and include a failing-before/passing-after behavioral regression.",
         ],
         "incident": job["sanitized_input"], "sources": sources,
     }, default=str)
+
+
+def _execute_builder_repository_tool(
+    tools: BoundedRepositoryTools, name: str, arguments: dict,
+) -> object:
+    """Enforce source-before-patch progress independently of model behavior."""
+    path = str(arguments.get("path") or "")
+    if (
+        name in {"stage_candidate_file", "apply_candidate_patch"}
+        and path.startswith("app/")
+        and tools.read_bytes <= 0
+    ):
+        return {
+            "error": "runtime_source_read_required",
+            "detail": (
+                "Localize and read an existing runtime implementation or symbol "
+                "before staging application code."
+            ),
+        }
+    return tools.execute(name, arguments)
 
 
 async def _groq_json(
@@ -958,7 +984,9 @@ async def _groq_tool_json(
                 last_tool_name = call.function.name
                 try:
                     arguments = json.loads(call.function.arguments or "{}")
-                    result = tools.execute(call.function.name, arguments)
+                    result = _execute_builder_repository_tool(
+                        tools, call.function.name, arguments,
+                    )
                 except Exception as exc:
                     result = {"error": type(exc).__name__, "detail": str(exc)[:500]}
                 projected = tools.project_result(call.function.name, result)
@@ -1027,7 +1055,9 @@ async def _groq_tool_json(
                 }
             elif result is None:
                 try:
-                    result = tools.execute(name, arguments)
+                    result = _execute_builder_repository_tool(
+                        tools, name, arguments,
+                    )
                 except Exception as exc:
                     result = {"error": type(exc).__name__, "detail": str(exc)[:500]}
             call = {
@@ -1106,6 +1136,14 @@ async def _groq_tool_json(
                 "Frozen candidate files are authoritative; trusted CI will compute the diff."
             )
         contract_errors = candidate_contract_errors(candidate)
+        if (
+            any(
+                item.get("path", "").startswith("app/")
+                for item in candidate.get("files") or []
+            )
+            and tools.read_bytes <= 0
+        ):
+            contract_errors.append("runtime_source_read_required")
         contract_errors.extend(direct_stage_errors)
         contract_errors.extend(staged_validation_codes(tools.validate_staged()))
         contract_errors = list(dict.fromkeys(contract_errors))
@@ -1263,10 +1301,17 @@ async def generate_candidate_draft(
                 ),
             })
 
+        role_limit = {
+            "independent_safety_reviewer": BUILDER_REVIEWER_ROLE_TOKEN_LIMIT,
+            "review_remediation_author": BUILDER_REMEDIATION_ROLE_TOKEN_LIMIT,
+        }.get(role, BUILDER_AUTHOR_ROLE_TOKEN_LIMIT)
         output, used, call_models = await _groq_tool_json(
             job, repository_tools, role, candidate,
             progress=role_progress, progress_callback=checkpoint_role,
-            role_token_budget=token_budget - tokens + initial_role_tokens,
+            role_token_budget=min(
+                role_limit,
+                token_budget - tokens + initial_role_tokens,
+            ),
             cumulative_tokens_before=tokens,
             review_feedback=(
                 review_feedback if role == "review_remediation_author" else None

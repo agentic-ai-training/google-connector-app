@@ -48,6 +48,12 @@ async def chat(req: ChatRequest, request: Request):
     if not settings.legacy_chat_enabled:
         raise HTTPException(410, "Legacy chat is disabled; use the durable runs API")
     policy = classify_request(req.message)
+    if policy["intent_kind"] == "policy_refusal":
+        raise HTTPException(
+            422,
+            "The requested content delivery is blocked by pre-execution policy; "
+            "no model or Google call was made.",
+        )
     if policy["requires_approval"]:
         raise HTTPException(
             409,
