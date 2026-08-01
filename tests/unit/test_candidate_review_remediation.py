@@ -9,7 +9,10 @@ from app.improvements.builder import (
     bounded_review_feedback,
     generate_candidate_draft,
 )
-from app.improvements.retry import candidate_retry_decision
+from app.improvements.retry import (
+    candidate_retry_decision,
+    compact_role_restart_checkpoint,
+)
 
 
 def _candidate(value: int = 1) -> dict:
@@ -151,6 +154,51 @@ def test_review_remediation_role_is_a_valid_provider_resume_point():
     assert decision.reason_code == "provider_retry_from_checkpoint"
     assert decision.resume_point["active_role"] == "review_remediation_author"
     assert decision.resume_point["next_round"] == 0
+
+
+def test_tool_budget_exhaustion_gets_one_compact_role_restart():
+    job = {
+        "model_name": "llama-3.3-70b-versatile",
+        "token_budget": 12_000,
+        "tokens_used": 13_982,
+        "candidate_commit": None,
+        "candidate_deployment_id": None,
+        "checkpoint": {"generation_checkpoint": {
+            "phase": "role_in_progress",
+            "active_role": "investigator_and_patch_author",
+            "next_round": 3,
+            "messages": [
+                {"role": "user", "content": "original bounded prompt"},
+                {"role": "assistant", "content": "a very verbose investigation"},
+            ],
+            "file_count": 0,
+            "tool_calls": 21,
+            "read_bytes": 1_341,
+            "read_paths": ["app/tools/registry.py"],
+            "role_tokens_used": 13_982,
+        }},
+    }
+
+    decision = candidate_retry_decision(
+        job, error_type="tool_token_budget_exhausted", runner_retryable=True,
+    )
+    compact = compact_role_restart_checkpoint(job)
+
+    assert decision.eligible is True
+    assert decision.reason_code == "compact_role_restart"
+    assert compact["role_tokens_used"] == 0
+    assert compact["budget_restart_count"] == 1
+    assert compact["next_round"] == 0
+    assert compact["tool_calls"] == 21
+    assert compact["read_paths"] == ["app/tools/registry.py"]
+    assert len(compact["messages"]) == 2
+
+    job["checkpoint"]["generation_checkpoint"] = compact
+    terminal = candidate_retry_decision(
+        job, error_type="tool_token_budget_exhausted", runner_retryable=True,
+    )
+    assert terminal.eligible is False
+    assert terminal.reason_code == "active_role_token_authority_exhausted"
 
 
 def test_trusted_ci_feedback_starts_from_frozen_files_and_remediates(monkeypatch):

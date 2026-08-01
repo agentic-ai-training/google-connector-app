@@ -62,6 +62,10 @@ _CAPABILITY_PATTERNS = (
     r"\bwhat (?:else )?can you (?:do|help with)\b",
     r"\b(?:your|what are your) capabilit(?:y|ies)\b",
     r"\bwhat (?:operations|services|tools) (?:can|do) you\b",
+    r"\b(?:give|show|tell) me (?:all )?(?:the )?"
+    r"(?:functions?|operations?|services?|tools?) (?:(?:you|u) )?(?:can|do)\b",
+    r"\b(?:all )?(?:the )?(?:functions?|operations?|services?|tools?) "
+    r"(?:you )?(?:can perform|support)\b",
     r"\bwhich (?:operations|services|tools)\b",
     r"\bcan you only (?:do|use|work with)\b",
     r"\bother than .+ what about\b",
@@ -135,6 +139,15 @@ def classify_workspace_intent(message: str, detected_services: list[str]) -> tup
     workspace_context = bool(detected_services) or any(term in text for term in _WORKSPACE_TERMS)
     action = bool(re.search(_ACTION_PATTERN, text))
     guidance = any(re.search(pattern, text) for pattern in _GUIDANCE_PATTERNS)
+    if (
+        not workspace_context
+        and re.search(r"\b(?:send|post)\b.{0,80}\b(?:message|note)\b", text)
+    ):
+        return routed(
+            "ambiguous",
+            "delivery requested without selecting Gmail or Google Chat",
+            "medium",
+        )
     if workspace_context and guidance:
         return routed("workspace_guidance", "Workspace entity plus guidance wording")
     if workspace_context and action:

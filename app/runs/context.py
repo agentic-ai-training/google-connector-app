@@ -86,12 +86,39 @@ def _referenced_content(previous) -> tuple[str, str | None, str | None, str | No
                     _bounded(arguments["text"], 6_000), None,
                     "chat", "verified_sent_message",
                 )
+            if tool in {"create_calendar_event", "update_calendar_event"}:
+                result = execution.get("result") or {}
+                if not isinstance(result, dict):
+                    continue
+                title = _bounded(result.get("summary") or arguments.get("title"), 500)
+                start = _bounded((result.get("start") or {}).get("dateTime"), 200)
+                end = _bounded((result.get("end") or {}).get("dateTime"), 200)
+                recurrence = ", ".join(
+                    _bounded(value, 500) for value in (result.get("recurrence") or [])
+                )
+                url = _bounded(result.get("htmlLink"), 2_000)
+                fields = [
+                    f"Calendar event: {title}" if title else "Calendar event",
+                    f"Starts: {start}" if start else "",
+                    f"Ends: {end}" if end else "",
+                    f"Recurrence: {recurrence}" if recurrence else "",
+                    f"Link: {url}" if url else "",
+                ]
+                content = "\n".join(field for field in fields if field)
+                if result.get("id") and content:
+                    return content, None, "calendar", "verified_calendar_event"
         if output.get("content_lineage") and output.get("output"):
             return (
                 _bounded(output["output"], 6_000), None,
                 "composition", "verified_composition",
             )
     result = previous.get("result")
+    if isinstance(result, str):
+        import json
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = {}
     if isinstance(result, dict):
         output = _bounded(result.get("output"), 6_000)
         if output:

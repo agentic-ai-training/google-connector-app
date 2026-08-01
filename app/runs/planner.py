@@ -822,6 +822,51 @@ def build_plan(
     )
     if (
         statement.contextual_reference
+        and statement.delivery_channels
+        and referenced_output is not None
+    ):
+        # Only after context resolution proves that a referenced artifact exists
+        # may resource nouns be treated as delivery content rather than new service
+        # actions. This avoids changing self-contained searches containing phrases
+        # such as "a message that says ... send all files".
+        authority_text = statement.normalized_text
+        explicit_mutations = {
+            "calendar": bool(re.search(
+                r"\b(?:create|schedule|reschedule|update|cancel|delete)\b"
+                r"[^.]{0,80}\b(?:calendar|event|meeting|invite)\b",
+                authority_text,
+            )),
+            "drive": bool(re.search(
+                r"\b(?:upload|share|move|trash|delete)\b[^.]{0,80}\b(?:drive|file)\b",
+                authority_text,
+            )),
+            "docs": bool(re.search(
+                r"\b(?:create|append|update|edit)\b[^.]{0,80}\b(?:doc|document)\b",
+                authority_text,
+            )),
+            "sheets": bool(re.search(
+                r"\b(?:create|append|update|write)\b[^.]{0,80}\b(?:sheet|spreadsheet)\b",
+                authority_text,
+            )),
+        }
+        delivery = set(statement.delivery_channels)
+        policy["services"] = [
+            service for service in policy["services"]
+            if service in delivery or explicit_mutations.get(service, False)
+        ]
+        # Calendar-only questions were computed before the resource noun was
+        # resolved as content. Remove those irrelevant questions from this plan.
+        if "calendar" not in policy["services"]:
+            policy["required_clarifications"] = [
+                question for question in policy["required_clarifications"]
+                if question not in {
+                    CALENDAR_START_TIME_QUESTION, CALENDAR_DURATION_QUESTION,
+                    CALENDAR_TIMEZONE_QUESTION, CALENDAR_RECURRENCE_QUESTION,
+                    CALENDAR_START_DATE_QUESTION, CALENDAR_END_DATE_QUESTION,
+                }
+            ]
+    if (
+        statement.contextual_reference
         and not statement.explicit_services
         and referenced_service in {"gmail", "chat"}
         and statement.current_authorizes_external_write

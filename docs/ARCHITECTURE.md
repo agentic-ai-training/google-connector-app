@@ -407,3 +407,24 @@ Read-only semantic/historical requests are then routed to the bounded evidence-a
 composition path. They do not invoke `read_google_doc` without a document ID. Live or
 latest reads still use Google APIs, and any request containing a write retains its
 ordinary dependency DAG and approval policy.
+
+Verified Calendar artifacts participate in the same exact conversation-lineage model
+as Gmail and Chat payloads. A later request such as “send the same event on Chat” reads
+the prior completed Calendar tool evidence, projects its title, start, end, recurrence,
+and URL into a bounded message, and creates only a Chat step. The word `event` does not
+create a second Calendar action. This collapse is permitted only after a compatible
+same-user, same-session artifact is proven; self-contained search text is never
+reclassified merely because it contains `that`, `same`, or an apparent delivery verb.
+
+Planning rejection is itself a durable terminal transition. It writes `completed_at`,
+the schema's canonical terminal timestamp, then records a sanitized incident and event.
+The API logs the exception class and traceback internally while returning a safe error
+to the client. This preserves privacy while ensuring a Railway request log can be joined
+to a specific database failure instead of showing only an unexplained HTTP 500.
+
+Candidate roles have separate token authority. When one author role exhausts that
+authority but cumulative candidate authority remains, the scheduler permits one compact
+role restart: it preserves cumulative usage, tool counters, source paths, frozen files,
+and failure codes; removes verbose model dialogue; resets only the active-role counter;
+and instructs the role to stage an integrated patch early. A second role-budget
+exhaustion is terminal. This is bounded checkpoint compaction, not a quota reset.

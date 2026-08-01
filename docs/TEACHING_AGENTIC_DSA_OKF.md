@@ -1935,3 +1935,42 @@ validation costs `O(n)` in syntax-tree size, eager validation adds predictable l
 work but prevents multiple expensive model rounds from reviewing unusable code. This is
 the fail-fast principle applied to an agentic coding state machine: a transition advances
 only when its local invariants hold.
+
+<a id="dictionary-checkpoint-compaction"></a>
+## Checkpoint compaction
+
+A durable state transformation that replaces verbose, replay-expensive history with a
+smaller sufficient state. For the candidate builder, the sufficient state contains the
+active role, cumulative token usage, bounded tool counters, exact source paths already
+read, staged-file hashes, last contract errors, and the next permitted transition. The
+model transcript is not the state machine; it is only one representation of evidence.
+
+In Python, implement compaction as a pure function `compact(checkpoint) -> checkpoint`
+and test three invariants: cumulative budgets never decrease, external/tool authority
+never increases, and applying the restart policy more than once fails closed. If the
+history has `n` messages, compaction is `O(n)` to scan and `O(k)` retained state, where
+`k << n`. This resembles garbage collection and log compaction: discard redundant
+representation while preserving every fact required for correctness, audit, and safe
+resume.
+
+<a id="dictionary-schema-drift"></a>
+## Schema drift
+
+A disagreement between code's assumed database shape and the deployed schema. The
+production example was an INSERT into `agent_runs.failed_at` although terminal runs use
+`completed_at`. SQL compilation cannot catch this without the actual schema, so the
+guardrail is a PostgreSQL integration test on the precise failure branch plus migration
+round-trip validation. Let application schema version be `A` and database version be
+`D`; deployment is safe only when compatibility predicate `C(A, D)` is true. Expand-and-
+contract migrations keep `C` true for control and candidate executors during rollout.
+
+<a id="dictionary-referential-collapse"></a>
+## Referential service collapse
+
+The rule that a service noun may describe an already-created artifact rather than a new
+operation. In “send the same event on Chat,” `event` is Calendar-origin content and
+`Chat` is the only current mutation. The algorithm first resolves an exact tenant-scoped
+lineage edge, then retains delivery services plus any separately explicit mutation
+frames. It must not run on lexical similarity alone. With a hash-indexed prior run and a
+small service set, lookup is expected `O(1)` and filtering `O(s)`, where `s` is the
+number of supported services.

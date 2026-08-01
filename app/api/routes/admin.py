@@ -42,7 +42,10 @@ from app.improvements.builder import (
     store_candidate_checkpoint,
     store_candidate_draft,
 )
-from app.improvements.retry import candidate_retry_decision
+from app.improvements.retry import (
+    candidate_retry_decision,
+    compact_role_restart_checkpoint,
+)
 from app.okf.candidates import stage_okf_candidate_bundle
 from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
@@ -507,6 +510,10 @@ async def candidate_builder_failure(build_id: str, body: CandidateBuildFailure):
                 "contains_private_evidence": False,
             },
         }
+        if retry_decision.reason_code == "compact_role_restart":
+            checkpoint["generation_checkpoint"] = (
+                compact_role_restart_checkpoint(dict(build))
+            )
         await conn.execute(
             """UPDATE candidate_builds SET status=$1,error_message=$2,
                checkpoint=checkpoint||$3::jsonb,updated_at=now(),

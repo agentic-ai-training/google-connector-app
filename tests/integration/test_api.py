@@ -1145,6 +1145,41 @@ def test_approval_repins_unstarted_control_run_to_current_executor():
         )
 
 
+def test_invalid_plan_is_durably_recorded_without_schema_drift(monkeypatch):
+    """Regression for production intake failures caused by agent_runs.failed_at."""
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.repository import create_run
+
+    monkeypatch.setattr(
+        "app.runs.repository.validate_plan",
+        lambda _plan: ["forced regression-test plan error"],
+    )
+    with TestClient(app) as client:
+        async def exercise():
+            pool = await get_pool()
+            run, created = await create_run(
+                pool, f"invalid-plan-{uuid.uuid4()}@example.com",
+                "List recent Gmail messages", f"invalid-plan-{uuid.uuid4()}",
+                f"invalid-plan-{uuid.uuid4()}",
+            )
+            async with pool.acquire() as conn:
+                stored = await conn.fetchrow(
+                    "SELECT status,current_phase,error_category,error_message,"
+                    "completed_at FROM agent_runs WHERE id=$1", run["id"],
+                )
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", run["id"])
+            return created, dict(stored)
+
+        created, stored = client.portal.call(exercise)
+        assert created is True
+        assert stored["status"] == "failed"
+        assert stored["current_phase"] == "validation"
+        assert stored["error_category"] == "planning"
+        assert "forced regression-test plan error" in stored["error_message"]
+        assert stored["completed_at"] is not None
+
+
 def test_run_idempotency_and_cross_user_isolation():
     from app.api.main import app
 
@@ -2359,6 +2394,97 @@ def test_candidate_callback_leases_and_records_failure_without_proposal_deployme
                     )
 
             client.portal.call(cleanup)
+    finally:
+        settings.candidate_builder_callback_token = original_token
+
+
+def test_candidate_callback_compacts_one_exhausted_role_before_retry():
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+    from app.improvements.builder import MODEL_POLICY_VERSION, TOOL_POLICY_VERSION
+
+    marker = str(uuid.uuid4())
+    build_id = uuid.uuid4()
+    proposal_key = f"candidate-compact-retry-{marker}"
+    settings = get_settings()
+    original_token = settings.candidate_builder_callback_token
+    settings.candidate_builder_callback_token = "integration-candidate-callback-token"
+    headers = {"X-Candidate-Builder-Token": settings.candidate_builder_callback_token}
+    try:
+        with TestClient(app) as client:
+            async def prepare():
+                pool = await get_pool()
+                async with pool.acquire() as conn, conn.transaction():
+                    proposal_id = await conn.fetchval(
+                        """INSERT INTO improvement_proposals
+                           (proposal_key,proposal_type,title,sanitized_summary,status,
+                            content_hash,candidate_kind,candidate_state)
+                           VALUES($1,'policy','Compact retry fixture','No private content',
+                                  'changes_requested',$2,'diagnosis','diagnosis_only')
+                           RETURNING id""",
+                        proposal_key, marker,
+                    )
+                    checkpoint = {"generation_checkpoint": {
+                        "phase": "role_in_progress",
+                        "active_role": "investigator_and_patch_author",
+                        "next_round": 3,
+                        "messages": [
+                            {"role": "user", "content": "safe original prompt"},
+                            {"role": "assistant", "content": "verbose prior reasoning"},
+                        ],
+                        "staged_file_count": 0,
+                        "tool_calls": 21,
+                        "read_bytes": 1_341,
+                        "read_paths": ["app/tools/registry.py"],
+                        "role_tokens_used": 13_982,
+                        "tokens_used": 13_982,
+                    }}
+                    await conn.execute(
+                        """INSERT INTO candidate_builds
+                           (id,proposal_id,selected_option,mode,status,base_commit,
+                            model_name,model_policy_version,tool_policy_version,
+                            token_budget,tokens_used,sanitized_input,checkpoint,created_by)
+                           VALUES($1,$2,'A','multi_role','investigating',$3,$4,$5,$6,
+                                  12000,13982,$7::jsonb,$8::jsonb,'integration-test')""",
+                        build_id, proposal_id, "a" * 40, "llama-3.3-70b-versatile",
+                        MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
+                        json.dumps({"component": "candidate_builder"}),
+                        json.dumps(checkpoint),
+                    )
+
+            client.portal.call(prepare)
+            failed = client.post(
+                f"/admin/candidate-builder/{build_id}/failure", headers=headers,
+                json={
+                    "stage": "generation",
+                    "error_type": "tool_token_budget_exhausted",
+                    "message": "Candidate builder stopped at a bounded role budget.",
+                    "retryable": True,
+                },
+            )
+            assert failed.status_code == 200
+            assert failed.json()["status"] == "queued"
+            assert failed.json()["retry_reason"] == "compact_role_restart"
+
+            async def inspect_and_cleanup():
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    checkpoint = await conn.fetchval(
+                        "SELECT checkpoint FROM candidate_builds WHERE id=$1", build_id,
+                    )
+                    await conn.execute(
+                        "DELETE FROM improvement_proposals WHERE proposal_key=$1",
+                        proposal_key,
+                    )
+                    return checkpoint["generation_checkpoint"]
+
+            compact = client.portal.call(inspect_and_cleanup)
+            assert compact["role_tokens_used"] == 0
+            assert compact["budget_restart_count"] == 1
+            assert compact["next_round"] == 0
+            assert compact["tool_calls"] == 21
+            assert compact["read_paths"] == ["app/tools/registry.py"]
     finally:
         settings.candidate_builder_callback_token = original_token
 
