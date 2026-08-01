@@ -329,6 +329,20 @@ def test_explicit_tool_failure_is_typed_without_readback():
     assert outcome.boundary == "write_tool_execution"
 
 
+def test_explicit_read_failure_is_not_mislabeled_as_write_execution():
+    outcome = _run([{
+        "tool": "search_gmail", "arguments": {"query": "category:promotions"},
+        "result": {"error": "Google API 400: Invalid maxResults Value"},
+    }], "gmail", "message_count")
+    assert not outcome.passed
+    assert outcome.category == "tool_failure"
+    assert outcome.boundary == "read_tool_execution"
+    assert "invalid maxResults" in outcome.message
+    assert outcome.evidence["provider_failure_classes"] == [
+        "Google API 400: invalid maxResults value",
+    ]
+
+
 def test_failure_evidence_redacts_private_values_and_keeps_hashes():
     sanitized = sanitize_failure_evidence({
         "service": "chat",

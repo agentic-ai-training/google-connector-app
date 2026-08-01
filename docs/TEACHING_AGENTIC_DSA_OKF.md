@@ -1121,6 +1121,23 @@ because shell authority plus untrusted generated code plus provider credentials 
 collapse the isolation boundary. Deterministic repository tools give it useful coding
 operations with smaller prompts and auditable limits.
 
+The incident IR must be sufficiently informative. A label such as `tool_failure` is
+not enough: a read failure, an uncertain write, an invalid argument, and a verifier
+mismatch have different safe transitions. The production builder therefore receives a
+bounded evidence projection containing booleans, counts, hashes, operation identity,
+breaking point, source version, and approved failure classes. This is an example of
+*sufficient statistics*: retain the minimum structured facts needed for the next
+decision while discarding private payloads. If an author spends its bounded authority
+without staging a source-integrated file, the state terminates as `files_required`
+instead of recursively granting more investigation tokens.
+
+Typed Gmail counts illustrate precedence in a semantic classifier. A specific frame
+(`quantifier + Gmail message noun + category/time filters`) is resolved before generic
+verbs such as `get` and `find`. This resembles longest/specific-pattern precedence in a
+parser. Once selected, a deterministic metadata operation is both cheaper and more
+accurate than asking an LLM to invent a Gmail query. The provider adapter still clamps
+pagination and validates dates because every layer validates its own input boundary.
+
 OKF contributes versioned explanations and workflows to both pipelines, but never
 replaces their compiler checks. A run pins one bundle hash so later replay can recover
 the exact human-approved policy text it saw. Application code still enforces tool
@@ -1207,8 +1224,10 @@ hash distribution; worst-case behavior is different.
 [semantic frame](#dictionary-semantic-frame) ·
 [set](#dictionary-set) ·
 [sliding window](#dictionary-sliding-window) ·
+[specificity precedence](#dictionary-specificity-precedence) ·
 [state machine](#dictionary-state-machine) ·
 [source localization](#dictionary-source-localization) ·
+[sufficient statistics](#dictionary-sufficient-statistics) ·
 [tenant isolation](#dictionary-tenant-isolation) ·
 [token bucket](#dictionary-token-bucket) ·
 [topological sort](#dictionary-topological-sort) ·
@@ -1974,3 +1993,24 @@ lineage edge, then retains delivery services plus any separately explicit mutati
 frames. It must not run on lexical similarity alone. With a hash-indexed prior run and a
 small service set, lookup is expected `O(1)` and filtering `O(s)`, where `s` is the
 number of supported services.
+
+<a id="dictionary-sufficient-statistics"></a>
+## Sufficient statistics
+
+A reduced representation that preserves every fact needed for a defined downstream
+decision. In this project, a candidate builder needs the failed component, operation,
+safe verifier checks, hashes, boundary, and source version; it does not need private
+email bodies. Sufficiency is relative to the decision: a content hash is sufficient for
+identity comparison but not for reconstructing content. A projection over `n` evidence
+fields costs `O(n)` and should be tested for both privacy (forbidden fields absent) and
+decision coverage (required facts present).
+
+<a id="dictionary-specificity-precedence"></a>
+## Specificity precedence
+
+A conflict-resolution rule that selects the most semantically constrained valid match
+before a generic one. For example, `how many + Gmail messages + today` must select a
+typed message-count frame even when the sentence also contains the generic verb `get`.
+Parser implementations commonly rank by explicit frame coverage, operation priority,
+and then source position. Tests must include collisions, because testing each pattern in
+isolation cannot prove the precedence relation.

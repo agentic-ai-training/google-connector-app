@@ -79,6 +79,24 @@ SERVICE_POSTCONDITIONS = {
     "contacts": ["Contact results retain stable identifiers and matched addresses"],
 }
 
+OPERATION_POSTCONDITIONS = {
+    ("gmail", "message_count"): [
+        "The response reports the deterministic Gmail message count and whether the scan was complete",
+        "The category, local-day boundary, and timezone match the request",
+    ],
+    ("gmail", "sender_count"): [
+        "The response reports the deterministic unique-sender count and whether the scan was complete",
+        "The category, local-day boundary, and timezone match the request",
+    ],
+    ("gmail", "recent_senders"): [
+        "Every returned sender comes from bounded Gmail metadata rather than message bodies",
+        "The requested count, category, local-day boundary, and uniqueness policy are preserved",
+    ],
+    ("gmail", "search"): [
+        "Every claimed Gmail result is supported by a successful live Gmail read",
+    ],
+}
+
 SERVICE_OPERATION_PATTERNS = {
     "gmail": [("message_count",
                r"\b(?:count|how many|number of)\b.{0,100}\b(?:mail|email|message)s?\b"),
@@ -173,6 +191,18 @@ def infer_operation(service: str, message: str, write: bool) -> str:
         text,
     ):
         return "sender_count"
+    # A quantified Gmail-resource frame is more specific than nearby generic
+    # verbs such as "get" or "read". Resolve it before proximity ranking so
+    # requests such as "how many promotional mails did I get today?" cannot
+    # degrade into an open-ended model-driven search loop.
+    if service == "gmail" and re.search(
+        r"\b(?:count|how many|number of)\b.{0,100}"
+        r"\b(?:gmail\s+)?(?:mails?|e-?mails?|messages?)\b|"
+        r"\b(?:mails?|e-?mails?|messages?)\b.{0,100}"
+        r"\b(?:count|how many|number of)\b",
+        text,
+    ):
+        return "message_count"
     if service == "gmail" and re.search(
         r"\b(?:people|persons?|senders?|names?)\b.{0,80}\b(?:mail|email)s?\b|"
         r"\b(?:mail|email)s?\b.{0,80}\b(?:people|persons?|senders?|names?)\b",
@@ -1001,9 +1031,12 @@ def build_plan(
                     "Every claimed source retains its retrieval citation",
                     "No live Google read or external mutation is claimed",
                 ]
-                if rag_answer_only else SERVICE_POSTCONDITIONS.get(service, [
-                    "The response contains deterministic evidence for every claimed result"
-                ])
+                if rag_answer_only else OPERATION_POSTCONDITIONS.get(
+                    (service, operation),
+                    SERVICE_POSTCONDITIONS.get(service, [
+                        "The response contains deterministic evidence for every claimed result"
+                    ]),
+                )
             )
             dependencies = []
             if previous_same_service:
@@ -1040,7 +1073,9 @@ def build_plan(
                         if re.search(r"\btoday\b", message.casefold()) else "all"
                     ),
                     "timezone": policy["timezone"],
-                    "max_messages": 500,
+                    "max_messages": (
+                        10_000 if operation == "message_count" else 2_000
+                    ),
                 }
             if service == "gmail" and operation == "recent_senders":
                 category_match = re.search(

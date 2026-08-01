@@ -433,3 +433,29 @@ and instructs the role to stage an integrated patch early. A second role-budget
 exhaustion is terminal. The typed callback schema retains both the restart count and
 exact read paths; older checkpoints infer a consumed restart from their durable failure
 record. This is bounded checkpoint compaction, not a quota reset.
+
+Candidate input is evidence-grounded rather than category-only. The frozen sanitized
+IR includes the exact breaking point, operation, architectural boundary, safe verifier
+checks, immutable source deployment, and request shape. It never contains raw Gmail,
+Chat, Calendar, or user message bodies. Empty author attempts terminate as
+`files_required`; they do not receive another full role budget merely to repeat broad
+investigation. The portal orders builds newest-first, shows created and updated times,
+and collapses full checkpoints so an administrator can distinguish current work from
+historical failures.
+
+Exact Gmail metadata questions bypass the general service-agent loop. Quantified
+message and sender requests are classified before nearby generic verbs such as `get`
+or `find` can win proximity ranking:
+
+```text
+"how many promotional mails did I get today?"
+  -> timezone clarification (only when absent)
+  -> typed message_count
+  -> count_gmail_messages(category=promotions, local-day bounds)
+  -> verified count response, zero LLM calls
+```
+
+The generic Gmail search boundary remains defensive: pagination is clamped, legacy
+promotion aliases are normalized, and ambiguous relative dates cannot be passed as
+provider arguments. Failure intelligence distinguishes invalid arguments, read-tool
+failures, and write-tool failures; only write failures enter side-effect reconciliation.

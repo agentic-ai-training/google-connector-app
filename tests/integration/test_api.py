@@ -406,9 +406,58 @@ def test_gmail_today_timezone_clarification_is_typed_and_accepted():
         assert rebuilt["clarification_answers"] == {
             "Which timezone should define today?": "Asia/Kolkata",
         }
-        assert rebuilt["plan"]["steps"][0]["arguments"]["tool_arguments"][
-            "timezone"
-        ] == "Asia/Kolkata"
+        step = rebuilt["plan"]["steps"][0]
+        assert step["operation"] == "sender_count"
+        assert step["arguments"]["allowed_tools"] == ["count_gmail_senders"]
+        assert step["arguments"]["tool_arguments"]["timezone"] == "Asia/Kolkata"
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id),
+                )
+
+        client.portal.call(cleanup)
+
+
+def test_promotional_message_count_uses_typed_execution_after_timezone_answer():
+    from app.api.main import app
+    from app.db.connection import get_pool
+
+    user_id = f"gmail-message-count-{uuid.uuid4()}@example.com"
+    session_id = f"gmail-message-count-{uuid.uuid4()}"
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": user_id}).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post("/runs", headers=headers, json={
+            "session_id": session_id,
+            "message": "how many promotional mails did i get today?",
+        })
+        assert created.status_code == 202
+        run_id = created.json()["run_id"]
+        before = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert before["status"] == "awaiting_clarification"
+
+        accepted = client.post(
+            f"/runs/{run_id}/clarify", headers=headers,
+            json={"answers": {
+                "Which timezone should define today?": "Asia/Kolkata",
+            }},
+        )
+        assert accepted.status_code == 200
+        rebuilt = client.get(f"/runs/{run_id}", headers=headers).json()
+        step = rebuilt["plan"]["steps"][0]
+        assert step["operation"] == "message_count"
+        assert step["arguments"]["allowed_tools"] == ["count_gmail_messages"]
+        assert step["arguments"]["tool_arguments"] == {
+            "category": "promotions",
+            "period": "today",
+            "timezone": "Asia/Kolkata",
+            "max_messages": 10_000,
+        }
 
         async def cleanup():
             pool = await get_pool()

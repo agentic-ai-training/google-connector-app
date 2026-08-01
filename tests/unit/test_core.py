@@ -69,6 +69,7 @@ from app.tools.registry import (
     _request_id,
     count_gmail_senders,
     list_recent_gmail_senders,
+    search_gmail,
 )
 from app.tools.result_projection import project_tool_result
 from app.tools.registry import registered_tool_names
@@ -94,7 +95,7 @@ from app.improvements.builder_tools import (
 )
 from app.improvements.routing import stable_bucket
 from app.improvements.failure_intelligence import (
-    analyze_failure, failure_fingerprint, sanitize_request_excerpt,
+    analyze_failure, failure_fingerprint, request_shape, sanitize_request_excerpt,
 )
 from app.api.middleware.metrics import _correlation_id, _route_template
 from app.mlops.tracing import _headers as otlp_headers, _logs_endpoint, _trace_endpoint
@@ -2643,7 +2644,7 @@ def test_promotional_sender_count_is_timezone_bounded_and_deterministic():
         "category": "promotions",
         "period": "today",
         "timezone": "Asia/Kolkata",
-        "max_messages": 500,
+        "max_messages": 2_000,
     }
     assert validate_plan(plan) == []
     clarified_plan, clarified_policy = build_plan(
@@ -2663,6 +2664,42 @@ def test_promotional_sender_count_is_timezone_bounded_and_deterministic():
     assert [(step.service, step.operation) for step in typo_plan.steps] == [
         ("gmail", "sender_count"),
     ]
+
+
+def test_promotional_message_count_outweighs_nearby_generic_get_verb():
+    message = "how many promotional mails did i get today?"
+    plan, policy = build_plan(message, "Asia/Kolkata")
+    assert policy["required_clarifications"] == []
+    assert [(step.service, step.operation) for step in plan.steps] == [
+        ("gmail", "message_count"),
+    ]
+    step = plan.steps[0]
+    assert step.arguments["allowed_tools"] == ["count_gmail_messages"]
+    assert step.arguments["tool_arguments"] == {
+        "category": "promotions",
+        "period": "today",
+        "timezone": "Asia/Kolkata",
+        "max_messages": 10_000,
+    }
+    assert "message count" in step.postconditions[0]
+    assert validate_plan(plan) == []
+
+
+def test_generic_gmail_search_clamps_pagination_and_rejects_ambiguous_today(monkeypatch):
+    service = MagicMock()
+    listing = service.users.return_value.messages.return_value.list
+    listing.return_value.execute.return_value = {"messages": []}
+    monkeypatch.setattr("app.tools.registry.g.gmail_service", service)
+
+    assert search_gmail.invoke({
+        "query": "is:promotional", "max_results": 0,
+    }) == []
+    assert listing.call_args.kwargs["q"] == "category:promotions"
+    assert listing.call_args.kwargs["maxResults"] == 1
+    with pytest.raises(ValueError, match="timezone-aware count operation"):
+        search_gmail.invoke({
+            "query": "category:promotions", "after_date": "today",
+        })
 
 
 def test_gmail_sender_count_reads_only_from_headers(monkeypatch):
@@ -2771,6 +2808,40 @@ def test_failure_analysis_is_private_granular_and_has_exactly_two_options():
     assert "person@example.com" not in sanitize_request_excerpt(
         "Send mail to person@example.com using https://secret.example/path"
     )
+
+
+def test_failure_analysis_does_not_mislabel_invalid_read_as_write_failure():
+    analysis = analyze_failure(
+        stage="execution", category="tool_failure", component="step_executor",
+        service="gmail", operation="message_count",
+        error="Google API 400: Invalid maxResults Value",
+        breaking_point="Execute and verify the gmail portion",
+    )
+    assert analysis["title"] == "Invalid tool arguments"
+    assert "write tool" not in analysis["root_cause"].casefold()
+    assert analysis["recommended_option"] == "A"
+    assert "typed tool boundary" in analysis["improvement_options"][0]["title"].casefold()
+
+
+def test_failure_analysis_distinguishes_read_and_write_tool_failures():
+    read = analyze_failure(
+        stage="execution", category="tool_failure", component="step_executor",
+        service="gmail", operation="search", error="upstream failure",
+    )
+    write = analyze_failure(
+        stage="execution", category="tool_failure", component="step_executor",
+        service="gmail", operation="send", error="upstream failure",
+    )
+    assert read["title"] == "Read tool execution failure"
+    assert write["title"] == "Write tool execution failure"
+
+
+def test_failure_request_shape_infers_write_from_typed_plan_steps():
+    shape = request_shape("Create a Calendar event", {
+        "services": ["calendar"],
+        "steps": [{"service": "calendar", "operation": "create", "read_only": False}],
+    })
+    assert shape["write"] is True
 
 
 def test_meet_space_routes_only_to_meet_create():

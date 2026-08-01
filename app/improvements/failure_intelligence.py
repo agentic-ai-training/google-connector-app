@@ -24,6 +24,7 @@ _SAFE_EVIDENCE_KEYS = frozenset({
     "retry_count", "automatic_retry", "reason", "reason_code", "boundary",
     "error_type", "provider_status", "source", "last_verified_operation",
     "progress_gate", "resume_point", "checks", "verification", "context_report",
+    "provider_failure_classes",
 })
 
 
@@ -85,6 +86,11 @@ def sanitize_request_excerpt(message: str) -> str:
 def request_shape(message: str, policy: dict | None = None) -> dict:
     text = " ".join((message or "").casefold().split())
     policy = policy or {}
+    steps = policy.get("steps") or []
+    has_write_step = any(
+        isinstance(step, dict) and step.get("read_only") is False
+        for step in steps
+    )
     return {
         "length_bucket": "short" if len(text) < 80 else "medium" if len(text) < 500 else "long",
         "has_email": bool(_EMAIL.search(text)),
@@ -94,7 +100,7 @@ def request_shape(message: str, policy: dict | None = None) -> dict:
         "service_count": len(policy.get("services") or []),
         "services": policy.get("services") or [],
         "rag_mode": policy.get("rag_mode", "none"),
-        "write": bool(policy.get("write")),
+        "write": bool(policy.get("write") or has_write_step),
         "risk_level": policy.get("risk_level", "low"),
         "clarification_count": len(policy.get("required_clarifications") or []),
     }
@@ -137,7 +143,7 @@ def failure_mechanism(category: str, error: str) -> tuple[str, str | None, bool]
         "permission": "authorization_or_scope_rejection",
         "verification": "postcondition_mismatch",
         "tool_selection": "required_write_tool_not_selected",
-        "tool_failure": "write_tool_execution_failure",
+        "tool_failure": "tool_execution_failure",
         "postcondition_failure": "postcondition_mismatch",
         "planning": "planner_contract_rejection",
         "embedding": "embedding_pipeline_failure",
@@ -315,29 +321,61 @@ def analyze_failure(
             "A", "One constrained correction restores valid requests without allowing loops."
         )
     elif category == "tool_failure":
-        title = "Write tool execution failure"
-        root = "A required write tool returned explicit failure evidence."
-        factors = ["The attempted write must not be repeated until its outcome is reconciled."]
+        mutating_operation = bool(operation and re.match(
+            r"^(?:send|reply|create|update|delete|trash|share|move|append|write|label|complete)",
+            operation,
+        ))
+        invalid_arguments = any(marker in normalized for marker in (
+            "invalid maxresults", "invalid argument", "bad request", "http 400",
+        ))
+        if invalid_arguments:
+            title = "Invalid tool arguments"
+            root = (
+                "A required tool was called with arguments rejected by its provider "
+                "before the requested operation could complete."
+            )
+            factors = [
+                "Typed argument validation or normalization did not stop an invalid value at the tool boundary.",
+                "The planner or fallback must not substitute ambiguous relative dates or invalid pagination values.",
+            ]
+        else:
+            title = "Write tool execution failure" if mutating_operation else "Read tool execution failure"
+            root = (
+                "A required write tool returned explicit failure evidence."
+                if mutating_operation else
+                "A required read tool returned explicit failure evidence."
+            )
+            factors = ([
+                "The attempted write must not be repeated until its outcome is reconciled.",
+            ] if mutating_operation else [
+                "No external mutation needs reconciliation; a corrected, bounded read may be retried safely.",
+            ])
         options = [
             _option(
-                "A", "Add operation-specific execution recovery",
-                "Classify provider failures and reconcile idempotent state before retry.",
-                ["tool adapter", "retry policy", "reconciliation", "replay"],
-                ["Explicit failures retain their provider class.",
-                 "Uncertain writes are never repeated."],
-                "Improves recovery while preserving side-effect safety.",
+                "A", "Repair the typed tool boundary and add an exact replay",
+                "Validate and normalize operation arguments before provider access, preserve the provider class, and replay the exact request without network access.",
+                ["typed planner", "tool adapter", "argument schema", "golden replay"],
+                ["Invalid values are rejected before provider access.",
+                 "The exact request selects the registered typed operation.",
+                 "Provider errors retain their sanitized underlying class."],
+                "Fixes the defect at its source and protects equivalent request shapes.",
                 automation_eligible=True,
             ),
             _option(
-                "B", "Require manual resume for this operation",
-                "Preserve all verified work and expose the exact failed operation.",
-                ["durable resume", "admin portal"],
-                ["Completed steps remain complete.", "The failure remains actionable."],
-                "Safest fallback, with more operator involvement.",
+                "B", "Add operation-aware recovery and reconciliation",
+                (
+                    "Reconcile provider state before a bounded retry and preserve every verified artifact."
+                    if mutating_operation else
+                    "Retry the corrected idempotent read with bounded backoff while preserving the exact failure evidence."
+                ),
+                ["retry policy", "durable resume", "reconciliation", "admin portal"],
+                ["Completed steps remain complete.",
+                 "Uncertain writes are never repeated." if mutating_operation else "Read retries are bounded and side-effect free."],
+                "Improves recovery, but argument defects still require the typed-boundary repair.",
                 automation_eligible=True,
             ),
         ]
-        recommended, reason = "A", "Typed recovery can safely handle known provider outcomes."
+        recommended, reason = "A", "Typed validation and an exact replay prevent recurrence instead of only containing it."
     elif stage == "verification" or category in {
         "verification", "postcondition_failure",
     }:
