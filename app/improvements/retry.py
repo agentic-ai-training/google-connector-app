@@ -109,6 +109,55 @@ def candidate_retry_decision(
     tokens_used = int(job.get("tokens_used") or checkpoint.get("tokens_used") or 0)
     if tokens_used >= effective_builder_token_budget(job):
         return CandidateRetryDecision(False, "effective_token_authority_exhausted", resume)
+    if code == "tool_token_budget_exhausted":
+        restart_count = int(checkpoint.get("budget_restart_count") or 0)
+        if runner_retryable and restart_count < 1:
+            return CandidateRetryDecision(
+                True,
+                "compact_role_restart",
+                {**resume, "phase": "compact_role_restart"},
+            )
+        return CandidateRetryDecision(False, "active_role_token_authority_exhausted", resume)
     if code == "files_required" and file_count == 0:
         return CandidateRetryDecision(False, "files_required", resume)
     return CandidateRetryDecision(True, "checkpointed_structural_retry", resume)
+
+
+def compact_role_restart_checkpoint(job: dict) -> dict:
+    """Create one bounded, auditable restart after an active role exhausts tokens.
+
+    The cumulative candidate budget is preserved. Only the active role's verbose
+    conversation is compacted, preventing a retry from immediately failing with
+    zero role-token authority while also preventing unlimited fresh restarts.
+    """
+    checkpoint = _checkpoint(job)
+    messages = checkpoint.get("messages") or []
+    initial = next(
+        (message for message in messages if message.get("role") == "user"),
+        {"role": "user", "content": "Continue the bounded candidate task."},
+    )
+    evidence = {
+        "resume_mode": "compact_role_restart",
+        "instruction": (
+            "Continue from this compact checkpoint. Re-read only the exact runtime "
+            "symbols still needed, stage an integrated implementation and regression "
+            "test early, then finalize. Do not repeat broad investigation."
+        ),
+        "prior_tool_calls": int(checkpoint.get("tool_calls") or 0),
+        "prior_read_bytes": int(checkpoint.get("read_bytes") or 0),
+        "read_paths": list(checkpoint.get("read_paths") or [])[:50],
+        "staged_file_count": int(checkpoint.get("staged_file_count") or 0),
+        "last_contract_errors": list(checkpoint.get("last_contract_errors") or [])[:20],
+        "last_tool_name": checkpoint.get("last_tool_name"),
+    }
+    return {
+        **checkpoint,
+        "phase": "role_in_progress",
+        "next_round": 0,
+        "messages": [initial, {"role": "user", "content": str(evidence)}],
+        "role_tokens_used": 0,
+        "role_models_used": [],
+        "budget_restart_count": int(checkpoint.get("budget_restart_count") or 0) + 1,
+        "progress_gate": "compact_role_restart",
+        "resume_point": f"{checkpoint.get('active_role') or 'role'}:compact-restart:0",
+    }

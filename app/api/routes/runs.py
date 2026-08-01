@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -64,6 +65,7 @@ from app.improvements.routing import (
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 sessions_router = APIRouter(prefix="/sessions", tags=["runs"])
+logger = logging.getLogger(__name__)
 
 
 def _serializable(value):
@@ -413,13 +415,18 @@ async def start_run(body: RunCreate, request: Request):
             "incident_id": str(incident["id"]) if incident else None,
         }) from exc
     except Exception as exc:
+        logger.exception(
+            "Durable run intake failed component=runs_api error_type=%s",
+            type(exc).__name__,
+        )
         try:
             policy = classify_request(body.message)
             incident = await record_failure_incident(
                 pool, occurrence_key=f"intake:{body.idempotency_key or uuid.uuid4()}:api",
                 session_id=body.session_id, user_id=request.state.user_id,
                 message=body.message, intent_kind=policy["intent_kind"], stage="api",
-                category="persistence", component="runs_api", error=str(exc),
+                category="persistence", component="runs_api",
+                error=f"{type(exc).__name__}: {str(exc)}",
                 breaking_point="Creating the durable run", policy=policy,
             )
         except Exception:

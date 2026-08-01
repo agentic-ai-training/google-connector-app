@@ -1697,7 +1697,10 @@ async def process_one_candidate_build(pool) -> bool:
         return True
     except Exception as exc:
         logger.exception("Candidate build %s failed", job["id"])
-        from app.improvements.retry import candidate_retry_decision
+        from app.improvements.retry import (
+            candidate_retry_decision,
+            compact_role_restart_checkpoint,
+        )
         safe_code = (
             exc.safe_code if isinstance(exc, CandidateBuilderFailure)
             else (
@@ -1723,23 +1726,28 @@ async def process_one_candidate_build(pool) -> bool:
                 runner_retryable=runner_retryable,
             )
             status = "queued" if retry.eligible else "failed"
+            checkpoint_update = {
+                "last_runner_failure": {
+                    "stage": "generation", "error_type": safe_code,
+                    "retryable": retry.eligible,
+                    "runner_retryable": runner_retryable,
+                    "retry_reason": retry.reason_code,
+                    "resume_point": retry.resume_point,
+                    "contract_errors": contract_errors[:20],
+                    "contains_private_evidence": False,
+                },
+            }
+            if retry.reason_code == "compact_role_restart":
+                checkpoint_update["generation_checkpoint"] = (
+                    compact_role_restart_checkpoint(dict(current))
+                )
             await conn.execute(
                 """UPDATE candidate_builds SET status=$1,error_message=$2,
                    checkpoint=checkpoint||$3::jsonb,updated_at=now(),
                    completed_at=CASE WHEN $1='failed' THEN now() ELSE NULL END
                    WHERE id=$4""",
                 status, f"Candidate builder stopped at guard {safe_code}.",
-                json.dumps({
-                    "last_runner_failure": {
-                        "stage": "generation", "error_type": safe_code,
-                        "retryable": retry.eligible,
-                        "runner_retryable": runner_retryable,
-                        "retry_reason": retry.reason_code,
-                        "resume_point": retry.resume_point,
-                        "contract_errors": contract_errors[:20],
-                        "contains_private_evidence": False,
-                    },
-                }), job["id"],
+                json.dumps(checkpoint_update), job["id"],
             )
             proposal = await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE id=$1", job["proposal_id"],

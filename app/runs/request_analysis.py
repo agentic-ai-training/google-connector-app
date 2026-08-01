@@ -77,7 +77,7 @@ LOCAL_ANTECEDENT_PATTERN = re.compile(
     r"\b(create|draft|write|compose|find|get|make|build|prepare|generate|"
     r"have|start|hold)\b.+"
     r"(?:\band\b|\bthen\b|[,.;])\s*(?:then\s+)?"
-    r"(?:send|share|email|post|use|put|add|change|rewrite|revise|shorten|"
+    r"(?:send|share|email|(?:google\s+)?chat|post|use|put|add|change|rewrite|revise|shorten|"
     r"expand|summarize|summarise|format|turn|convert|make)\s+"
     r"(?:it|that|this|them|those)\b"
 )

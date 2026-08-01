@@ -202,6 +202,57 @@ async def test_referential_delivery_uses_exact_verified_write_arguments_not_rece
     }
 
 
+@pytest.mark.asyncio
+async def test_same_calendar_event_on_chat_uses_verified_event_not_new_calendar_step():
+    pool = _Pool(previous={
+        "id": "calendar-run",
+        "request": "Create a daily event for ten years",
+        "result": '{"output":"Calendar event created."}',
+        "intent_kind": "workspace_action",
+        "status": "completed",
+        "step_outputs": [{
+            "tool_executions": [{
+                "tool": "create_calendar_event",
+                "arguments": {"title": "Brush my teeth"},
+                "result": {
+                    "id": "event-1",
+                    "summary": "Brush my teeth",
+                    "start": {"dateTime": "2026-08-02T10:00:00+05:30"},
+                    "end": {"dateTime": "2026-08-02T10:10:00+05:30"},
+                    "recurrence": ["RRULE:FREQ=DAILY;UNTIL=20360802T235959Z"],
+                    "htmlLink": "https://calendar.google.com/event?eid=event-1",
+                },
+            }],
+        }],
+    })
+    current = "now send the same event on chat to achintyat256@gmail.com"
+    statement = analyze_request_statement(current)
+
+    context = await analyze_conversation_context(
+        pool, user_id="user-a", session_id="session-a",
+        message=current, request_analysis=statement,
+    )
+    plan, policy = build_plan(
+        context.effective_message, authority_message=current,
+        request_analysis=statement, referenced_output=context.referenced_output,
+        referenced_subject=context.referenced_subject,
+        referenced_service=context.referenced_service,
+    )
+
+    assert context.referenced_service == "calendar"
+    assert context.referenced_kind == "verified_calendar_event"
+    assert "Brush my teeth" in context.referenced_output
+    assert "https://calendar.google.com/event?eid=event-1" in context.referenced_output
+    assert policy["services"] == ["chat"]
+    assert policy["required_clarifications"] == []
+    assert [(step.service, step.operation) for step in plan.steps] == [("chat", "send")]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "destination": "achintyat256@gmail.com",
+        "text": context.referenced_output,
+    }
+    assert validate_plan(plan) == []
+
+
 def test_contextual_delivery_without_compatible_content_clarifies_before_write():
     current = "send the same message to b@example.com on chat"
     statement = analyze_request_statement(current)
@@ -338,6 +389,24 @@ def test_repository_markdown_edit_is_not_misclassified_as_google_docs():
     assert policy["intent_kind"] == "out_of_scope"
     assert policy["services"] == ["general"]
     assert plan.steps[0].operation == "answer_workspace_chat"
+
+
+def test_capability_and_channel_ambiguous_phrasings_are_not_out_of_scope():
+    capability_plan, capability_policy = build_plan(
+        "give me all functions u can perform"
+    )
+    assert capability_policy["intent_kind"] == "product_information"
+    assert capability_policy["informational_intent"] == "capabilities"
+    assert capability_plan.steps[0].operation == "answer_information"
+
+    message_plan, message_policy = build_plan(
+        "send a message to Achintya Tyagi saying hi"
+    )
+    assert message_policy["intent_kind"] == "ambiguous"
+    assert "What exact Workspace outcome" in " ".join(
+        message_policy["required_clarifications"]
+    )
+    assert message_plan.steps[0].operation == "answer_workspace_chat"
 
 
 def test_contextual_rewrite_uses_prior_content_without_inheriting_prior_write():

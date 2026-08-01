@@ -268,7 +268,7 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                     risk_level,requires_approval,approval_bypassed,idempotency_key,
                     chunker_version,okf_version,deployment_version,retention_until,
                     clarification_questions,intent_kind,intent_evidence,
-                    planning_diagnostics,error_category,error_message,failed_at,
+                    planning_diagnostics,error_category,error_message,completed_at,
                     technical_completion,functional_completion,user_visible_completion,
                     side_effect_integrity,executor_version,cohort_assignment,
                     assignment_reason,assigned_at)

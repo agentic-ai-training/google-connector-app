@@ -1767,3 +1767,31 @@ worker startup ledger report that exact immutable version. Candidate build
 cannot retry. Run `f70adb6f` accepted its stored clarifications and approval without an
 external attempt, then was explicitly cancelled by the user; it retains zero artifacts
 and was not revived by maintenance.
+
+## Sprint 54 — Production intake traceback, Calendar lineage, and bounded builder restart
+
+Two current requests on deployment `d5b7622` returned HTTP 500 before a durable run was
+created. Railway showed the route and status but not the exception. Correlating the
+sanitized incidents with Neon and reproducing the exact rejected-plan branch against the
+deployed schema identified `UndefinedColumnError`: the branch referenced nonexistent
+`agent_runs.failed_at` instead of the canonical `completed_at`.
+
+- [x] Persist rejected plans with the deployed terminal timestamp and cover the branch
+  with a real PostgreSQL integration regression.
+- [x] Log internal exception type/traceback and retain a sanitized exception class in
+  failure intelligence so future Railway 500s have actionable evidence.
+- [x] Resolve a verified prior Calendar artifact from tool evidence and project its
+  title, time, recurrence, and URL into a later Chat delivery.
+- [x] Collapse referential resource nouns only after exact context resolution; preserve
+  self-contained multi-service and prompt-injection golden cases.
+- [x] Recognize broader registry-capability questions and clarify channel-unspecified
+  message delivery instead of falsely classifying either as out of scope.
+- [x] Permit one cumulative-budget-preserving compact role restart after candidate
+  `tool_token_budget_exhausted`; preserve tool/read evidence and make the second active-
+  role exhaustion terminal.
+- [x] Add unit, PostgreSQL, golden-planner, policy, workflow replay, and documentation
+  coverage for the repaired paths.
+
+Local evidence on 2026-08-01: 258 unit tests and all 299 tests with PostgreSQL enabled
+pass. Planner goldens pass 43/43, policy comparison reports no regression, and workflow
+replays pass 16/16. Release/production evidence is pending publication of this sprint.
