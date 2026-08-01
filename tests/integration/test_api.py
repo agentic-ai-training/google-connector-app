@@ -1134,6 +1134,76 @@ def test_run_idempotency_and_cross_user_isolation():
         ).json() == {"runs": []}
 
 
+def test_recurring_calendar_clarifications_are_typed_and_rebuild_from_original():
+    from app.api.main import app
+    from app.db.connection import get_pool
+    from app.runs.planner import (
+        CALENDAR_DURATION_QUESTION,
+        CALENDAR_RECURRENCE_QUESTION,
+        CALENDAR_START_DATE_QUESTION,
+        CALENDAR_START_TIME_QUESTION,
+        CALENDAR_TIMEZONE_QUESTION,
+    )
+
+    email = f"recurrence-clarification-{uuid.uuid4()}@example.com"
+    session_id = f"recurrence-clarification-{uuid.uuid4()}"
+    message = (
+        "create a recurring calender event for me for the next 10 years "
+        "to brush my teeth"
+    )
+    with TestClient(app) as client:
+        token = client.post("/auth/token", json={"email": email}).json()[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        created = client.post("/runs", headers=headers, json={
+            "session_id": session_id, "message": message,
+        })
+        assert created.status_code == 202
+        run_id = created.json()["run_id"]
+        before = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert before["status"] == "awaiting_clarification"
+        fields = {field["key"]: field for field in before["clarification_fields"]}
+        assert fields[CALENDAR_START_DATE_QUESTION]["type"] == "date"
+        # "for the next 10 years" is already a complete end condition; the
+        # runtime must not ask for it again.
+        assert "When should the recurrence end?" not in fields
+        assert fields[CALENDAR_RECURRENCE_QUESTION]["type"] == "select"
+        assert fields[CALENDAR_TIMEZONE_QUESTION]["type"] == "timezone"
+
+        clarified = client.post(
+            f"/runs/{run_id}/clarify", headers=headers,
+            json={"answers": {
+                CALENDAR_START_TIME_QUESTION: "10:00 AM",
+                CALENDAR_DURATION_QUESTION: "10 minutes",
+                CALENDAR_TIMEZONE_QUESTION: "Asia/Kolkata",
+                CALENDAR_RECURRENCE_QUESTION: "daily",
+                CALENDAR_START_DATE_QUESTION: "2030-08-01",
+            }},
+        )
+        assert clarified.status_code == 200
+        after = client.get(f"/runs/{run_id}", headers=headers).json()
+        assert after["status"] == "awaiting_approval"
+        assert after["plan"]["objective"] == message
+        assert after["plan"]["services"] == ["calendar"]
+        assert after["steps"][0]["input_data"]["tool_arguments"]["recurrence"] == [
+            "RRULE:FREQ=DAILY;UNTIL=20400801T235959Z"
+        ]
+
+        session = client.get(
+            f"/sessions/{session_id}/runs", headers=headers,
+        ).json()["runs"]
+        assert session[0]["request"] == message
+        assert "output" in session[0]
+
+        async def cleanup():
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id))
+
+        client.portal.call(cleanup)
+
+
 def test_filterable_run_history_remains_tenant_scoped():
     from app.api.main import app
     from app.db.connection import get_pool

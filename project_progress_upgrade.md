@@ -1715,3 +1715,42 @@ replays pass. Python compilation, Flake8, Bandit medium/high checks, dependency 
 web lint/build/audit, Flutter analyze/test/debug APK, migration downgrade/forward repair,
 Compose validation, Grafana dashboard validation, secret-history checks, and all four
 Docker image builds pass.
+
+## Sprint 53 — Post-release session, clarification, and candidate repair
+
+Production runs on deployment `a54e8163eafada5786e3b981dfbba0525f03aa5a` exposed
+three systemic classes rather than isolated sentence bugs: previous-delivery payloads
+were reconstructed from receipts, Calendar clarification accumulated prompt prose, and
+candidate staging deferred trivial compiler failures until after expensive review.
+
+- [x] Audit every run on the deployment and distinguish application defects, false
+  successes, verified partial artifacts, policy outcomes, and external account settings.
+- [x] Resolve prior-message delivery from verified Gmail/Chat tool arguments with exact
+  subject/body/text lineage; the current turn remains the sole service/write authority.
+- [x] Block unresolved internal placeholders before every external write and require a
+  clarification when compatible prior content cannot be proven.
+- [x] Rebuild clarification plans from the immutable original request and structured
+  answer map; never append repeated clarification prose or let question wording add a
+  service.
+- [x] Add typed Calendar fields and deterministic personal recurring-event arguments,
+  including ten-year horizons, recurrence rules, complete-date validation, and past-date
+  re-clarification.
+- [x] Restore bounded request/output transcripts from durable session history before
+  restoring an active run in the frontend.
+- [x] Classify Google HTTP 400 “Chat is turned off” as an account/organization setting,
+  distinct from project API disablement, and state that no Chat retry can repair it.
+- [x] Activate `bounded-repo-tools-v12-eager-stage-compiler-gates`: exact-path source-read
+  evidence and immediate discard of syntax, placeholder, no-op, or file-policy failures.
+- [x] Add unit and PostgreSQL integration regressions for exact prior-write lineage,
+  missing-context clarification, typed recurrence, session restoration data, Chat error
+  taxonomy, and eager candidate rejection.
+- [ ] Publish through trusted CI, deploy the immutable release, verify repaired production
+  behavior, and retire/cancel the unsafe V11 placeholder candidate under policy rollover.
+
+Pre-release local evidence on 2026-08-01: 255 unit tests and all 293 tests with the
+isolated PostgreSQL suite pass; planner goldens pass 43/43 and no-network workflow
+replays pass 16/16. Python compilation, Flake8, Bandit medium/high, `pip-audit`, source
+chunking, context-packing/DP/policy evaluations, dual-worker isolation, Next.js
+lint/build/audit, Flutter analyze/test/debug APK, migration 014 round-trip, Compose,
+Grafana dashboard, secret-history, and API/worker/builder/candidate Docker image gates
+pass.

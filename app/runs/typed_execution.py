@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from app.tools.contracts import write_contract_for
 
 
-DecisionStatus = Literal["eligible", "bypass"]
+DecisionStatus = Literal["eligible", "bypass", "reject"]
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,20 @@ def _validated_arguments(tool: BaseTool, arguments: dict) -> dict:
     return validated.model_dump()
 
 
+def contains_unresolved_placeholder(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(contains_unresolved_placeholder(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(contains_unresolved_placeholder(item) for item in value)
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().casefold()
+    return normalized in {
+        "message_to_be_sent", "content_to_be_sent", "recipient_email",
+        "your message here", "placeholder",
+    } or (normalized.startswith("<") and normalized.endswith(">"))
+
+
 def decide_typed_execution(
     step: dict,
     tools: dict[str, BaseTool],
@@ -46,6 +60,8 @@ def decide_typed_execution(
     supplied = input_data.get("tool_arguments")
     if not isinstance(supplied, dict):
         return TypedExecutionDecision("bypass", "typed_arguments_not_an_object")
+    if contains_unresolved_placeholder(supplied):
+        return TypedExecutionDecision("reject", "unresolved_placeholder_argument")
 
     if step.get("read_only", True):
         candidates = [name for name in allowed if name in tools]
@@ -77,4 +93,3 @@ def decide_typed_execution(
     return TypedExecutionDecision(
         "eligible", "complete_schema_validated", tool_name, arguments,
     )
-

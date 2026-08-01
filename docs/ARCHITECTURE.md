@@ -180,13 +180,17 @@ authority, terminal policy codes, and absence of a commit/deployment. A valid re
 checkpoint resumes at its persisted round with frozen author files.
 
 The active candidate policies are `adaptive-roles-v3-model-chain-evidence` and
-`bounded-repo-tools-v11-runtime-read-noop-gates`. The portal reports the configured primary
+`bounded-repo-tools-v12-eager-stage-compiler-gates`. The portal reports the configured primary
 and every actually used Groq-hosted fallback. Finalization rejects files whose declared
 create/replace/delete operation disagrees with the base tree and rejects new modules
 that are not adopted by an existing runtime path. Application patches additionally
 require an observed source read; placeholder-only application functions and
 assertion-free tests are rejected structurally. A ranked runtime-boundary localizer
 reduces broad repository reads, but it never substitutes for reading the exact symbol.
+V12 applies syntax, placeholder, no-op-test, and file-policy checks immediately after
+every in-memory stage/patch operation. A rejected revision is discarded before another
+model/reviewer round, and application staging requires a read of that exact path—not an
+unrelated source byte used to satisfy a global counter.
 
 The portal places every current human gate directly below the candidate ledger. A single
 highlighted list covers retries, draft-PR publication, isolated-canary deployment,
@@ -256,6 +260,33 @@ returns no visible content; an external operation never inherits that retry auth
 Successful composition emits `content-lineage-v1` with source run/step, kind, languages,
 future-artifact state, and content hash. A future conversation is not a completed
 artifact, so “have a conversation, then copy it” cannot select an older paragraph.
+
+## Typed clarification and session restoration
+
+The original request is immutable throughout clarification. Answers are stored as typed
+data keyed to the current run questions; they are never appended as authority-bearing
+prose to the plan objective. Replanning therefore cannot accumulate repeated
+`User clarifications` blocks or infer Gmail from the word “email” inside a Chat
+destination question. Calendar fields validate date, time, duration, timezone, and
+recurrence independently. A phrase such as “for the next 10 years” is already a valid
+end condition and is not asked again. An explicitly selected past start date is re-asked
+instead of silently moved.
+
+The run API exposes field contracts (`date`, `select`, `timezone`, or bounded text) and
+the frontend renders matching controls. Session history returns bounded original
+request/output pairs. On reload or History navigation the client rebuilds the transcript
+from the durable session before restoring an active run, so a clarification panel cannot
+survive beside a missing request.
+
+## Exact prior-delivery lineage
+
+When a current command explicitly refers to a previous delivered message, context
+selection reads the verified prior tool execution arguments (Gmail subject/body or Chat
+text), not the assistant's receipt prose. The current turn alone selects the destination
+service. If no compatible exact payload exists, execution pauses for content instead of
+inventing `message_to_be_sent`, a test message, or other model placeholder. Every write
+boundary independently rejects unresolved internal placeholders before provider or
+Google calls.
 ## Durable hybrid execution
 
 Every durable step passes through one execution boundary. The worker first checks

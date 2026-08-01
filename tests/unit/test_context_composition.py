@@ -164,6 +164,58 @@ async def test_referential_request_gets_only_one_same_session_turn():
     assert pool.connection.fetches == 1
 
 
+@pytest.mark.asyncio
+async def test_referential_delivery_uses_exact_verified_write_arguments_not_receipt():
+    pool = _Pool(previous={
+        "id": "run-prior",
+        "request": "send hello by Gmail",
+        "result": {"output": "Gmail message ID: receipt-only"},
+        "intent_kind": "workspace_action",
+        "status": "completed",
+        "step_outputs": [{
+            "tool_executions": [{
+                "tool": "send_gmail",
+                "arguments": {"to": "a@example.com", "subject": "Hello", "body": "Exact body"},
+            }],
+        }],
+    })
+    current = "now send the same message to b@example.com on chat"
+    statement = analyze_request_statement(current)
+
+    context = await analyze_conversation_context(
+        pool, user_id="user-a", session_id="session-a",
+        message=current, request_analysis=statement,
+    )
+    plan, policy = build_plan(
+        context.effective_message, authority_message=current,
+        request_analysis=statement, referenced_output=context.referenced_output,
+        referenced_subject=context.referenced_subject,
+        referenced_service=context.referenced_service,
+    )
+
+    assert context.referenced_output == "Exact body"
+    assert context.referenced_subject == "Hello"
+    assert context.referenced_service == "gmail"
+    assert policy["services"] == ["chat"]
+    assert plan.steps[0].arguments["tool_arguments"] == {
+        "destination": "b@example.com", "text": "Exact body",
+    }
+
+
+def test_contextual_delivery_without_compatible_content_clarifies_before_write():
+    current = "send the same message to b@example.com on chat"
+    statement = analyze_request_statement(current)
+    plan, policy = build_plan(
+        current, authority_message=current, request_analysis=statement,
+    )
+
+    assert policy["services"] == ["chat"]
+    assert "Which exact content should be sent?" in " ".join(
+        policy["required_clarifications"]
+    )
+    assert plan.required_clarifications == policy["required_clarifications"]
+
+
 def test_draft_content_does_not_invent_calendar_or_gmail_mutation():
     message = "Draft a polite email asking for a meeting"
     analysis = analyze_request_statement(message)

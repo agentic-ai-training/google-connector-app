@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.runs.schemas import ExecutionPlan, PlanStep
@@ -279,6 +280,112 @@ TIMEZONE_ALIASES = {
     "cet": "Europe/Paris",
 }
 
+CALENDAR_START_TIME_QUESTION = "What start time should the event use?"
+CALENDAR_DURATION_QUESTION = "How long should the event last?"
+CALENDAR_TIMEZONE_QUESTION = "Which timezone should be used?"
+CALENDAR_RECURRENCE_QUESTION = (
+    "What recurrence should be used (daily, weekdays, weekly, monthly, or yearly)?"
+)
+CALENDAR_START_DATE_QUESTION = "On what date should the recurrence start?"
+CALENDAR_END_DATE_QUESTION = "When should the recurrence end?"
+CHAT_DESTINATION_QUESTION = (
+    "Which existing Google Chat space or direct-message email should receive the message?"
+)
+
+
+def _clarification_answer(answers: dict | None, question: str) -> str:
+    return str((answers or {}).get(question) or "").strip()
+
+
+def _add_years(value: date, years: int) -> date:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + years)
+
+
+def parse_calendar_date(
+    value: str | None, timezone_name: str | None, *, reference: datetime | None = None,
+) -> date | None:
+    raw = " ".join(str(value or "").strip().casefold().split())
+    if not raw or not timezone_name:
+        return None
+    timezone = ZoneInfo(timezone_name)
+    today = (reference or datetime.now(timezone)).astimezone(timezone).date()
+    if raw == "today":
+        return today
+    if raw in {"tomorrow", "tommorow"}:
+        return today + timedelta(days=1)
+    years = re.fullmatch(r"(?:exactly\s+)?(\d+)\s+years?(?:\s+later)?", raw)
+    if years:
+        return _add_years(today, int(years.group(1)))
+    if re.fullmatch(r"\d{4}", raw):
+        return date(int(raw), 12, 31)
+    for pattern, order in (
+        (r"(\d{4})-(\d{1,2})-(\d{1,2})", "ymd"),
+        (r"(\d{4})/(\d{1,2})/(\d{1,2})", "ymd"),
+        (r"(\d{1,2})/(\d{1,2})/(\d{4})", "dmy"),
+    ):
+        match = re.fullmatch(pattern, raw)
+        if match:
+            values = [int(item) for item in match.groups()]
+            year, month, day = (
+                values if order == "ymd" else (values[2], values[1], values[0])
+            )
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
+    cleaned = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", raw)
+    for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _calendar_frequency(value: str) -> str | None:
+    lowered = value.casefold()
+    if re.search(r"\b(?:daily|every\s+day)\b", lowered):
+        return "DAILY"
+    if re.search(r"\bweekdays?\b", lowered):
+        return "WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    if re.search(r"\b(?:weekly|every\s+week)\b", lowered):
+        return "WEEKLY"
+    if re.search(r"\b(?:monthly|every\s+month)\b", lowered):
+        return "MONTHLY"
+    if re.search(r"\b(?:yearly|annually|every\s+year)\b", lowered):
+        return "YEARLY"
+    return None
+
+
+def _calendar_start_from_answers(
+    answers: dict, timezone_name: str | None,
+) -> datetime | None:
+    """Build a comparable instant only from typed clarification values."""
+    if not timezone_name:
+        return None
+    day = parse_calendar_date(
+        _clarification_answer(answers, CALENDAR_START_DATE_QUESTION),
+        timezone_name,
+    )
+    time_value = _clarification_answer(answers, CALENDAR_START_TIME_QUESTION)
+    match = re.fullmatch(
+        r"\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*",
+        time_value,
+        re.IGNORECASE,
+    )
+    if not day or not match:
+        return None
+    hour = int(match.group(1)) % 12
+    if match.group(3).casefold() == "pm":
+        hour += 12
+    return datetime(
+        day.year, day.month, day.day, hour, int(match.group(2) or 0),
+        tzinfo=ZoneInfo(timezone_name),
+    )
+
 
 def resolve_timezone(message: str, supplied: str | None = None) -> str | None:
     candidates = [supplied] if supplied else []
@@ -309,20 +416,37 @@ def calendar_create_arguments(
     recipients: list[str],
     *,
     add_meet: bool,
+    clarification_answers: dict | None = None,
 ) -> dict:
     """Project a fully specified natural-language event into bounded arguments."""
-    start_match = re.search(
-        r"\b(today|tomorrow|tommorow)\b\s+(?:at\s+)?"
-        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
-        message,
-        re.IGNORECASE,
+    answers = clarification_answers or {}
+    explicit_start_day = _clarification_answer(
+        answers, CALENDAR_START_DATE_QUESTION
     )
+    start_day_value = explicit_start_day
+    start_time_value = _clarification_answer(answers, CALENDAR_START_TIME_QUESTION)
+    inline_start = re.search(
+        r"\b(today|tomorrow|tommorow|\d{4}-\d{1,2}-\d{1,2})\b"
+        r"\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+        message, re.IGNORECASE,
+    )
+    if inline_start:
+        start_day_value = start_day_value or inline_start.group(1)
+        start_time_value = start_time_value or inline_start.group(2)
     duration_match = re.search(
         r"\b(\d+)\s*(minutes?|hours?)\b",
         message,
         re.IGNORECASE,
     )
-    if not start_match or not duration_match or not timezone or not recipients:
+    duration_value = _clarification_answer(answers, CALENDAR_DURATION_QUESTION)
+    if duration_value:
+        duration_match = re.search(
+            r"\b(\d+)\s*(minutes?|hours?)\b", duration_value, re.IGNORECASE,
+        )
+    timezone = (
+        _clarification_answer(answers, CALENDAR_TIMEZONE_QUESTION) or timezone
+    )
+    if not start_day_value or not start_time_value or not duration_match or not timezone:
         return {}
     duration = int(duration_match.group(1))
     if duration <= 0:
@@ -332,19 +456,73 @@ def calendar_create_arguments(
     recipient_list = list(dict.fromkeys(
         item.casefold() for item in recipients if item
     ))
-    if not recipient_list:
+    normalized_timezone = resolve_timezone(message, timezone)
+    if not normalized_timezone:
         return {}
-    start_day = start_match.group(1)
-    if start_day.casefold() == "tommorow":
-        start_day = "tomorrow"
-    return {
-        "title": f"Meeting with {recipient_list[0]}",
-        "start_datetime": f"{start_day} {start_match.group(2)}",
+    start_date = parse_calendar_date(start_day_value, normalized_timezone)
+    if not start_date:
+        return {}
+    title_match = re.search(
+        r"\b(?:to|for)\s+(.+?)(?:\s+for\s+(?:the\s+)?next\s+\d+\s+years?)?$",
+        message, re.IGNORECASE,
+    )
+    title = (
+        f"Meeting with {recipient_list[0]}" if recipient_list
+        else (title_match.group(1).strip().capitalize() if title_match else "Calendar event")
+    )
+    relative_start = start_day_value.casefold() in {
+        "today", "tomorrow", "tommorow",
+    } and not explicit_start_day
+    if relative_start:
+        start_datetime = (
+            f"{'tomorrow' if start_day_value.casefold() == 'tommorow' else start_day_value} "
+            f"{start_time_value}"
+        )
+    else:
+        time_match = re.fullmatch(
+            r"\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*",
+            start_time_value, re.IGNORECASE,
+        )
+        if not time_match:
+            return {}
+        hour = int(time_match.group(1)) % 12
+        if time_match.group(3).casefold() == "pm":
+            hour += 12
+        start_datetime = datetime(
+            start_date.year, start_date.month, start_date.day,
+            hour, int(time_match.group(2) or 0),
+            tzinfo=ZoneInfo(normalized_timezone),
+        ).isoformat()
+    arguments = {
+        "title": title,
+        "start_datetime": start_datetime,
         "duration_minutes": duration,
-        "timezone": timezone,
+        "timezone": normalized_timezone,
         "attendees": recipient_list,
         "add_meet": add_meet,
     }
+    recurrence_requested = bool(re.search(
+        r"\b(?:recurr(?:ing|ence)|repeat(?:ing|ed)?|every|next\s+\d+\s+years?)\b",
+        message, re.IGNORECASE,
+    ))
+    if recurrence_requested:
+        frequency = _calendar_frequency(
+            _clarification_answer(answers, CALENDAR_RECURRENCE_QUESTION) or message
+        )
+        horizon = re.search(
+            r"\b(?:for\s+)?(?:the\s+)?next\s+(\d+)\s+years?\b",
+            message, re.IGNORECASE,
+        )
+        end_value = _clarification_answer(answers, CALENDAR_END_DATE_QUESTION)
+        end_date = (
+            _add_years(start_date, int(horizon.group(1))) if horizon
+            else parse_calendar_date(end_value, normalized_timezone)
+        )
+        if not frequency or not end_date or end_date <= start_date:
+            return {}
+        until = end_date.strftime("%Y%m%d") + "T235959Z"
+        arguments["recurrence"] = [f"RRULE:FREQ={frequency};UNTIL={until}"]
+    return arguments
 
 
 def classify_request(
@@ -353,13 +531,18 @@ def classify_request(
     *,
     authority_message: str | None = None,
     request_analysis: RequestStatementAnalysis | None = None,
+    clarification_answers: dict | None = None,
 ) -> dict:
     text = " ".join(message.lower().split())
     statement = request_analysis or analyze_request_statement(
         authority_message or message
     )
     authority_text = statement.normalized_text
-    resolved_timezone = resolve_timezone(message, timezone)
+    answers = clarification_answers or {}
+    resolved_timezone = resolve_timezone(
+        message,
+        _clarification_answer(answers, CALENDAR_TIMEZONE_QUESTION) or timezone,
+    )
     services = [
         service for service, terms in SERVICES.items()
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
@@ -516,34 +699,65 @@ def classify_request(
     content_contract = analyze_content_request(authority_message or message)
     clarifications.extend(content_contract.required_clarifications)
     if "calendar" in services:
-        if not re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text):
-            clarifications.append("What start time should the event use?")
-        if not re.search(r"\b(?:\d+\s*(?:minutes?|hours?)|from\b.+\bto)\b", text):
-            clarifications.append("How long should the event last?")
-        if not re.search(r"\b(?:timezone|utc|gmt|ist|est|edt|pst|pdt|cet|asia/|america/|europe/)\b", text):
-            clarifications.append("Which timezone should be used?")
-        if re.search(r"\b(?:recurr(?:ing|ence)|repeat(?:ing|ed)?|every)\b", text):
-            if not re.search(
+        if not (
+            re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text)
+            or _clarification_answer(answers, CALENDAR_START_TIME_QUESTION)
+        ):
+            clarifications.append(CALENDAR_START_TIME_QUESTION)
+        if not (
+            re.search(r"\b(?:\d+\s*(?:minutes?|hours?)|from\b.+\bto)\b", text)
+            or _clarification_answer(answers, CALENDAR_DURATION_QUESTION)
+        ):
+            clarifications.append(CALENDAR_DURATION_QUESTION)
+        if not resolved_timezone:
+            clarifications.append(CALENDAR_TIMEZONE_QUESTION)
+        recurrence_requested = bool(re.search(
+            r"\b(?:recurr(?:ing|ence)|repeat(?:ing|ed)?|every|next\s+\d+\s+years?)\b",
+            text,
+        ))
+        if recurrence_requested:
+            if not (
+                re.search(
                 r"\b(?:daily|weekdays?|weekly|monthly|yearly|annually|"
                 r"every\s+(?:day|week|month|year|monday|tuesday|wednesday|"
                 r"thursday|friday|saturday|sunday))\b",
                 text,
-            ):
-                clarifications.append(
-                    "What recurrence should be used (daily, weekdays, weekly, monthly, or yearly)?"
                 )
-            if not re.search(r"\b(?:today|tomorrow|tommorow|on\s+\d{4}-\d{2}-\d{2})\b", text):
-                clarifications.append("On what date should the recurrence start?")
-            if not re.search(r"\b(?:until|through|for\s+\d+\s+(?:occurrences?|weeks?|months?))\b", text):
-                clarifications.append("When should the recurrence end?")
+                or _calendar_frequency(
+                    _clarification_answer(answers, CALENDAR_RECURRENCE_QUESTION)
+                )
+            ):
+                clarifications.append(CALENDAR_RECURRENCE_QUESTION)
+            start_answer = _clarification_answer(
+                answers, CALENDAR_START_DATE_QUESTION
+            )
+            if not (
+                re.search(
+                    r"\b(?:today|tomorrow|tommorow|on\s+\d{4}-\d{1,2}-\d{1,2})\b",
+                    text,
+                )
+                or parse_calendar_date(start_answer, resolved_timezone)
+            ):
+                clarifications.append(CALENDAR_START_DATE_QUESTION)
+            end_answer = _clarification_answer(answers, CALENDAR_END_DATE_QUESTION)
+            end_in_request = re.search(
+                r"\b(?:until|through|for\s+(?:the\s+)?next\s+\d+\s+years?|"
+                r"for\s+\d+\s+(?:occurrences?|weeks?|months?|years?))\b",
+                text,
+            )
+            if not (end_in_request or parse_calendar_date(end_answer, resolved_timezone)):
+                clarifications.append(CALENDAR_END_DATE_QUESTION)
+            typed_start = _calendar_start_from_answers(answers, resolved_timezone)
+            if typed_start and typed_start <= datetime.now(ZoneInfo(resolved_timezone)):
+                # Re-ask the same typed field. Silently moving an explicitly chosen
+                # start date would create a materially different Calendar event.
+                clarifications.append(CALENDAR_START_DATE_QUESTION)
     if (
         "chat" in services and write and "space" not in text
         and not statement.chat_destination_emails
+        and not _clarification_answer(answers, CHAT_DESTINATION_QUESTION)
     ):
-        clarifications.append(
-            "Which existing Google Chat space or direct-message email should "
-            "receive the message?"
-        )
+        clarifications.append(CHAT_DESTINATION_QUESTION)
     if (
         "gmail" in services
         and re.search(r"\b(?:count|how many)\b", text)
@@ -589,14 +803,37 @@ def build_plan(
     authority_message: str | None = None,
     request_analysis: RequestStatementAnalysis | None = None,
     referenced_output: str | None = None,
+    referenced_subject: str | None = None,
+    referenced_service: str | None = None,
+    clarification_answers: dict | None = None,
 ) -> tuple[ExecutionPlan, dict]:
     statement = request_analysis or analyze_request_statement(
         authority_message or message
     )
     policy = classify_request(
         message, timezone, authority_message=authority_message,
-        request_analysis=statement,
+        request_analysis=statement, clarification_answers=clarification_answers,
     )
+    if (
+        statement.contextual_reference
+        and not statement.explicit_services
+        and referenced_service in {"gmail", "chat"}
+        and statement.current_authorizes_external_write
+    ):
+        policy["services"] = [referenced_service]
+        policy["write"] = True
+        policy["risk_level"] = "high"
+        policy["requires_approval"] = not policy["approval_bypassed"]
+    if (
+        statement.contextual_reference
+        and statement.current_authorizes_external_write
+        and referenced_output is None
+        and not policy.get("sheet_url_is_drive_link")
+    ):
+        policy["required_clarifications"] = list(dict.fromkeys([
+            *policy["required_clarifications"],
+            "Which exact content should be sent? No compatible prior content was found.",
+        ]))
     if (
         statement.contextual_reference
         and re.search(r"\blink\b", statement.normalized_text)
@@ -797,22 +1034,42 @@ def build_plan(
             if (
                 service == "chat"
                 and operation == "send"
-                and (statement.chat_destination_emails or statement.email_recipients)
+                and (
+                    statement.chat_destination_emails
+                    or statement.email_recipients
+                    or _clarification_answer(
+                        clarification_answers, CHAT_DESTINATION_QUESTION
+                    )
+                )
             ):
                 exact_tool_arguments = {
                     "destination": (
                         statement.chat_destination_emails
                         or statement.email_recipients
+                        or [_clarification_answer(
+                            clarification_answers, CHAT_DESTINATION_QUESTION
+                        )]
                     )[0],
                 }
                 if statement.contextual_reference and referenced_output:
                     exact_tool_arguments["text"] = referenced_output
+            if (
+                service == "gmail" and operation == "send"
+                and statement.contextual_reference and referenced_output
+            ):
+                exact_tool_arguments = {
+                    "to": statement.email_recipients[-1]
+                    if statement.email_recipients else None,
+                    "subject": referenced_subject or "Forwarded content",
+                    "body": referenced_output,
+                }
             if service == "calendar" and operation == "create":
                 exact_tool_arguments = calendar_create_arguments(
                     message,
                     policy["timezone"],
                     statement.email_recipients,
                     add_meet=policy["calendar_adds_meet"],
+                    clarification_answers=clarification_answers,
                 )
             if service == "composition":
                 exact_tool_arguments = {
@@ -859,6 +1116,9 @@ def build_plan(
                             service == "calendar" and policy["calendar_adds_meet"]
                         ),
                         "copy_gmail_dependency": gmail_copy,
+                        "contextual_delivery": bool(
+                            statement.contextual_reference and referenced_output
+                        ),
                     },
                     "semantic_authorization": (
                         {
@@ -868,6 +1128,15 @@ def build_plan(
                         if rag_answer_only else _service_authorization(
                             service, statement,
                         )
+                        if not (
+                            statement.contextual_reference
+                            and statement.current_authorizes_external_write
+                            and service == referenced_service
+                        )
+                        else {
+                            "authorized": True,
+                            "basis": "current_turn_repeat_of_resolved_delivery",
+                        }
                     ),
                 },
                 read_only=read_only,

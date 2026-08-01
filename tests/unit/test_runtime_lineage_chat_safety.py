@@ -602,6 +602,15 @@ def test_chat_api_disabled_error_is_actionable_and_sanitized():
     assert "console" not in value
 
 
+def test_chat_turned_off_is_account_configuration_not_project_api_failure():
+    value = safe_write_failure_message("resolve_chat_destination", {
+        "error": "HttpError 400: Google Chat is turned off for this account",
+    })
+    assert "signed-in Workspace account" in value
+    assert "organization" in value
+    assert "chat.googleapis.com" not in value
+
+
 def test_explicit_email_delivery_still_routes_gmail():
     message = "Send an email to achintyat256@gmail.com saying hi"
     analysis = analyze_request_statement(message)

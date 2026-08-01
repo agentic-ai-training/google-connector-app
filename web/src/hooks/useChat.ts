@@ -25,6 +25,10 @@ export type OkfSelectionEvent={
     selection_policy?:string;
   };
 };
+export type ClarificationField={
+  key:string;label:string;type:"text"|"date"|"select"|"timezone"|"email_or_space";
+  required:boolean;value:string;options:string[];placeholder?:string;
+};
 export type RagIndexStatus={
   ready:boolean;parent_sections:number;pending_embedding_jobs:number;
   dead_letter_embedding_jobs:number;
@@ -41,7 +45,7 @@ export type PlanningDiagnostics={
   };
 };
 export type AgentRun={
-  id:string;status:string;current_phase:string;technical_completion:number;
+  id:string;request?:string;status:string;current_phase:string;technical_completion:number;
   functional_completion:number;user_visible_completion:number;side_effect_integrity:number;
   plan?:{objective?:string;rag_mode?:string;services?:string[];estimated_max_tokens?:number};
   heartbeat_at?:string;models_used?:string[];input_tokens:number;output_tokens:number;
@@ -54,6 +58,7 @@ export type AgentRun={
   error_category?:string;deployment_version?:string;
   result?:{output?:string};incident_summary?:{breaking_point?:string;primary_cause?:string;error?:string};
   clarification_questions?:string[];
+  clarification_fields?:ClarificationField[];
   steps:RunStep[];artifacts:RunArtifact[];recent_events?:RunEvent[];approval?:RunApproval|null;
 };
 export const API=process.env.NEXT_PUBLIC_API_URL??"http://localhost:8000";
@@ -172,12 +177,23 @@ export function useChat(sessionId:string){
     const restore=async()=>{
       try{
         let runId=localStorage.getItem(storageKey);
-        if(!runId){
-          const response=await fetch(`${API}/sessions/${encodeURIComponent(sessionId)}/runs`,{
-            headers:{Authorization:`Bearer ${getToken()??""}`},
-          });
-          if(response.ok){
-            const data=await response.json() as {runs:Array<{id:string;status:string}>};
+        const response=await fetch(`${API}/sessions/${encodeURIComponent(sessionId)}/runs`,{
+          headers:{Authorization:`Bearer ${getToken()??""}`},
+        });
+        if(response.ok){
+          const data=await response.json() as {runs:Array<{
+            id:string;status:string;request?:string;output?:string;
+          }>};
+          const chronological=[...data.runs].reverse();
+          setMessages(chronological.flatMap(item=>[
+            ...(item.request?[{role:"user" as const,content:item.request}]:[]),
+            ...((item.output||!["completed","failed","partial","cancelled"].includes(item.status))
+              ?[{role:"assistant" as const,content:item.output??""}]:[]),
+          ]));
+          const storedStillActive=data.runs.some(item=>
+            item.id===runId&&!["completed","failed","partial","cancelled"].includes(item.status),
+          );
+          if(!storedStillActive){
             runId=data.runs.find(item=>!["completed","failed","partial","cancelled"].includes(item.status))?.id??null;
           }
         }
@@ -250,6 +266,10 @@ export function useChat(sessionId:string){
       return;
     }
     const run=await loadRun(currentRun.id);setCurrentRun(run);
+    setMessages(items=>{
+      if(items.some(item=>item.role==="user"&&item.content===run.request))return items;
+      return run.request?[...items,{role:"user",content:run.request},{role:"assistant",content:""}]:items;
+    });
     if(!["awaiting_clarification","awaiting_approval"].includes(run.status)){
       setStreaming(true);await monitor(currentRun.id);
     }

@@ -1,12 +1,24 @@
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.config.settings import get_settings
 from app.runs.context import analyze_conversation_context
 from app.runs.approval_preview import build_approval_summary
-from app.runs.planner import action_hash, build_plan, validate_plan
+from app.runs.planner import (
+    CALENDAR_DURATION_QUESTION,
+    CALENDAR_END_DATE_QUESTION,
+    CALENDAR_RECURRENCE_QUESTION,
+    CALENDAR_START_DATE_QUESTION,
+    CALENDAR_START_TIME_QUESTION,
+    CALENDAR_TIMEZONE_QUESTION,
+    action_hash,
+    build_plan,
+    parse_calendar_date,
+    validate_plan,
+)
 from app.runs.request_analysis import EMAIL_PATTERN, RequestStatementAnalysis
 from app.runs.request_analysis import analyze_request_statement
 from app.tools.calendar_normalization import normalize_timezone
@@ -50,6 +62,11 @@ def _edit_distance(left: str, right: str) -> int:
 
 def _normalize_clarification_answers(run, answers: dict) -> dict:
     normalized = dict(answers)
+    if any(not str(value or "").strip() for value in answers.values()):
+        raise InvalidClarificationAnswers(
+            "Every submitted clarification must contain a value",
+            reason_code="blank_clarification",
+        )
     original_emails = [
         value.casefold() for value in EMAIL_PATTERN.findall(run["request"])
     ]
@@ -90,11 +107,96 @@ def _normalize_clarification_answers(run, answers: dict) -> dict:
                 suggested_value=close,
             )
         normalized[question] = supplied
+    combined = {**(run["clarification_answers"] or {}), **normalized}
+    timezone_name = str(combined.get(CALENDAR_TIMEZONE_QUESTION) or "").strip()
+    for question in (CALENDAR_START_DATE_QUESTION, CALENDAR_END_DATE_QUESTION):
+        if question not in answers or not timezone_name:
+            continue
+        if parse_calendar_date(str(normalized[question]), timezone_name) is None:
+            raise InvalidClarificationAnswers(
+                "Enter a complete Calendar date such as 2036-08-01, "
+                "1 August 2036, or '10 years later'",
+                reason_code="invalid_calendar_date",
+                suggested_value="2036-08-01",
+            )
+    if CALENDAR_START_TIME_QUESTION in answers and not re.fullmatch(
+        r"\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*",
+        str(answers[CALENDAR_START_TIME_QUESTION]), re.IGNORECASE,
+    ):
+        raise InvalidClarificationAnswers(
+            "Enter a start time such as 10:00 AM",
+            reason_code="invalid_calendar_time",
+        )
+    if CALENDAR_DURATION_QUESTION in answers and not re.fullmatch(
+        r"\s*[1-9]\d*\s*(?:minutes?|hours?)\s*",
+        str(answers[CALENDAR_DURATION_QUESTION]), re.IGNORECASE,
+    ):
+        raise InvalidClarificationAnswers(
+            "Enter an event duration such as 10 minutes or 1 hour",
+            reason_code="invalid_calendar_duration",
+        )
+    if CALENDAR_RECURRENCE_QUESTION in answers and str(
+        answers[CALENDAR_RECURRENCE_QUESTION]
+    ).strip().casefold() not in {"daily", "weekdays", "weekly", "monthly", "yearly"}:
+        raise InvalidClarificationAnswers(
+            "Choose daily, weekdays, weekly, monthly, or yearly",
+            reason_code="invalid_calendar_recurrence",
+        )
     return normalized
 
 
 def _json(value):
     return json.dumps(value, default=str)
+
+
+def _referenced_plan_content(plan: dict | None) -> tuple[str | None, str | None, str | None]:
+    """Recover already-resolved private context while a run is clarified."""
+    for step in (plan or {}).get("steps") or []:
+        arguments = (step.get("arguments") or {}).get("tool_arguments") or {}
+        if arguments.get("text"):
+            return str(arguments["text"]), None, "chat"
+        if arguments.get("body"):
+            return (
+                str(arguments["body"]),
+                str(arguments.get("subject") or "") or None,
+                "gmail",
+            )
+        if arguments.get("reuse_text"):
+            return str(arguments["reuse_text"]), None, "composition"
+    return None, None, None
+
+
+def _clarification_fields(questions: list[str], answers: dict) -> list[dict]:
+    """Return typed UI contracts while retaining question keys for compatibility."""
+    fields = []
+    for question in questions:
+        field = {
+            "key": question, "label": question, "type": "text",
+            "required": True, "value": str(answers.get(question) or ""),
+            "options": [], "placeholder": "Enter the requested information",
+        }
+        if question in {CALENDAR_START_DATE_QUESTION, CALENDAR_END_DATE_QUESTION}:
+            field.update({"type": "date", "placeholder": "YYYY-MM-DD"})
+        elif question == CALENDAR_START_TIME_QUESTION:
+            field["placeholder"] = "10:00 AM"
+        elif question == CALENDAR_DURATION_QUESTION:
+            field.update({
+                "type": "select",
+                "options": ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "1 hour"],
+                "placeholder": "Choose a duration",
+            })
+        elif question == CALENDAR_RECURRENCE_QUESTION:
+            field.update({
+                "type": "select",
+                "options": ["daily", "weekdays", "weekly", "monthly", "yearly"],
+                "placeholder": "Choose a recurrence",
+            })
+        elif question == CALENDAR_TIMEZONE_QUESTION:
+            field["type"] = "timezone"
+        elif "Chat space" in question or "direct-message email" in question:
+            field.update({"type": "email_or_space", "placeholder": "person@example.com or spaces/..."})
+        fields.append(field)
+    return fields
 
 
 async def resolve_contextual_request(
@@ -127,7 +229,9 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                      planning_message: str | None = None,
                      context_diagnostics: dict | None = None,
                      request_analysis: RequestStatementAnalysis | None = None,
-                     referenced_output: str | None = None):
+                     referenced_output: str | None = None,
+                     referenced_subject: str | None = None,
+                     referenced_service: str | None = None):
     settings = get_settings()
     if len(message) > settings.max_request_chars:
         raise RunLimitExceeded(
@@ -141,6 +245,8 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
         planning_message, timezone_name, authority_message=message,
         request_analysis=request_analysis,
         referenced_output=referenced_output,
+        referenced_subject=referenced_subject,
+        referenced_service=referenced_service,
     )
     plan_errors = validate_plan(plan)
     if plan_errors:
@@ -379,17 +485,24 @@ async def clarify_run(pool, run_id, user_id, answers):
             **(run["clarification_answers"] or {}),
             **answers,
         }
-        clarification_text = "\n\nUser clarifications:\n" + "\n".join(
-            f"{key}: {value}" for key, value in sorted(combined_answers.items())
-        )
-        planning_base = (run["plan"] or {}).get("objective") or run["request"]
-        planning_message = planning_base + clarification_text
-        authority_message = run["request"] + clarification_text
+        # Clarifications are typed data, not new authority-bearing prose. Reusing
+        # the previous plan objective here formerly appended the same blocks on
+        # every submission and allowed question wording such as "email" to invent
+        # services. Always rebuild from the immutable original request.
+        planning_message = run["request"]
+        authority_message = run["request"]
         statement = analyze_request_statement(authority_message)
+        referenced_output, referenced_subject, referenced_service = (
+            _referenced_plan_content(run["plan"])
+        )
         plan, policy = build_plan(
             planning_message,
             authority_message=authority_message,
             request_analysis=statement,
+            referenced_output=referenced_output,
+            referenced_subject=referenced_subject,
+            referenced_service=referenced_service,
+            clarification_answers=combined_answers,
         )
         if policy["required_clarifications"]:
             await conn.execute(
@@ -400,6 +513,17 @@ async def clarify_run(pool, run_id, user_id, answers):
                    WHERE id=$5""",
                 _json(plan.model_dump()), _json(policy["required_clarifications"]),
                 _json(combined_answers), _json(statement.diagnostics()), run_id,
+            )
+            await conn.execute(
+                """INSERT INTO agent_run_events
+                   (run_id,user_id,event_type,phase,message,payload)
+                   VALUES($1,$2,'clarification_received','clarification',
+                          'Clarifications were saved; additional typed fields remain',
+                          $3::jsonb)""",
+                run_id, user_id, _json({
+                    "answer_keys": sorted(answers),
+                    "remaining_questions": policy["required_clarifications"],
+                }),
             )
             return "awaiting_clarification"
         await conn.execute("DELETE FROM agent_run_steps WHERE run_id=$1", run_id)
@@ -426,7 +550,7 @@ async def clarify_run(pool, run_id, user_id, answers):
                planning_diagnostics=COALESCE(planning_diagnostics,'{}'::jsonb) ||
                    jsonb_build_object('request_analysis',$7::jsonb)
                WHERE id=$8""",
-            planning_message, status, _json(plan.model_dump()), policy["risk_level"],
+            run["request"], status, _json(plan.model_dump()), policy["risk_level"],
             policy["requires_approval"], _json(combined_answers),
             _json(statement.diagnostics()), run_id,
         )
@@ -458,6 +582,10 @@ async def get_run(pool, run_id, user_id):
         if not row:
             return None
         result = dict(row)
+        result["clarification_fields"] = _clarification_fields(
+            list(result.get("clarification_questions") or []),
+            dict(result.get("clarification_answers") or {}),
+        )
         result["steps"] = [dict(item) for item in await conn.fetch(
             "SELECT * FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no", run_id
         )]

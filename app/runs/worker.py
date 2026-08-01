@@ -21,7 +21,10 @@ from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.repository import append_event
-from app.runs.typed_execution import decide_typed_execution
+from app.runs.typed_execution import (
+    contains_unresolved_placeholder,
+    decide_typed_execution,
+)
 from app.runs.informational import informational_answer, workspace_chat_answer
 from app.improvements.failure_intelligence import record_failure_incident
 from app.runs.verifier import verify_executions_detailed
@@ -735,7 +738,7 @@ def _chat_message_content(step: dict, dependencies: list[dict]) -> tuple[str, st
     """Bind Chat text to an explicit reference or one completed dependency."""
     tool_arguments = ((step.get("input_data") or {}).get("tool_arguments") or {})
     referenced_text = str(tool_arguments.get("text") or "").strip()
-    if referenced_text:
+    if referenced_text and not contains_unresolved_placeholder(referenced_text):
         return referenced_text, "referenced_prior_assistant_output"
     sheet_url = _verified_sheet_url(dependencies)
     if sheet_url:
@@ -1152,7 +1155,7 @@ async def _create_deterministic_calendar_event(pool, run, step):
     input_data = step.get("input_data") or {}
     provided = input_data.get("tool_arguments") or {}
     required = {
-        "title", "start_datetime", "duration_minutes", "timezone", "attendees",
+        "title", "start_datetime", "duration_minutes", "timezone",
     }
     if not required.issubset(provided):
         request = input_data.get("request") or ""
@@ -1198,10 +1201,12 @@ async def _create_deterministic_calendar_event(pool, run, step):
         "title": provided["title"],
         "start_datetime": start_datetime,
         "end_datetime": end_datetime,
-        "attendees": list(provided["attendees"]),
+        "attendees": list(provided.get("attendees") or []),
         "add_meet": bool(provided.get("add_meet", True)),
         "timezone": timezone_name,
     }
+    if provided.get("recurrence"):
+        arguments["recurrence"] = list(provided["recurrence"])
     call = {
         "id": f"deterministic-calendar-{uuid.uuid4()}",
         "name": "create_calendar_event",
@@ -1325,6 +1330,21 @@ async def _execute_step(app, pool, run, step, dependencies):
     step_started = time.perf_counter()
     input_data = step.get("input_data") or {}
     semantic_authorization = input_data.get("semantic_authorization") or {}
+    if (
+        not step.get("read_only", True)
+        and contains_unresolved_placeholder(input_data.get("tool_arguments") or {})
+    ):
+        raise ExecutionFailure(
+            "The planned write contains an unresolved placeholder; no external "
+            "operation was attempted.",
+            category="planning", component="durable_worker",
+            boundary="unresolved_write_argument",
+            evidence={
+                "service": step.get("service"),
+                "operation": step.get("operation"),
+                "external_attempts": 0,
+            },
+        )
     if (
         not step.get("read_only", True)
         and semantic_authorization.get("authorized") is False
@@ -1508,6 +1528,19 @@ async def _execute_step(app, pool, run, step, dependencies):
             tool.name: tool for tool in get_toolsets()[step["service"]]
         }
         decision = decide_typed_execution(step, service_tools)
+        if decision.status == "reject":
+            raise ExecutionFailure(
+                "The planned write contains an unresolved placeholder; no external "
+                "operation was attempted.",
+                category="planning", component="typed_execution_policy",
+                boundary="unresolved_write_argument",
+                evidence={
+                    "service": step.get("service"),
+                    "operation": step.get("operation"),
+                    "reason_code": decision.reason_code,
+                    "external_attempts": 0,
+                },
+            )
         if decision.status == "eligible":
             tool = service_tools[decision.tool_name]
             if isinstance(tool, GoogleWorkspaceBaseTool):

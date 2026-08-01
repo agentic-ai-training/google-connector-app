@@ -117,6 +117,15 @@ def safe_write_failure_message(tool_name: str, result: object) -> str:
             "project; enable chat.googleapis.com, wait for propagation, and retry"
         )
     if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
+        "google chat is turned off" in error
+        or "chat is turned off" in error
+    ):
+        return (
+            "Google Chat is turned off for the signed-in Workspace account or "
+            "its organization; enable Chat for that account in Google Workspace, "
+            "then reconnect and retry"
+        )
+    if tool_name in {"resolve_chat_destination", "send_chat_message"} and (
         "google chat app not found" in error
         or "configure your chat app" in error
     ):

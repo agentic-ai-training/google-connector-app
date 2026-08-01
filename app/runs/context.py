@@ -24,6 +24,9 @@ class ContextAnalysis:
     # to the typed planner so a referential delivery can bind the exact prior
     # assistant result without granting that result service authority.
     referenced_output: str | None = None
+    referenced_subject: str | None = None
+    referenced_service: str | None = None
+    referenced_kind: str | None = None
 
     def diagnostics(self) -> dict:
         return {
@@ -55,6 +58,47 @@ def _bounded(value: str | None, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
+def _referenced_content(previous) -> tuple[str, str | None, str | None, str | None]:
+    """Extract exact reusable content, never an assistant receipt or placeholder."""
+    step_outputs = previous.get("step_outputs") or []
+    if isinstance(step_outputs, str):
+        import json
+        try:
+            step_outputs = json.loads(step_outputs)
+        except ValueError:
+            step_outputs = []
+    for output in reversed(step_outputs):
+        if not isinstance(output, dict):
+            continue
+        for execution in reversed(output.get("tool_executions") or []):
+            if not isinstance(execution, dict):
+                continue
+            arguments = execution.get("arguments") or {}
+            tool = execution.get("tool")
+            if tool == "send_gmail" and arguments.get("body"):
+                return (
+                    _bounded(arguments["body"], 6_000),
+                    _bounded(arguments.get("subject"), 500) or None,
+                    "gmail", "verified_sent_message",
+                )
+            if tool == "send_chat_message" and arguments.get("text"):
+                return (
+                    _bounded(arguments["text"], 6_000), None,
+                    "chat", "verified_sent_message",
+                )
+        if output.get("content_lineage") and output.get("output"):
+            return (
+                _bounded(output["output"], 6_000), None,
+                "composition", "verified_composition",
+            )
+    result = previous.get("result")
+    if isinstance(result, dict):
+        output = _bounded(result.get("output"), 6_000)
+        if output:
+            return output, None, None, "assistant_output"
+    return "", None, None, None
+
+
 async def analyze_conversation_context(
     pool,
     *,
@@ -82,18 +126,23 @@ async def analyze_conversation_context(
             # preceding ambiguous turn. It must never skip backwards and attach
             # itself to an unrelated request.
             previous = await conn.fetchrow(
-                """SELECT id,request,result,intent_kind,status
+                """SELECT r.id,r.request,r.result,r.intent_kind,r.status,
+                          (SELECT coalesce(jsonb_agg(s.output_data ORDER BY s.sequence_no),
+                                           '[]'::jsonb)
+                             FROM agent_run_steps s WHERE s.run_id=r.id
+                               AND s.status='completed') AS step_outputs
                    FROM agent_runs
+                   AS r
                    WHERE user_id=$1 AND session_id=$2 AND deleted_at IS NULL
                      AND queued_at >= now()-interval '24 hours'
                    ORDER BY queued_at DESC LIMIT 1""",
                 user_id, session_id,
             )
         else:
-            # Referential delivery must resolve to content, not blindly to the
-            # last assistant turn. Skip capability/scope answers and write
-            # receipts, and prefer a composition when the user explicitly names
-            # a paragraph/draft/essay even if an intervening read occurred.
+            # Referential delivery resolves exact content from completed step
+            # evidence. Verified writes are eligible because their tool arguments
+            # contain the message that was actually sent; their prose receipts are
+            # never reused as content.
             wants_composition = bool(
                 re.search(
                     r"\b(paragraph|draft|essay|roadmap|application|letter)\b",
@@ -101,8 +150,12 @@ async def analyze_conversation_context(
                 )
             )
             previous = await conn.fetchrow(
-                """SELECT id,request,result,intent_kind,status
-                   FROM agent_runs
+                """SELECT r.id,r.request,r.result,r.intent_kind,r.status,
+                          (SELECT coalesce(jsonb_agg(s.output_data ORDER BY s.sequence_no),
+                                           '[]'::jsonb)
+                             FROM agent_run_steps s WHERE s.run_id=r.id
+                               AND s.status='completed') AS step_outputs
+                   FROM agent_runs AS r
                    WHERE user_id=$1 AND session_id=$2 AND deleted_at IS NULL
                      AND queued_at >= now()-interval '24 hours'
                      AND status='completed'
@@ -110,15 +163,6 @@ async def analyze_conversation_context(
                      AND intent_kind NOT IN
                        ('product_information','scope_chat','workspace_guidance',
                         'ambiguous','out_of_scope')
-                     AND NOT EXISTS (
-                       SELECT 1
-                       FROM jsonb_array_elements(
-                         coalesce(plan->'steps','[]'::jsonb)
-                       ) AS planned_step
-                       WHERE coalesce(
-                         (planned_step->>'read_only')::boolean, true
-                       ) = false
-                     )
                    ORDER BY
                      CASE WHEN $3 AND coalesce(plan->'services','[]'::jsonb)
                                       ? 'composition'
@@ -142,10 +186,9 @@ async def analyze_conversation_context(
             current_authorizes_external_write=external_write,
         )
 
-    prior_output = ""
-    result = previous["result"]
-    if isinstance(result, dict):
-        prior_output = _bounded(result.get("output"), 6_000)
+    prior_output, prior_subject, prior_service, prior_kind = _referenced_content(
+        previous
+    )
     prior_request = _bounded(previous["request"], 4_000)
     context_lines = [
         "Current request (the only authority for new external actions):",
@@ -167,4 +210,7 @@ async def analyze_conversation_context(
         relevance_reason=relevance_reason,
         current_authorizes_external_write=external_write,
         referenced_output=prior_output or None,
+        referenced_subject=prior_subject,
+        referenced_service=prior_service,
+        referenced_kind=prior_kind,
     )
