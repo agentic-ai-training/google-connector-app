@@ -1843,3 +1843,45 @@ Vercel frontend health, Railway API health, and the Railway worker startup ledge
 attest that same immutable commit. No Google read or write was performed during release
 verification; a fresh authenticated user replay remains operational evidence rather
 than an implementation or deployment blocker.
+
+## Sprint 56 — Deterministic candidate admission, grounding, and repair
+
+Production V13 attempts `69c23cb6` and `cdef10f5` proved that source-free generation
+could still consume an entire author role before the existing `files_required` gate.
+One attempt guessed nonexistent modules and discarded invalid Python; the other was
+launched even though its selected strategy explicitly declared itself unsuitable for
+automation and carried no specific failure evidence.
+
+- [x] Refuse automatic candidate generation when the selected strategy is not
+  automation-eligible or a generic persistence/unknown diagnosis has no specific
+  evidence; preserve it as `diagnosis_only` with an Admin/Grafana evidence-required
+  notification and no Groq, CI, deployment, or canary action.
+- [x] Derive write semantics from the typed operation during admission and attach a
+  deterministic evidence-validation record instead of trusting contradictory model
+  request-shape labels.
+- [x] Localize and read ranked existing runtime and test surfaces before the first
+  provider call; include only bounded source excerpts and require exact preimage reads
+  for every replacement or deletion.
+- [x] Move the author into staging-only tools after the early correction gate and make
+  a source-free final author round terminal while retaining one correction turn for an
+  already-returned invalid candidate contract.
+- [x] Retain syntactically invalid staged files for one focused repair; report filename,
+  line, column, exception type, and a bounded source excerpt; discard policy-unsafe
+  files immediately.
+- [x] Make empty diff/manifest tool calls total for null arguments and remove the
+  observed `NoneType` inspection failure.
+- [x] Reduce initial author authority from 12,000 to 9,000 tokens, preserve separate
+  reviewer authority, and prevent review from starting without a structurally valid
+  frozen manifest.
+- [x] Mark historical unsuitable builds as evidence-required, suppress their retry
+  action, and highlight diagnosis/evidence work separately from actual approval gates.
+- [x] Add admission, semantic normalization, deterministic grounding, retained compiler
+  repair, null-tool, portal projection, and existing builder-regression coverage.
+
+Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
+planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware
+chunking, context-packing, DP allocation, dual-worker isolation, Grafana schema,
+Python compile/Flake8/Bandit/pip-audit, migration downgrade/forward repair, Docker
+Compose and all three candidate images, secret-history, Next.js lint/build/audit, and
+Flutter analyze/test/debug-APK guardrails pass. Trusted CI and immutable production
+deployment remain the release steps.

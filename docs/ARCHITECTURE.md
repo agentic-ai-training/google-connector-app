@@ -443,6 +443,27 @@ investigation. The portal orders builds newest-first, shows created and updated 
 and collapses full checkpoints so an administrator can distinguish current work from
 historical failures.
 
+Candidate admission now precedes model dispatch. A selected strategy must explicitly be
+automation-eligible, contain the structured component/stage/category boundary, and—when
+the diagnosis is otherwise generic—carry specific sanitized evidence. Ineligible work
+remains a diagnosis and consumes no provider or CI capacity. Security-sensitive request
+facts such as write classification are derived from the typed operation.
+
+For admitted work, deterministic repository localization runs before Groq. It ranks real
+runtime and test paths from the incident IR, reads bounded source neighborhoods, and
+supplies those verified paths to the author. Replacements and deletions require an exact
+preimage read. The author then follows a constrained state machine:
+
+```text
+admit -> localize/read -> stage runtime + regression -> compile
+      -> focused repair -> inspect diff/manifest -> independent review -> freeze
+```
+
+Syntax-invalid staged files remain in the in-memory sandbox long enough for one bounded
+repair and expose line, column, exception type, and nearby source. Policy-unsafe files
+are discarded immediately. Review authority is unavailable until a compilable manifest
+exists; this prevents expensive review of an empty or disconnected patch.
+
 Exact Gmail metadata questions bypass the general service-agent loop. Quantified
 message and sender requests are classified before nearby generic verbs such as `get`
 or `find` can win proximity ranking:
