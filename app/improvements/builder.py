@@ -27,7 +27,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v4-grounded-author-review"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v17-required-first-stage"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v18-required-patch-compact-history"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_GROUNDING_SOURCE_LINES = 36
@@ -108,6 +108,15 @@ def _restricted_builder_schemas(schemas: list[dict]) -> list[dict]:
         schema for schema in schemas
         if (schema.get("function") or {}).get("name") in BUILDER_FINISH_TOOL_NAMES
     ]
+
+
+def _required_initial_candidate_tool(tools: BoundedRepositoryTools) -> str:
+    """Patch a grounded runtime preimage; stage a file only for genuinely new work."""
+    return (
+        "apply_candidate_patch"
+        if any(path.startswith("app/") for path in tools.read_paths)
+        else "stage_candidate_file"
+    )
 
 
 def candidate_build_admission(incident: dict, option: dict) -> dict:
@@ -500,6 +509,37 @@ def _omitted_builder_output(content: str) -> str:
         "chars": len(value),
         "sha256": hashlib.sha256(value.encode()).hexdigest(),
     }, sort_keys=True)
+
+
+def _compact_consumed_grounding(messages: list[dict], job: dict) -> list[dict]:
+    """Replace pre-read source bodies after a patch exists; retain only provenance."""
+    if not messages:
+        return messages
+    try:
+        current = json.loads(messages[0].get("content") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        current = {}
+    if isinstance(current, dict) and current.get("grounding_consumed") is True:
+        return messages
+    incident = job.get("sanitized_input") or {}
+    grounding = job.get("grounding_bundle") or {}
+    compact = {
+        "grounding_consumed": True,
+        "objective": {
+            key: incident.get(key) for key in (
+                "title", "stage", "category", "component", "service",
+                "operation", "root_cause",
+            )
+        },
+        "grounded_paths": list(grounding.get("ranked_paths") or [])[:12],
+        "instruction": (
+            "A source-grounded patch is staged. Inspect/repair the staged candidate, "
+            "add its regression test, validate, inspect the diff, and finalize."
+        ),
+    }
+    fitted = json.loads(json.dumps(messages))
+    fitted[0] = {"role": "user", "content": json.dumps(compact, sort_keys=True)}
+    return fitted
 
 
 def _fit_builder_history(
@@ -1095,6 +1135,8 @@ async def _groq_tool_json(
         messages = _fit_builder_history(messages)
         reviewing = role == "independent_safety_reviewer"
         staged_count = len(tools.staged_files())
+        if staged_count and not reviewing:
+            messages = _compact_consumed_grounding(messages, job)
         staged_validation = tools.validate_staged() if staged_count else {"valid": True}
         repair_required = staged_count > 0 and not staged_validation.get("valid", False)
         if (
@@ -1199,10 +1241,11 @@ async def _groq_tool_json(
             elif not reviewing and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
                 available_schemas = _restricted_builder_schemas(available_schemas)
             if not reviewing and staged_count == 0:
+                initial_tool = _required_initial_candidate_tool(tools)
                 available_schemas = [
                     schema for schema in available_schemas
                     if (schema.get("function") or {}).get("name")
-                    == "stage_candidate_file"
+                    == initial_tool
                 ]
                 required_tool_choice = "required"
             response, model, json_tool_protocol = await _candidate_completion(

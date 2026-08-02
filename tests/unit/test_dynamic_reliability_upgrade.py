@@ -9,6 +9,8 @@ from app.improvements.builder import (
     BUILDER_AUTHOR_RESTRICTED_ROUND,
     _candidate_grounding_bundle,
     _candidate_prompt,
+    _compact_consumed_grounding,
+    _required_initial_candidate_tool,
     _restricted_builder_schemas,
     _execute_builder_repository_tool,
     candidate_build_admission,
@@ -322,3 +324,20 @@ def test_grounded_author_is_staging_first_before_model_budget_is_spent(tmp_path)
     assert "validate_staged_candidate" in names
     assert "read_repository_file" not in names
     assert "search_repository" not in names
+
+
+def test_existing_runtime_grounding_requires_line_patch_and_compacts_history(tmp_path):
+    runtime = tmp_path / "app" / "runs" / "verifier.py"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("def verify():\n    return True\n")
+    tools = BoundedRepositoryTools(tmp_path)
+    tools.read("app/runs/verifier.py", 1, 2)
+    assert _required_initial_candidate_tool(tools) == "apply_candidate_patch"
+
+    messages = [{"role": "user", "content": "x" * 8_000}]
+    compacted = _compact_consumed_grounding(messages, {
+        "sanitized_input": {"title": "Verifier correction", "service": "calendar"},
+        "grounding_bundle": {"ranked_paths": ["app/runs/verifier.py"]},
+    })
+    assert len(json.dumps(compacted)) < 1_000
+    assert "app/runs/verifier.py" in compacted[0]["content"]

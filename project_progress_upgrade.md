@@ -1892,6 +1892,10 @@ automation and carried no specific failure evidence.
 - [x] Enforce the empty-stage protocol in V17 instead of relying on prompt compliance:
   expose only `stage_candidate_file` and require a tool call until the first frozen file
   exists. Empty-stage inspection and diff calls can no longer consume an author round.
+- [x] Require a bounded line patch, rather than a tiny whole-file replacement, when
+  deterministic grounding found an existing application surface. After the first patch,
+  V18 removes source bodies from model history and retains only objective/path provenance,
+  reducing repeated prompt tokens while preserving staged-file repair and test creation.
 
 Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
 planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware
