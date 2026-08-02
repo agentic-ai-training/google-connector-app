@@ -1881,6 +1881,9 @@ automation and carried no specific failure evidence.
   prompt also fits the stricter 12,000-character provider/quota fallback budget; cover
   the exact Calendar verifier incident to prevent a fresh V14 attempt from stopping at
   `history_budget_exhausted` before its first repository action.
+- [x] Version the fallback-safe grounding behavior as builder tool policy V15 so the
+  immutable zero-token V14 failure can start a governed fresh attempt without rewriting
+  history or bypassing the same-policy retry guard.
 
 Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
 planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware
