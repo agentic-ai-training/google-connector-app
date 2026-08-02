@@ -256,6 +256,18 @@ and exhausted authority are terminal. Provider quota/network errors may resume f
 valid checkpoint; an `uncheckpointed_timeout` does not claim resumable progress.
 Checkpoint messages, file bodies, raw provider responses, and Workspace content must
 never appear in the portal.
+
+Before retrying a terminal build, inspect **Admission**. `evidence_required` means the
+proposal is intentionally diagnosis-only: collect a reproducible sanitized provider,
+tool, postcondition, or persistence fact and let failure intelligence issue a new
+specific occurrence. Do not increase tokens or clone the old build. An eligible older
+build may be superseded under a newer policy; its immutable history remains visible.
+
+For current-policy builds, nonzero deterministic read bytes should exist before the
+first model-authored replacement. `syntax_repair_required` means the invalid staged file
+was retained in memory with bounded compiler evidence. The next action must repair and
+revalidate that file. A reviewer must never start when the manifest is empty or fails
+structural validation.
 ## Hybrid execution diagnosis
 
 Inspect `agent_run_steps.output_data->>'execution_path'` to distinguish

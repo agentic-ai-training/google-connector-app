@@ -2215,7 +2215,15 @@ def test_candidate_author_checkpoint_is_durable_and_replaced_by_final_draft():
                               24000,$7::jsonb,'integration-test')""",
                     build_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
                     MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
-                    json.dumps({"component": "candidate_builder"}),
+                    json.dumps({
+                        "title": "Candidate builder failure",
+                        "stage": "generation",
+                        "category": "tool_failure",
+                        "component": "candidate_builder",
+                        "root_cause": "A bounded repository tool failed.",
+                        "evidence": {"tool_error": True},
+                        "selected_option": {"automation_eligible": True},
+                    }),
                 )
 
             progress = {
@@ -2361,7 +2369,15 @@ def test_terminal_candidate_can_start_audited_current_policy_attempt(monkeypatch
                               12000,$7::jsonb,$8::jsonb,'integration-test')""",
                     source_id, proposal_id, "a" * 40, "openai/gpt-oss-20b",
                     "adaptive-roles-v1", "bounded-repo-tools-v6-durable-turns",
-                    json.dumps({"component": "candidate_builder"}),
+                    json.dumps({
+                        "title": "Candidate builder failure",
+                        "stage": "generation",
+                        "category": "tool_failure",
+                        "component": "candidate_builder",
+                        "root_cause": "A bounded repository tool failed.",
+                        "evidence": {"tool_error": True},
+                        "selected_option": {"automation_eligible": True},
+                    }),
                     json.dumps({"last_runner_failure": {
                         "error_type": "independent_review_rejected",
                     }}),

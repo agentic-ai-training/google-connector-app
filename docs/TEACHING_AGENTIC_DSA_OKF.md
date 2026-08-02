@@ -1131,6 +1131,20 @@ decision while discarding private payloads. If an author spends its bounded auth
 without staging a source-integrated file, the state terminates as `files_required`
 instead of recursively granting more investigation tokens.
 
+Candidate admission is a deterministic predicate, not a generative judgment. It maps a
+bounded incident record to either `queue_grounded_candidate` or
+`collect_specific_failure_evidence`. This is equivalent to a guard on a state-machine
+edge: an invalid state cannot enter an expensive downstream subgraph. The grounding
+prepass then behaves like ranked information retrieval over repository paths, but its
+top results are read and verified before they become editing authority.
+
+Compiler repair demonstrates why retaining state matters. Discarding an invalid file
+throws away the model's partial progress and forces another large generation. Retaining
+the in-memory file plus `(path, line, column, error_type, context)` creates a compact
+error state. A bounded line splice can transition it back to `valid` without another
+repository-wide search. Policy-invalid state is different: it is deleted immediately
+because repair must never preserve secrets or forbidden paths.
+
 Typed Gmail counts illustrate precedence in a semantic classifier. A specific frame
 (`quantifier + Gmail message noun + category/time filters`) is resolved before generic
 verbs such as `get` and `find`. This resembles longest/specific-pattern precedence in a
@@ -1949,11 +1963,32 @@ receipt such as “message sent” is evidence of delivery, not the message payl
 
 A validation boundary applied immediately after each candidate edit instead of only at
 final submission. Parse Python/JSON/YAML, enforce allowed paths, reject placeholder
-bodies and assertion-free tests, then discard the invalid in-memory revision. If file
+bodies and assertion-free tests, then retain syntax-invalid revisions only inside the
+bounded sandbox for one focused repair. Policy-invalid paths or secret-like content are
+discarded immediately. If file
 validation costs `O(n)` in syntax-tree size, eager validation adds predictable local
 work but prevents multiple expensive model rounds from reviewing unusable code. This is
 the fail-fast principle applied to an agentic coding state machine: a transition advances
 only when its local invariants hold.
+
+<a id="dictionary-admission-predicate"></a>
+## Admission predicate
+
+A pure Boolean guard that decides whether work may enter a more powerful or expensive
+subsystem. Candidate admission checks structured fields, selected-strategy automation
+authority, evidence sufficiency, and deterministic semantic consistency before any LLM
+call. Evaluating `k` fixed evidence rules is `O(k)` and must have no network or model
+side effect. A failed predicate produces a typed next action rather than a generic error.
+
+<a id="dictionary-repository-grounding"></a>
+## Repository grounding
+
+The process of binding a proposed code change to existing paths, symbols, references,
+and tests before granting edit authority. A lexical inverted-index search produces
+candidates; deterministic scoring ranks them; bounded reads establish exact preimages.
+If `m` matches are sorted directly, ranking costs `O(m log m)`; a heap can retain the top
+`k` in `O(m log k)`. Grounding is not proof that a patch is correct, but it prevents
+hallucinated modules and makes later diffs, hashes, and rollback evidence meaningful.
 
 <a id="dictionary-checkpoint-compaction"></a>
 ## Checkpoint compaction

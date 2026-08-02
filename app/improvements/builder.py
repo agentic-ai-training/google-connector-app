@@ -26,8 +26,8 @@ from app.mlops.metrics import (
 
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_POLICY_VERSION = "adaptive-roles-v3-model-chain-evidence"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v13-evidence-grounded-runtime-patches"
+MODEL_POLICY_VERSION = "adaptive-roles-v4-grounded-author-review"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v14-deterministic-grounding-repair"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_AUTHOR_MAX_ROUNDS = 8
@@ -35,13 +35,13 @@ BUILDER_REVIEWER_MAX_ROUNDS = 5
 BUILDER_TOOL_TURN_MAX_TOKENS = 2_048
 BUILDER_FINAL_TURN_MAX_TOKENS = 4_096
 BUILDER_QUOTA_RETRY_TOKEN_STEPS = (1_024, 512, 256)
-BUILDER_AUTHOR_EARLY_FILE_ROUND = 3
-BUILDER_AUTHOR_RESTRICTED_ROUND = 5
+BUILDER_AUTHOR_EARLY_FILE_ROUND = 2
+BUILDER_AUTHOR_RESTRICTED_ROUND = 3
 BUILDER_AUTHOR_HARD_FILE_ROUND = 7
 BUILDER_MAX_REVIEW_REMEDIATIONS = 1
 BUILDER_CORRECTION_RESERVE_TOKENS = 1_024
 BUILDER_FINALIZATION_RESERVE_TOKENS = 4_096
-BUILDER_AUTHOR_ROLE_TOKEN_LIMIT = 12_000
+BUILDER_AUTHOR_ROLE_TOKEN_LIMIT = 9_000
 BUILDER_REMEDIATION_ROLE_TOKEN_LIMIT = 8_000
 BUILDER_REVIEWER_ROLE_TOKEN_LIMIT = 6_000
 BUILDER_FINISH_TOOL_NAMES = frozenset({
@@ -53,6 +53,16 @@ BUILDER_FINISH_TOOL_NAMES = frozenset({
     "discard_staged_candidate_file",
     "read_staged_candidate_file",
 })
+BUILDER_REPAIR_TOOL_NAMES = frozenset({
+    "apply_candidate_patch", "read_staged_candidate_file",
+    "validate_staged_candidate", "inspect_candidate_diff",
+    "inspect_candidate_manifest", "discard_staged_candidate_file",
+})
+_MUTATING_OPERATION = re.compile(
+    r"^(?:send|reply|create|update|delete|trash|share|move|append|write|"
+    r"label|complete|cancel|setup)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -97,6 +107,142 @@ def _restricted_builder_schemas(schemas: list[dict]) -> list[dict]:
         schema for schema in schemas
         if (schema.get("function") or {}).get("name") in BUILDER_FINISH_TOOL_NAMES
     ]
+
+
+def candidate_build_admission(incident: dict, option: dict) -> dict:
+    """Admit only a specific, internally consistent, automatable diagnosis."""
+    reasons: list[str] = []
+    if option.get("automation_eligible") is not True:
+        reasons.append("selected_strategy_requires_engineering_evidence")
+    for required_field in ("title", "stage", "category", "component", "root_cause"):
+        if not str(incident.get(required_field) or "").strip():
+            reasons.append(f"missing_{required_field}")
+    evidence = incident.get("evidence") or {}
+    root = str(incident.get("root_cause") or "").casefold()
+    if not evidence and option.get("evidence_basis") != "cross_cluster_theme" and (
+        "not specific enough" in root
+        or str(incident.get("category") or "") in {"persistence", "unknown"}
+    ):
+        reasons.append("specific_failure_evidence_required")
+    return {
+        "eligible": not reasons,
+        "reason_codes": list(dict.fromkeys(reasons)),
+        "next_action": (
+            "collect_specific_failure_evidence"
+            if reasons else "queue_grounded_candidate"
+        ),
+    }
+
+
+def normalize_candidate_incident(incident: dict) -> dict:
+    """Derive security-sensitive request facts instead of trusting model labels."""
+    value = dict(incident)
+    shape = dict(value.get("request_shape") or {})
+    operation = str(value.get("operation") or "")
+    derived_write = bool(_MUTATING_OPERATION.match(operation))
+    corrections: list[str] = []
+    if operation and bool(shape.get("write")) != derived_write:
+        shape["write"] = derived_write
+        corrections.append("request_shape_write_derived_from_operation")
+    value["request_shape"] = shape
+    value["evidence_validation"] = {
+        "status": "normalized" if corrections else "consistent",
+        "corrections": corrections,
+        "authority": "deterministic_builder_admission",
+    }
+    return value
+
+
+def _candidate_grounding_bundle(
+    tools: BoundedRepositoryTools, incident: dict,
+) -> dict:
+    """Resolve and read real runtime/test surfaces before a provider is called."""
+    option = incident.get("selected_option") or {}
+    raw_terms = [
+        incident.get("component"), incident.get("service"),
+        incident.get("operation"), *(option.get("change_scope") or []),
+        incident.get("stage"), incident.get("category"),
+    ]
+    terms: list[str] = []
+    for raw in raw_terms:
+        value = str(raw or "").casefold().strip()
+        tokens = [part for part in re.split(r"[\s_/.-]+", value) if part]
+        for candidate in (value, value.replace("_", " "), tokens[-1] if tokens else ""):
+            if 2 <= len(candidate) <= 100 and candidate not in terms:
+                terms.append(candidate)
+    for raw in raw_terms:
+        for candidate in re.split(r"[\s_/.-]+", str(raw or "").casefold().strip()):
+            if 2 <= len(candidate) <= 100 and candidate not in terms:
+                terms.append(candidate)
+    if not terms:
+        return {
+            "terms": [], "ranked_paths": [], "sources": [],
+            "required_sequence": ["collect_specific_failure_evidence"],
+        }
+    localized = tools.localize_runtime_boundary(
+        terms[:12], str(incident.get("service") or ""),
+        str(incident.get("operation") or ""),
+    )
+    path_scores: dict[str, dict] = {}
+    for match in localized.get("matches") or []:
+        path = str(match.get("path") or "")
+        if not path:
+            continue
+        match_score = int(match.get("score") or 0)
+        item = path_scores.setdefault(path, {
+            "path": path, "score": 0, "best_score": -1,
+            "line": int(match.get("line") or 1),
+        })
+        item["score"] += match_score
+        if match_score > item["best_score"]:
+            item["best_score"] = match_score
+            item["line"] = int(match.get("line") or 1)
+        folded_path = path.casefold().replace("_", " ")
+        item["score"] += sum(2 for term in terms if term and term in folded_path)
+    ranked = sorted(
+        path_scores.values(),
+        key=lambda item: (-item["score"], item["path"]),
+    )
+    selected: list[dict] = []
+    app_ranked = [item for item in ranked if item["path"].startswith("app/")]
+    if app_ranked:
+        selected.append(app_ranked[0])
+    for term in sorted(terms[:12], key=len, reverse=True):
+        normalized_term = term.replace("_", " ")
+        match = next((
+            item for item in app_ranked
+            if item not in selected
+            and normalized_term in item["path"].casefold().replace("_", " ")
+        ), None)
+        if match:
+            selected.append(match)
+        if len(selected) >= 3:
+            break
+    for item in app_ranked:
+        if len(selected) >= 3:
+            break
+        if item not in selected:
+            selected.append(item)
+    selected.extend([
+        item for item in ranked if item["path"].startswith("tests/")
+    ][:1])
+    sources = []
+    for item in selected:
+        start = max(1, int(item["line"]) - 40)
+        try:
+            sources.append(tools.read(item["path"], start, start + 60))
+        except (ValueError, OSError, UnicodeError):
+            continue
+    return {
+        "terms": terms[:12],
+        "ranked_paths": [item["path"] for item in ranked[:12]],
+        "sources": sources,
+        "required_sequence": [
+            "use supplied real source", "stage minimal runtime patch",
+            "stage failing-before regression", "repair compiler findings",
+            "inspect diff and manifest", "finalize candidate contract",
+        ],
+    }
 
 
 def candidate_model_order(job: dict) -> list[str]:
@@ -667,6 +813,10 @@ async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dic
     settings = get_settings()
     if not settings.candidate_builder_enabled:
         return None
+    admission = candidate_build_admission(incident, option)
+    if not admission["eligible"]:
+        return None
+    incident = normalize_candidate_incident(incident)
     scope = option.get("change_scope") or []
     mode = choose_builder_mode(incident.get("risk_level", "medium"), scope)
     async with pool.acquire() as conn:
@@ -690,6 +840,7 @@ async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dic
                 "failure_mechanism": incident.get("failure_mechanism"),
                 "architectural_boundary": incident.get("architectural_boundary"),
                 "source_version": incident.get("source_version"),
+                "evidence_validation": incident.get("evidence_validation"),
                 "selected_option": option, "contains_raw_user_content": False,
             }), actor,
         )
@@ -725,6 +876,8 @@ def _candidate_prompt(job: dict, sources: list[dict], role: str) -> str:
             "Localize the runtime boundary, then read exact existing implementation and test source before staging application code.",
             "Never create a disconnected app module, placeholder body, assertion-free test, or test that only exercises new code in isolation.",
             "Every runtime candidate must change an adopted execution path and include a failing-before/passing-after behavioral regression.",
+            "The supplied grounding bundle contains real paths and bounded source. Do not invent a replacement path for an existing component.",
+            "After a compiler finding, repair the retained staged file before any new investigation.",
         ],
         "incident": job["sanitized_input"], "sources": sources,
     }, default=str)
@@ -734,11 +887,19 @@ def _execute_builder_repository_tool(
     tools: BoundedRepositoryTools, name: str, arguments: dict,
 ) -> object:
     """Enforce source-before-patch progress independently of model behavior."""
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        raise ValueError("Candidate builder tool arguments must be an object")
     path = str(arguments.get("path") or "")
+    change_type = str(arguments.get("change_type") or "")
     if (
         name in {"stage_candidate_file", "apply_candidate_patch"}
-        and path.startswith("app/")
-        and path not in tools.read_paths
+        and (
+            (name == "apply_candidate_patch" or change_type != "create")
+            and path not in tools.read_paths
+        )
+        and not (change_type == "create" and tools.read_paths)
     ):
         return {
             "error": "runtime_source_read_required",
@@ -749,16 +910,29 @@ def _execute_builder_repository_tool(
         }
     result = tools.execute(name, arguments)
     if name in {"stage_candidate_file", "apply_candidate_patch"} and path:
-        validation_codes = staged_validation_codes(tools.validate_staged())
+        validation = tools.validate_staged()
+        validation_codes = staged_validation_codes(validation)
         if validation_codes:
-            tools.discard(path)
+            repairable = all(
+                code.endswith("_invalid") for code in validation_codes
+            )
+            if not repairable:
+                tools.discard(path)
             return {
-                "error": "staged_candidate_rejected",
+                "error": (
+                    "staged_candidate_repair_required"
+                    if repairable else "staged_candidate_rejected"
+                ),
                 "contract_errors": validation_codes,
-                "discarded": path,
+                "retained_for_repair": path if repairable else None,
+                "discarded": None if repairable else path,
+                "validation": validation,
                 "detail": (
-                    "The compiler/policy gate rejected and discarded this staged "
-                    "revision. Read the exact source and submit a complete valid patch."
+                    "Repair the retained staged file using the reported line, column, "
+                    "error type, and context, then validate it again."
+                    if repairable else
+                    "The policy gate rejected and discarded this staged revision. "
+                    "Read the exact source and submit a complete safe patch."
                 ),
             }
     return result
@@ -817,6 +991,9 @@ async def _groq_tool_json(
             "changed_file_limit": tools.max_files,
         }]
     )
+    grounding = job.get("grounding_bundle")
+    if isinstance(grounding, dict):
+        sources.append({"deterministic_repository_grounding": grounding})
     if review_feedback:
         sources.append({"review_feedback": review_feedback})
     initial_messages = [{
@@ -914,6 +1091,20 @@ async def _groq_tool_json(
         messages = _fit_builder_history(messages)
         reviewing = role == "independent_safety_reviewer"
         staged_count = len(tools.staged_files())
+        staged_validation = tools.validate_staged() if staged_count else {"valid": True}
+        repair_required = staged_count > 0 and not staged_validation.get("valid", False)
+        if (
+            not reviewing
+            and round_number >= BUILDER_AUTHOR_HARD_FILE_ROUND
+            and staged_count == 0
+            and not last_contract_errors
+        ):
+            raise CandidateBuilderFailure(
+                "files_required", role=role, round_number=round_number,
+                staged_file_count=0, retry_class="structural",
+                terminal_policy=True,
+                resume_point=f"{role}:round:{round_number}",
+            )
         if not reviewing and not staged_count:
             if round_number == BUILDER_AUTHOR_EARLY_FILE_ROUND:
                 progress_gate = "file_required_correction"
@@ -981,7 +1172,26 @@ async def _groq_tool_json(
             json_tool_protocol = True
         else:
             available_schemas = tools.schemas()
-            if not reviewing and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
+            if repair_required:
+                if progress_gate != "syntax_repair_required":
+                    progress_gate = "syntax_repair_required"
+                    candidate_progress_gates.labels(role, progress_gate).inc()
+                available_schemas = [
+                    schema for schema in available_schemas
+                    if (schema.get("function") or {}).get("name")
+                    in BUILDER_REPAIR_TOOL_NAMES
+                ]
+                messages.append({
+                    "role": "user",
+                    "content": json.dumps({
+                        "syntax_repair_required": staged_validation.get("errors", [])[:10],
+                        "instruction": (
+                            "Repair the retained staged file now, validate it, then inspect "
+                            "the diff. Do not investigate another repository surface."
+                        ),
+                    }),
+                })
+            elif not reviewing and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
                 available_schemas = _restricted_builder_schemas(available_schemas)
             response, model, json_tool_protocol = await _candidate_completion(
                 client, job, messages=messages,
@@ -1170,16 +1380,15 @@ async def _groq_tool_json(
                 "Frozen candidate files are authoritative; trusted CI will compute the diff."
             )
         contract_errors = candidate_contract_errors(candidate)
-        if (
-            any(
-                item.get("path", "").startswith("app/")
-                for item in candidate.get("files") or []
-            )
-            and tools.read_bytes <= 0
+        if any(
+            item.get("change_type") in {"replace", "delete"}
+            and item.get("path") not in tools.read_paths
+            for item in candidate.get("files") or []
         ):
             contract_errors.append("runtime_source_read_required")
         contract_errors.extend(direct_stage_errors)
-        contract_errors.extend(staged_validation_codes(tools.validate_staged()))
+        final_validation = tools.validate_staged()
+        contract_errors.extend(staged_validation_codes(final_validation))
         contract_errors = list(dict.fromkeys(contract_errors))
         last_contract_errors = contract_errors
         if contract_errors:
@@ -1188,6 +1397,7 @@ async def _groq_tool_json(
                     "role": "user",
                     "content": json.dumps({
                         "candidate_contract_rejected": contract_errors,
+                        "validation_evidence": final_validation.get("errors", [])[:10],
                         "instruction": (
                             "Return one corrected final candidate JSON object now. Include at "
                             "least one complete file under an approved root; do not claim tests passed."
@@ -1239,6 +1449,13 @@ async def generate_candidate_draft(
     elif resume.get("phase") == "role_in_progress" and not resume.get("messages"):
         # A partial role needs bounded conversation state; files alone are ambiguous.
         resume = {}
+    if not resume:
+        job = {
+            **job,
+            "grounding_bundle": _candidate_grounding_bundle(
+                repository_tools, sanitized,
+            ),
+        }
     for item in checkpoint_files:
         repository_tools.stage(
             item["path"], item["change_type"], item.get("content") or "",

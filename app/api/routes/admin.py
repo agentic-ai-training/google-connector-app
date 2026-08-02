@@ -38,6 +38,7 @@ from app.improvements.candidates import (
 from app.improvements.builder import (
     MODEL_POLICY_VERSION,
     TOOL_POLICY_VERSION,
+    candidate_build_admission,
     effective_builder_token_budget,
     store_candidate_checkpoint,
     store_candidate_draft,
@@ -145,6 +146,10 @@ def _candidate_build_view(row) -> dict:
     ))
     if item.get("model_name") and item["model_name"] not in models_used:
         models_used.insert(0, item["model_name"])
+    sanitized_input = _json_object(item.get("sanitized_input"))
+    admission = candidate_build_admission(
+        sanitized_input, _json_object(sanitized_input.get("selected_option")),
+    )
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
@@ -203,11 +208,16 @@ def _candidate_build_view(row) -> dict:
         "models_used": models_used,
         "new_policy_retry_available": bool(
             item.get("status") in {"failed", "cancelled"}
+            and admission["eligible"]
             and (
                 item.get("model_policy_version") != MODEL_POLICY_VERSION
                 or item.get("tool_policy_version") != TOOL_POLICY_VERSION
             )
         ),
+        "build_admission": (
+            "eligible" if admission["eligible"] else "evidence_required"
+        ),
+        "admission_reason_codes": admission["reason_codes"],
     }
 
 
@@ -287,6 +297,17 @@ async def new_policy_candidate_attempt(
         if source["candidate_state"] != "diagnosis_only":
             raise HTTPException(
                 409, "The proposal already has an implementation candidate",
+            )
+        sanitized_input = _json_object(source["sanitized_input"])
+        admission = candidate_build_admission(
+            sanitized_input,
+            _json_object(sanitized_input.get("selected_option")),
+        )
+        if not admission["eligible"]:
+            raise HTTPException(
+                409,
+                "More specific failure evidence is required before a new candidate "
+                f"can be generated ({', '.join(admission['reason_codes'])}).",
             )
         if (
             source["model_policy_version"] == MODEL_POLICY_VERSION

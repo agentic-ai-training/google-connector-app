@@ -413,10 +413,33 @@ class BoundedRepositoryTools:
                 })
                 item["score"] += 3 if needle in {service, operation} else 1
                 item["matched_terms"].append(needle)
-        ranked = sorted(
+        for path in self._python_files(["app/", "tests/"]):
+            relative = path.relative_to(self.root).as_posix()
+            folded = relative.casefold().replace("_", " ")
+            matched = [
+                needle for needle in needles[:12]
+                if len(needle) >= 4 and needle.replace("_", " ") in folded
+            ]
+            if not matched:
+                continue
+            key = (relative, 1)
+            item = scored.setdefault(key, {
+                "path": relative, "line": 1, "excerpt": "path match",
+                "score": 0, "matched_terms": [],
+            })
+            item["score"] += 4 * len(matched)
+            item["matched_terms"].extend(matched)
+        all_ranked = sorted(
             scored.values(),
             key=lambda item: (-item["score"], item["path"], item["line"]),
-        )[:60]
+        )
+        implementation = [
+            item for item in all_ranked if item["path"].startswith("app/")
+        ][:40]
+        tests = [
+            item for item in all_ranked if item["path"].startswith("tests/")
+        ][:20]
+        ranked = [*implementation, *tests]
         return {
             "matches": ranked,
             "terms": needles,
@@ -424,7 +447,7 @@ class BoundedRepositoryTools:
                 "Read the highest-relevance existing implementation symbol/file and "
                 "its regression-test neighborhood before staging application code."
             ),
-            "truncated": len(scored) > len(ranked),
+            "truncated": len(all_ranked) > len(ranked),
         }
 
     def stage(self, path: str, change_type: str, content: str = "") -> dict:
@@ -553,13 +576,30 @@ class BoundedRepositoryTools:
                     tomllib.loads(content)
             except (SyntaxError, ValueError, TypeError, yaml.YAMLError) as exc:
                 problem_mark = getattr(exc, "problem_mark", None)
+                line = (
+                    getattr(exc, "lineno", None)
+                    or (getattr(problem_mark, "line", -1) + 1 if problem_mark else None)
+                )
+                column = (
+                    getattr(exc, "offset", None)
+                    or (getattr(problem_mark, "column", -1) + 1 if problem_mark else None)
+                )
+                source_lines = content.splitlines()
+                context = ""
+                if isinstance(line, int) and line > 0 and source_lines:
+                    first = max(0, line - 2)
+                    last = min(len(source_lines), line + 1)
+                    context = "\n".join(
+                        f"{number + 1}: {source_lines[number][:240]}"
+                        for number in range(first, last)
+                    )
                 errors.append({
                     "path": path,
                     "code": f"{validator}_invalid",
-                    "line": (
-                        getattr(exc, "lineno", None)
-                        or (getattr(problem_mark, "line", -1) + 1 if problem_mark else None)
-                    ),
+                    "line": line,
+                    "column": column,
+                    "error_type": type(exc).__name__,
+                    "context": context[:800],
                 })
             checked.append({"path": path, "validator": validator})
         return {

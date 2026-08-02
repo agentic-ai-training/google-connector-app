@@ -545,10 +545,44 @@ async def create_or_update_proposal(pool, incident_id, selected_option: str, act
             "SELECT id,proposal_key,status,candidate_state,content_hash FROM improvement_proposals WHERE id=$1",
             proposal_id,
         )
-    from app.improvements.builder import enqueue_candidate_build
-    build_id = await enqueue_candidate_build(
-        pool, proposal_id, dict(incident), option, actor,
+    from app.improvements.builder import (
+        candidate_build_admission, enqueue_candidate_build,
     )
+    admission = candidate_build_admission(dict(incident), option)
+    build_id = None
+    if admission["eligible"]:
+        build_id = await enqueue_candidate_build(
+            pool, proposal_id, dict(incident), option, actor,
+        )
+    else:
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """UPDATE improvement_proposals
+                      SET candidate_state='diagnosis_only',
+                          candidate_manifest=COALESCE(candidate_manifest,'{}'::jsonb)
+                            || $2::jsonb,updated_at=now()
+                    WHERE id=$1""",
+                proposal_id, json.dumps({
+                    "kind": "diagnosis",
+                    "selected_option": selected_option,
+                    "canary_eligible": False,
+                    "build_admission": "evidence_required",
+                    "admission_reason_codes": admission["reason_codes"],
+                    "next_action": admission["next_action"],
+                }),
+            )
+            await conn.execute(
+                """INSERT INTO improvement_notifications
+                   (proposal_id,channel,event_type,status,sanitized_payload)
+                   VALUES($1,'admin','candidate_evidence_required','sent',$2::jsonb),
+                         ($1,'grafana','candidate_evidence_required','sent',$2::jsonb)
+                   ON CONFLICT(proposal_id,channel,event_type) DO NOTHING""",
+                proposal_id, json.dumps({
+                    "incident_id": str(incident_id),
+                    "reason_codes": admission["reason_codes"],
+                    "contains_private_evidence": False,
+                }),
+            )
     dispatch = None
     if build_id:
         try:
@@ -558,8 +592,12 @@ async def create_or_update_proposal(pool, incident_id, selected_option: str, act
             dispatch = {"status": "not_dispatched", "reason": str(exc)}
     result = dict(proposal)
     result["candidate_build_id"] = str(build_id) if build_id else None
-    result["candidate_build_status"] = "queued" if build_id else "disabled"
+    result["candidate_build_status"] = (
+        "queued" if build_id else
+        "evidence_required" if not admission["eligible"] else "disabled"
+    )
     result["candidate_build_dispatch"] = dispatch
+    result["candidate_build_admission"] = admission
     return result
 
 
@@ -603,6 +641,7 @@ async def create_theme_proposal(pool, theme_id, selected_option: str, actor: str
         }
         option = {
             **option,
+            "evidence_basis": "cross_cluster_theme",
             "change_scope": scope_map.get(theme["theme_key"], [incident["component"]]),
             "acceptance_tests": [
                 "Every linked exact cluster has a no-network replay case.",

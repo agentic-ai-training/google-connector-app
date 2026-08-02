@@ -81,7 +81,7 @@ from app.improvements.candidates import (
 )
 from app.improvements.builder import (
     _candidate_completion, _compact_builder_tool_call, _fit_builder_history,
-    _groq_tool_json, generate_candidate_draft,
+    _execute_builder_repository_tool, _groq_tool_json, generate_candidate_draft,
     CandidateBuilderFailure, builder_budget_snapshot,
     MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
     candidate_contract_errors, candidate_model_order, candidate_review_projection,
@@ -1465,7 +1465,12 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
         "mode": "multi_role", "status": "queued", "model_name": "quality",
         "tokens_used": 50, "token_budget": 1_000, "error_message": "Quota wait",
         "created_at": updated, "updated_at": updated, "file_count": 1,
-        "sanitized_input": {"must_not": "be returned"},
+        "sanitized_input": {
+            "must_not": "be returned", "title": "Tool failure", "stage": "execution",
+            "category": "tool_failure", "component": "step_executor",
+            "root_cause": "A typed tool failed.", "evidence": {"http_status": 400},
+            "selected_option": {"automation_eligible": True},
+        },
         "checkpoint": {
             "private_marker": "must not be returned",
             "last_runner_failure": {
@@ -1500,10 +1505,36 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
         "tool_policy_version": "old-tool-policy",
         "tokens_used": 0, "token_budget": 1_000,
         "created_at": updated, "updated_at": updated, "file_count": 0,
+        "sanitized_input": {
+            "title": "Tool failure", "stage": "execution",
+            "category": "tool_failure", "component": "step_executor",
+            "root_cause": "A typed tool failed.", "evidence": {"http_status": 400},
+            "selected_option": {"automation_eligible": True},
+        },
         "checkpoint": {},
     })
     assert terminal["retryable"] is False
     assert terminal["new_policy_retry_available"] is True
+
+    weak = _candidate_build_view({
+        **{
+            "id": "weak", "proposal_key": "weak", "title": "Weak",
+            "mode": "single", "status": "failed", "model_name": "quality",
+            "model_policy_version": "old", "tool_policy_version": "old",
+            "tokens_used": 0, "token_budget": 1_000,
+            "created_at": updated, "updated_at": updated, "file_count": 0,
+            "checkpoint": {},
+        },
+        "sanitized_input": {
+            "title": "Runs API failure", "stage": "api",
+            "category": "persistence", "component": "runs_api",
+            "root_cause": "The evidence is not specific enough.", "evidence": {},
+            "selected_option": {"automation_eligible": False},
+        },
+    })
+    assert weak["build_admission"] == "evidence_required"
+    assert weak["new_policy_retry_available"] is False
+    assert "specific_failure_evidence_required" in weak["admission_reason_codes"]
 
 
 def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
@@ -3047,6 +3078,9 @@ def test_candidate_builder_accepts_null_for_empty_schema_tools(tmp_path):
     }
     with pytest.raises(ValueError, match="arguments must be an object"):
         tools.execute("inspect_candidate_manifest", [])
+    assert _execute_builder_repository_tool(
+        tools, "inspect_candidate_manifest", None,
+    ) == {"file_count": 0, "files": []}
 
 
 def test_candidate_builder_can_validate_hash_and_rollback_staged_files(tmp_path):

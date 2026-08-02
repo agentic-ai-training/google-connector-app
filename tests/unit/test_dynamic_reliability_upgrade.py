@@ -1,6 +1,11 @@
 from unittest.mock import MagicMock
 
-from app.improvements.builder import _execute_builder_repository_tool
+from app.improvements.builder import (
+    _candidate_grounding_bundle,
+    _execute_builder_repository_tool,
+    candidate_build_admission,
+    normalize_candidate_incident,
+)
 from app.improvements.builder_tools import BoundedRepositoryTools
 from app.improvements.candidates import validate_candidate_files
 from app.evaluation.metrics import evaluate_plan
@@ -189,6 +194,64 @@ def test_candidate_builder_rejects_placeholder_code_and_noop_tests(tmp_path):
         "change_type": "replace",
         "content": "def active(:\n    return False\n",
     })
-    assert invalid["error"] == "staged_candidate_rejected"
+    assert invalid["error"] == "staged_candidate_repair_required"
     assert "candidate_syntax_invalid" in invalid["contract_errors"]
-    assert "app/runtime.py" not in tools.staged
+    assert invalid["retained_for_repair"] == "app/runtime.py"
+    finding = invalid["validation"]["errors"][0]
+    assert finding["line"] == 1
+    assert finding["column"] is not None
+    assert finding["error_type"] == "SyntaxError"
+    assert "1: def active(:" in finding["context"]
+    assert "app/runtime.py" in tools.staged
+    repaired = _execute_builder_repository_tool(tools, "apply_candidate_patch", {
+        "path": "app/runtime.py", "start_line": 1, "end_line": 2,
+        "replacement": "def active():\n    return False",
+    })
+    assert repaired["staged"] == "app/runtime.py"
+    assert tools.validate_staged()["valid"] is True
+
+
+def test_candidate_admission_blocks_weak_diagnoses_and_derives_write_semantics():
+    weak = {
+        "title": "Runs API failure", "stage": "api", "category": "persistence",
+        "component": "runs_api",
+        "root_cause": "The current structured evidence is not specific enough for a safe change.",
+        "evidence": {},
+    }
+    decision = candidate_build_admission(weak, {
+        "automation_eligible": False,
+    })
+    assert decision["eligible"] is False
+    assert decision["reason_codes"] == [
+        "selected_strategy_requires_engineering_evidence",
+        "specific_failure_evidence_required",
+    ]
+
+    normalized = normalize_candidate_incident({
+        "operation": "create_calendar_event",
+        "request_shape": {"write": False},
+    })
+    assert normalized["request_shape"]["write"] is True
+    assert normalized["evidence_validation"]["corrections"] == [
+        "request_shape_write_derived_from_operation",
+    ]
+
+
+def test_candidate_grounding_reads_real_runtime_and_test_paths(tmp_path):
+    (tmp_path / "app" / "api" / "routes").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "app" / "api" / "routes" / "runs.py").write_text(
+        "def create_durable_run():\n    return 'created'\n"
+    )
+    (tmp_path / "tests" / "test_runs.py").write_text(
+        "def test_create_durable_run():\n    assert True\n"
+    )
+    tools = BoundedRepositoryTools(tmp_path)
+    bundle = _candidate_grounding_bundle(tools, {
+        "component": "runs_api", "service": "runs", "operation": "create",
+        "stage": "api", "category": "persistence",
+        "selected_option": {"change_scope": ["durable run"]},
+    })
+    assert "app/api/routes/runs.py" in tools.read_paths
+    assert "tests/test_runs.py" in tools.read_paths
+    assert bundle["sources"]
