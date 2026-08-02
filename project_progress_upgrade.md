@@ -1884,6 +1884,11 @@ automation and carried no specific failure evidence.
 - [x] Version the fallback-safe grounding behavior as builder tool policy V15 so the
   immutable zero-token V14 failure can start a governed fresh attempt without rewriting
   history or bypassing the same-policy retry guard.
+- [x] Make deterministic grounding staging-first in V16: once real runtime and test
+  neighborhoods have been pre-read, expose only patch/stage/validate/diff/finalization
+  tools from the first author turn and terminate a still-fileless author at round two.
+  This prevents repeated model-driven rereads from consuming the role budget before a
+  frozen file exists.
 
 Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
 planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware

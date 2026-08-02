@@ -1182,25 +1182,16 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         async def create(self, *, model, **kwargs):
             requests.append(kwargs)
             usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
-            if len(requests) == 7:
-                content = json.dumps({
-                    "files": [], "rollback_plan": {"action": "rollback"},
-                    "validation_commands": [],
-                })
-            elif len(requests) == 8:
-                content = json.dumps({
-                    "files": [{
-                        "path": "tests/contract_retry.py", "change_type": "create",
-                        "content": "value = 1\n",
-                    }],
-                    "rollback_plan": {"action": "remove candidate"},
-                    "validation_commands": ["pytest -q tests/unit"],
-                })
-            else:
+            if len(requests) == 1:
                 call = SimpleNamespace(
-                    id=f"call-{len(requests)}",
+                    id="stage-call",
                     function=SimpleNamespace(
-                        name="inspect_candidate_diff", arguments="{}",
+                        name="stage_candidate_file",
+                        arguments=json.dumps({
+                            "path": "tests/contract_retry.py",
+                            "change_type": "create",
+                            "content": "value = 1\n",
+                        }),
                     ),
                 )
                 return SimpleNamespace(
@@ -1208,6 +1199,21 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
                         content="", tool_calls=[call],
                     ))], usage=usage,
                 )
+            if len(requests) == 2:
+                content = json.dumps({
+                    "files": [{
+                        "path": "outside.py", "change_type": "create",
+                        "content": "unsafe = True\n",
+                    }],
+                    "rollback_plan": {"action": "rollback"},
+                    "validation_commands": [],
+                })
+            else:
+                content = json.dumps({
+                    "files": [],
+                    "rollback_plan": {"action": "remove candidate"},
+                    "validation_commands": ["pytest -q tests/unit"],
+                })
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(
                     content=content, tool_calls=None,
@@ -1229,13 +1235,20 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         ))
         assert candidate["files"][0]["path"] == "tests/contract_retry.py"
         assert "+value = 1" in candidate["exact_diff"]
-        assert tokens == 16
+        assert tokens == 6
         assert any(
             "candidate_contract_rejected" in message["content"]
-            for message in requests[7]["messages"]
+            for message in requests[2]["messages"]
         )
-        assert "tools" not in requests[6]
-        assert "tools" not in requests[7]
+        assert all("tools" in request for request in requests)
+        assert all(
+            all(
+                (schema.get("function") or {}).get("name")
+                != "read_repository_file"
+                for schema in request["tools"]
+            )
+            for request in requests
+        )
     finally:
         get_settings.cache_clear()
 
