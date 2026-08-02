@@ -268,6 +268,14 @@ first model-authored replacement. `syntax_repair_required` means the invalid sta
 was retained in memory with bounded compiler evidence. The next action must repair and
 revalidate that file. A reviewer must never start when the manifest is empty or fails
 structural validation.
+
+The initial deterministic grounding prompt must fit both the normal 24,000-character
+history limit and the stricter 12,000-character provider/quota fallback limit. A fresh
+build that stops at `history_budget_exhausted` with zero tokens indicates a local prompt-
+projection regression, not Groq exhaustion. Keep the real ranked paths, reduce bounded
+source neighborhoods, run the Calendar grounding budget regression, and create a new
+policy attempt only after the corrected builder is deployed.
+
 ## Hybrid execution diagnosis
 
 Inspect `agent_run_steps.output_data->>'execution_path'` to distinguish
