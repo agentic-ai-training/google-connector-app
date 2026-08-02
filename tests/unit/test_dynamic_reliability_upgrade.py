@@ -4,8 +4,12 @@ from unittest.mock import MagicMock
 
 from app.improvements.builder import (
     BUILDER_413_RETRY_MAX_CHARS,
+    BUILDER_AUTHOR_EARLY_FILE_ROUND,
+    BUILDER_AUTHOR_HARD_FILE_ROUND,
+    BUILDER_AUTHOR_RESTRICTED_ROUND,
     _candidate_grounding_bundle,
     _candidate_prompt,
+    _restricted_builder_schemas,
     _execute_builder_repository_tool,
     candidate_build_admission,
     normalize_candidate_incident,
@@ -301,3 +305,20 @@ def test_calendar_grounding_fits_provider_fallback_history_budget():
     assert len(json.dumps(messages)) <= BUILDER_413_RETRY_MAX_CHARS
     assert any(path.startswith("app/") for path in tools.read_paths)
     assert any(path.startswith("tests/") for path in tools.read_paths)
+
+
+def test_grounded_author_is_staging_first_before_model_budget_is_spent(tmp_path):
+    tools = BoundedRepositoryTools(tmp_path)
+    names = {
+        (schema.get("function") or {}).get("name")
+        for schema in _restricted_builder_schemas(tools.schemas())
+    }
+
+    assert BUILDER_AUTHOR_EARLY_FILE_ROUND == 0
+    assert BUILDER_AUTHOR_RESTRICTED_ROUND == 0
+    assert BUILDER_AUTHOR_HARD_FILE_ROUND == 2
+    assert "apply_candidate_patch" in names
+    assert "stage_candidate_file" in names
+    assert "validate_staged_candidate" in names
+    assert "read_repository_file" not in names
+    assert "search_repository" not in names
