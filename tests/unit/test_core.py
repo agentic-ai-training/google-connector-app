@@ -1236,6 +1236,11 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
         assert candidate["files"][0]["path"] == "tests/contract_retry.py"
         assert "+value = 1" in candidate["exact_diff"]
         assert tokens == 6
+        assert requests[0]["tool_choice"] == "required"
+        assert [
+            (schema.get("function") or {}).get("name")
+            for schema in requests[0]["tools"]
+        ] == ["stage_candidate_file"]
         assert any(
             "candidate_contract_rejected" in message["content"]
             for message in requests[2]["messages"]

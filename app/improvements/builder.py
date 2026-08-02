@@ -27,7 +27,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v4-grounded-author-review"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v16-staging-first-grounding"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v17-required-first-stage"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_GROUNDING_SOURCE_LINES = 36
@@ -1176,6 +1176,7 @@ async def _groq_tool_json(
             json_tool_protocol = True
         else:
             available_schemas = tools.schemas()
+            required_tool_choice: str | dict = "auto"
             if repair_required:
                 if progress_gate != "syntax_repair_required":
                     progress_gate = "syntax_repair_required"
@@ -1197,9 +1198,17 @@ async def _groq_tool_json(
                 })
             elif not reviewing and round_number >= BUILDER_AUTHOR_RESTRICTED_ROUND:
                 available_schemas = _restricted_builder_schemas(available_schemas)
+            if not reviewing and staged_count == 0:
+                available_schemas = [
+                    schema for schema in available_schemas
+                    if (schema.get("function") or {}).get("name")
+                    == "stage_candidate_file"
+                ]
+                required_tool_choice = "required"
             response, model, json_tool_protocol = await _candidate_completion(
                 client, job, messages=messages,
-                tools=available_schemas, tool_choice="auto", temperature=0.1,
+                tools=available_schemas, tool_choice=required_tool_choice,
+                temperature=0.1,
                 max_tokens=min(
                     BUILDER_TOOL_TURN_MAX_TOKENS,
                     settings.candidate_builder_max_output_tokens,
