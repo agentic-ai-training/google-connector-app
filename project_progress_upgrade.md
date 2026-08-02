@@ -1889,6 +1889,9 @@ automation and carried no specific failure evidence.
   tools from the first author turn and terminate a still-fileless author at round two.
   This prevents repeated model-driven rereads from consuming the role budget before a
   frozen file exists.
+- [x] Enforce the empty-stage protocol in V17 instead of relying on prompt compliance:
+  expose only `stage_candidate_file` and require a tool call until the first frozen file
+  exists. Empty-stage inspection and diff calls can no longer consume an author round.
 
 Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
 planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware
