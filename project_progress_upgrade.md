@@ -1877,6 +1877,10 @@ automation and carried no specific failure evidence.
   action, and highlight diagnosis/evidence work separately from actual approval gates.
 - [x] Add admission, semantic normalization, deterministic grounding, retained compiler
   repair, null-tool, portal projection, and existing builder-regression coverage.
+- [x] Bound deterministic pre-read source neighborhoods so the authoritative initial
+  prompt also fits the stricter 12,000-character provider/quota fallback budget; cover
+  the exact Calendar verifier incident to prevent a fresh V14 attempt from stopping at
+  `history_budget_exhausted` before its first repository action.
 
 Local evidence on 2026-08-02: all 310 Python tests pass with PostgreSQL integration;
 planner goldens pass 44/44 and workflow replays pass 16/16. Policy, source-aware
@@ -1885,3 +1889,12 @@ Python compile/Flake8/Bandit/pip-audit, migration downgrade/forward repair, Dock
 Compose and all three candidate images, secret-history, Next.js lint/build/audit, and
 Flutter analyze/test/debug-APK guardrails pass. Trusted CI and immutable production
 deployment remain the release steps.
+
+Release evidence on 2026-08-02: PR #124 passed normal CI and governed-candidate
+backend/web/Flutter validation and attestation, then merged as
+`c561cbc348edd08dc468029d858a8625f2c70deb`. The production deploy workflow attested
+that exact commit across Vercel, the Railway API, and the durable worker. Production
+then correctly classified V13 build `cdef10f5` as evidence-required and V13 Calendar
+build `69c23cb6` as eligible. Fresh V14 build `20144854` exposed the stricter fallback-
+history boundary before any provider tokens were used; the bounded-grounding regression
+above is the focused follow-up correction.

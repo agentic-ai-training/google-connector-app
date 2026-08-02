@@ -1,7 +1,11 @@
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from app.improvements.builder import (
+    BUILDER_413_RETRY_MAX_CHARS,
     _candidate_grounding_bundle,
+    _candidate_prompt,
     _execute_builder_repository_tool,
     candidate_build_admission,
     normalize_candidate_incident,
@@ -255,3 +259,45 @@ def test_candidate_grounding_reads_real_runtime_and_test_paths(tmp_path):
     assert "app/api/routes/runs.py" in tools.read_paths
     assert "tests/test_runs.py" in tools.read_paths
     assert bundle["sources"]
+
+
+def test_calendar_grounding_fits_provider_fallback_history_budget():
+    root = Path(__file__).resolve().parents[2]
+    tools = BoundedRepositoryTools(root)
+    incident = {
+        "id": "calendar-postcondition-regression",
+        "title": "Calendar clarification and postcondition failure",
+        "stage": "verification",
+        "category": "tool_failure",
+        "component": "step_executor",
+        "service": "calendar",
+        "operation": "create_calendar_event",
+        "root_cause": "Calendar write evidence did not satisfy the verifier",
+        "breaking_point": "Execute and verify the calendar portion",
+        "request_shape": {"write": True, "multi_service": False},
+        "evidence": {"failure_code": "postcondition_failure"},
+        "selected_option": {
+            "id": "repair-calendar-runtime",
+            "automation_eligible": True,
+            "change_scope": ["calendar executor", "artifact verifier"],
+        },
+    }
+    grounding = _candidate_grounding_bundle(tools, incident)
+    job = {"sanitized_input": incident, "grounding_bundle": grounding}
+    sources = [{
+        "repository": "ephemeral checkout",
+        "approved_roots": ["app/", "tests/", "docs/"],
+        "read_limit_bytes": tools.max_read_bytes,
+        "tool_call_limit": tools.max_calls,
+        "changed_file_limit": tools.max_files,
+    }, {"deterministic_repository_grounding": grounding}]
+    messages = [{
+        "role": "user",
+        "content": _candidate_prompt(
+            job, sources, "investigator_and_patch_author",
+        ),
+    }]
+
+    assert len(json.dumps(messages)) <= BUILDER_413_RETRY_MAX_CHARS
+    assert any(path.startswith("app/") for path in tools.read_paths)
+    assert any(path.startswith("tests/") for path in tools.read_paths)

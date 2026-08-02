@@ -30,6 +30,7 @@ MODEL_POLICY_VERSION = "adaptive-roles-v4-grounded-author-review"
 TOOL_POLICY_VERSION = "bounded-repo-tools-v14-deterministic-grounding-repair"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
+BUILDER_GROUNDING_SOURCE_LINES = 36
 BUILDER_AUTHOR_MAX_ROUNDS = 8
 BUILDER_REVIEWER_MAX_ROUNDS = 5
 BUILDER_TOOL_TURN_MAX_TOKENS = 2_048
@@ -228,9 +229,12 @@ def _candidate_grounding_bundle(
     ][:1])
     sources = []
     for item in selected:
-        start = max(1, int(item["line"]) - 40)
+        start = max(1, int(item["line"]) - 28)
         try:
-            sources.append(tools.read(item["path"], start, start + 60))
+            sources.append(tools.read(
+                item["path"], start,
+                start + BUILDER_GROUNDING_SOURCE_LINES - 1,
+            ))
         except (ValueError, OSError, UnicodeError):
             continue
     return {
