@@ -4,6 +4,13 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
+fn run(arguments: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn non_git_workspace_is_previewed_then_applied_with_exact_approval() {
     let workspace = TempDir::new().unwrap();
@@ -105,6 +112,54 @@ fn non_git_workspace_is_previewed_then_applied_with_exact_approval() {
         fs::read_to_string(workspace.path().join(".env")).unwrap(),
         "SECRET=not-copied\n"
     );
+}
+
+#[test]
+fn non_git_workspace_can_preview_and_atomically_create_a_new_file() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(workspace.path().join("existing.py"), "VALUE = 1\n").unwrap();
+    let plan_dir = TempDir::new().unwrap();
+    let plan = plan_dir.path().join("create.json");
+    fs::write(
+        &plan,
+        serde_json::to_vec_pretty(&json!({"actions":[
+            {"tool":"create_file","path":"tests/test_value.py","expected_absent":true,
+             "content":"def test_value():\n    assert 1 == 1\n"},
+            {"tool":"run_validation","profile":"python_compile","timeout_seconds":30}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let preview = run(&[
+        "execute-plan",
+        "--workspace",
+        workspace.path().to_str().unwrap(),
+        "--plan",
+        plan.to_str().unwrap(),
+    ]);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stdout)
+    );
+    assert!(!workspace.path().join("tests/test_value.py").exists());
+    let payload: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    let approval = payload["approval_token"].as_str().unwrap();
+    let applied = run(&[
+        "execute-plan",
+        "--workspace",
+        workspace.path().to_str().unwrap(),
+        "--plan",
+        plan.to_str().unwrap(),
+        "--approve",
+        approval,
+    ]);
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stdout)
+    );
+    assert!(workspace.path().join("tests/test_value.py").is_file());
 }
 
 #[test]

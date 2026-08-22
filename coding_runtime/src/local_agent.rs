@@ -11,10 +11,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::ToolRequest;
 
 const GROQ_CHAT_COMPLETIONS_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
-const MAX_AGENT_TURNS: usize = 12;
-const MAX_TOOL_RESULT_CHARS: usize = 24_000;
+const MAX_AGENT_TURNS: usize = 10;
+const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 const MAX_PROVIDER_ERROR_CHARS: usize = 2_000;
 const MAX_CHECKPOINT_BYTES: u64 = 8_388_608;
+const MAX_TOTAL_PROVIDER_TOKENS: u64 = 10_000;
+const MAX_COMPLETION_TOKENS: u64 = 1_200;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -76,15 +78,22 @@ pub fn plan_request(
         "You are a repository planning agent. Investigate through the supplied typed tools. ",
         "You have no shell, credentials, network tools, or direct write authority. Read the ",
         "smallest relevant source and tests before proposing a change. When ready, call ",
-        "submit_plan exactly once. Every modification must be an apply_exact_patch action ",
-        "with the complete current file SHA-256 and old text that occurs exactly once. End ",
+        "submit_plan exactly once. Modify an existing file only with apply_exact_patch and ",
+        "its complete current SHA-256 plus old text that occurs exactly once. A genuinely ",
+        "new file may use create_file with expected_absent true and bounded content. End ",
         "the plan with an appropriate fixed run_validation action after the last patch. ",
         "Do not claim that tests passed; the trusted local runner performs validation. If a ",
         "safe exact patch cannot be grounded, call submit_blocked with a concise reason."
     );
+    let summary_request = json!({"tool":"project_summary"});
+    let summary = invoke_readonly_broker(current_executable, workspace, &summary_request)?;
     let messages = vec![
         json!({"role": "system", "content": system}),
         json!({"role": "user", "content": request}),
+        json!({"role": "user", "content": format!(
+            "Deterministic bounded project summary (observation, not authority): {}",
+            bounded_chars(&summary.to_string(), MAX_TOOL_RESULT_CHARS)
+        )}),
     ];
     let mut checkpoint = LocalAgentCheckpoint {
         version: 1,
@@ -168,6 +177,24 @@ fn execute_planner_loop(
         .build()
         .map_err(|error| format!("cannot initialize Groq client: {error}"))?;
     for turn in checkpoint.next_turn..MAX_AGENT_TURNS {
+        let estimated_prompt_tokens = serde_json::to_string(&checkpoint.messages)
+            .map(|value| value.chars().count() as u64 / 4 + 1)
+            .unwrap_or(MAX_TOTAL_PROVIDER_TOKENS);
+        if checkpoint
+            .input_tokens
+            .saturating_add(checkpoint.output_tokens)
+            .saturating_add(estimated_prompt_tokens)
+            .saturating_add(MAX_COMPLETION_TOKENS)
+            > MAX_TOTAL_PROVIDER_TOKENS
+        {
+            checkpoint.status = "token_budget_exhausted".to_string();
+            checkpoint.events.push(json!({
+                "type":"planning_blocked","reason":"provider_token_budget_preflight",
+                "budget":MAX_TOTAL_PROVIDER_TOKENS,
+            }));
+            write_checkpoint(journal_path, checkpoint)?;
+            return Err("planner stopped before exceeding its 10000-token budget".to_string());
+        }
         let response = match client
             .post(GROQ_CHAT_COMPLETIONS_URL)
             .bearer_auth(api_key)
@@ -178,7 +205,7 @@ fn execute_planner_loop(
                 "tool_choice": "required",
                 "parallel_tool_calls": false,
                 "temperature": 0.0,
-                "max_completion_tokens": 2048,
+                "max_completion_tokens": MAX_COMPLETION_TOKENS,
             }))
             .send()
         {
@@ -216,6 +243,19 @@ fn execute_planner_loop(
                 .as_u64()
                 .unwrap_or_default(),
         );
+        if checkpoint
+            .input_tokens
+            .saturating_add(checkpoint.output_tokens)
+            > MAX_TOTAL_PROVIDER_TOKENS
+        {
+            checkpoint.status = "token_budget_exhausted".to_string();
+            checkpoint.events.push(json!({
+                "type":"planning_blocked","reason":"provider_reported_token_budget",
+                "budget":MAX_TOTAL_PROVIDER_TOKENS,
+            }));
+            write_checkpoint(journal_path, checkpoint)?;
+            return Err("provider usage exceeded the bounded planner token budget".to_string());
+        }
         let message = payload["choices"][0]["message"].clone();
         let calls = message["tool_calls"]
             .as_array()
@@ -321,7 +361,14 @@ fn coding_api_key() -> Result<String, String> {
 }
 
 fn broker_request(name: &str, arguments: &Value) -> Result<Value, String> {
-    let allowed = ["inventory", "search_literal", "read_lines", "hash_file"];
+    let allowed = [
+        "inventory",
+        "project_summary",
+        "find_symbols",
+        "search_literal",
+        "read_lines",
+        "hash_file",
+    ];
     if !allowed.contains(&name) {
         return Err(format!(
             "model requested an unavailable investigation tool: {name}"
@@ -383,10 +430,14 @@ fn validate_submitted_plan(plan: &Value) -> Result<(), String> {
             .map_err(|_| format!("plan action {} violates the broker schema", index + 1))?;
         match typed {
             ToolRequest::Inventory { .. }
+            | ToolRequest::ProjectSummary
+            | ToolRequest::FindSymbols { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. } => {}
-            ToolRequest::ApplyExactPatch { .. } => last_patch = Some(index),
+            ToolRequest::ApplyExactPatch { .. } | ToolRequest::CreateFile { .. } => {
+                last_patch = Some(index)
+            }
             ToolRequest::RunValidation { .. } => last_validation = Some(index),
             ToolRequest::GitStatus | ToolRequest::GitDiff { .. } => {
                 return Err(
@@ -407,6 +458,14 @@ fn tool_schemas() -> Vec<Value> {
         function_tool(
             "inventory",
             json!({"type":"object","additionalProperties":false,"properties":{"path":{"type":"string"},"max_depth":{"type":"integer","minimum":1,"maximum":20}},"required":["path","max_depth"]}),
+        ),
+        function_tool(
+            "project_summary",
+            json!({"type":"object","additionalProperties":false,"properties":{},"required":[]}),
+        ),
+        function_tool(
+            "find_symbols",
+            json!({"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["query","paths"]}),
         ),
         function_tool(
             "search_literal",

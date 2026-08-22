@@ -540,6 +540,7 @@ async def dispatch_retryable_candidate_builds(pool, limit: int = 2) -> int:
             """SELECT b.id FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
                WHERE b.status='queued'
+                 AND b.coding_run_id IS NULL
                  AND p.status NOT IN ('rejected','expired','rolled_back')
                  AND b.model_policy_version=$2 AND b.tool_policy_version=$3
                  AND b.checkpoint#>>'{last_runner_failure,retryable}'='true'

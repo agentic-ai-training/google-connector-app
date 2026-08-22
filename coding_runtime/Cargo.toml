@@ -7,6 +7,9 @@ description = "Least-privilege deterministic tool broker for the Google Connecto
 
 [dependencies]
 regex = "1.11"
+native-tls = "0.2"
+postgres = "0.19"
+postgres-native-tls = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -15,6 +18,7 @@ similar = "2.7"
 tempfile = "3.20"
 walkdir = "2.5"
 wait-timeout = "0.2"
+url = "2.5"
 
 [profile.release]
 lto = true

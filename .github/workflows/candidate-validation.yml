@@ -60,7 +60,7 @@ jobs:
             pip-audit -r requirements.txt --progress-spinner off
             alembic downgrade 012
             alembic upgrade head
-            test "$(alembic current | tail -1)" = "014 (head)"
+            test "$(alembic current | tail -1)" = "015 (head)"
             docker build -f Dockerfile.worker -t candidate-worker:test .
             docker build -f Dockerfile.candidate -t candidate-api:test .
             docker build -f Dockerfile.builder -t candidate-builder:test .

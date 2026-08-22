@@ -886,6 +886,64 @@ def reviewer_contract_errors(review: dict) -> list[str]:
 def choose_builder_mode(risk_level: str, change_scope: list[str]) -> str:
     return "multi_role" if risk_level in {"high", "critical"} or len(change_scope) > 3 else "single"
 
+
+async def enqueue_durable_coding_run_for_build(
+    pool, build_id, sanitized_input: dict, actor: str,
+) -> dict | None:
+    """Attach one source-grounded coding run to a legacy proposal record.
+
+    ``candidate_builds`` remains the improvement-portal compatibility record, while
+    ``coding_runs`` is the sole executor.  Keeping the bridge here prevents admin,
+    CI-remediation, and failure-intelligence paths from drifting apart.
+    """
+    settings = get_settings()
+    if not (
+        settings.candidate_builder_use_coding_runtime
+        and settings.coding_agent_enabled
+    ):
+        return None
+
+    from app.coding.repository import create_coding_run
+
+    request = json.dumps({
+        "objective": "Implement the selected, sanitized failure-intelligence strategy",
+        "constraints": [
+            "Use the smallest source-grounded runtime patch and regression test.",
+            "Preserve public contracts unless the selected strategy explicitly changes one.",
+            "Do not use production data, credentials, or external Workspace mutations.",
+            "Finish with the repository's fixed validation profile.",
+        ],
+        "failure_intelligence": sanitized_input,
+    }, sort_keys=True)
+    if len(request) > 12_000:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE candidate_builds SET status='failed',completed_at=now(),
+                   error_message='sanitized coding request exceeds 12000 characters',
+                   updated_at=now() WHERE id=$1""",
+                build_id,
+            )
+        return None
+
+    coding_run = await create_coding_run(
+        pool, user_id=actor,
+        repository=settings.github_proposal_repository,
+        base_ref="main", request=request,
+        idempotency_key=f"failure-candidate:{build_id}",
+    )
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE candidate_builds SET coding_run_id=$1,status='investigating',
+               checkpoint=checkpoint||$2::jsonb,updated_at=now() WHERE id=$3""",
+            coding_run["id"], json.dumps({
+                "runtime": "durable_coding_v1",
+                "coding_run_id": str(coding_run["id"]),
+                "phase": "queued_for_source_grounded_planning",
+            }), build_id,
+        )
+    return coding_run
+
+
 async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dict, actor: str):
     settings = get_settings()
     if not settings.candidate_builder_enabled:
@@ -896,8 +954,22 @@ async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dic
     incident = normalize_candidate_incident(incident)
     scope = option.get("change_scope") or []
     mode = choose_builder_mode(incident.get("risk_level", "medium"), scope)
+    sanitized_input = {
+        "incident_id": str(incident["id"]), "title": incident["title"],
+        "stage": incident["stage"], "category": incident["category"],
+        "component": incident["component"], "service": incident["service"],
+        "operation": incident["operation"], "root_cause": incident["root_cause"],
+        "breaking_point": incident.get("breaking_point"),
+        "request_shape": incident.get("request_shape") or {},
+        "evidence": sanitize_failure_evidence(incident.get("evidence") or {}),
+        "failure_mechanism": incident.get("failure_mechanism"),
+        "architectural_boundary": incident.get("architectural_boundary"),
+        "source_version": incident.get("source_version"),
+        "evidence_validation": incident.get("evidence_validation"),
+        "selected_option": option, "contains_raw_user_content": False,
+    }
     async with pool.acquire() as conn:
-        return await conn.fetchval(
+        build_id = await conn.fetchval(
             """INSERT INTO candidate_builds
                (proposal_id,selected_option,mode,base_commit,model_name,
                 model_policy_version,tool_policy_version,token_budget,sanitized_input,
@@ -906,21 +978,12 @@ async def enqueue_candidate_build(pool, proposal_id, incident: dict, option: dic
             proposal_id, option["id"], mode, get_settings().deployment_version,
             settings.candidate_builder_model, MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
             settings.candidate_builder_job_token_budget,
-            json.dumps({
-                "incident_id": str(incident["id"]), "title": incident["title"],
-                "stage": incident["stage"], "category": incident["category"],
-                "component": incident["component"], "service": incident["service"],
-                "operation": incident["operation"], "root_cause": incident["root_cause"],
-                "breaking_point": incident.get("breaking_point"),
-                "request_shape": incident.get("request_shape") or {},
-                "evidence": sanitize_failure_evidence(incident.get("evidence") or {}),
-                "failure_mechanism": incident.get("failure_mechanism"),
-                "architectural_boundary": incident.get("architectural_boundary"),
-                "source_version": incident.get("source_version"),
-                "evidence_validation": incident.get("evidence_validation"),
-                "selected_option": option, "contains_raw_user_content": False,
-            }), actor,
+            json.dumps(sanitized_input), actor,
         )
+    await enqueue_durable_coding_run_for_build(
+        pool, build_id, sanitized_input, actor,
+    )
+    return build_id
 
 
 def _candidate_prompt(job: dict, sources: list[dict], role: str) -> str:
@@ -1979,6 +2042,7 @@ async def process_one_candidate_build(pool) -> bool:
             """SELECT b.*,p.proposal_key,p.risk_level FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
                WHERE b.status='queued'
+                 AND b.coding_run_id IS NULL
                  AND p.status NOT IN ('rejected','expired','rolled_back')
                  AND b.model_policy_version=$1
                  AND b.tool_policy_version=$2

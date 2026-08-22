@@ -256,6 +256,7 @@ export default function Home(){
       <span className="text-xl font-semibold">Google Workspace Agent</span>
       <span className="flex items-center gap-2 text-sm">
         <a href="/history" className="rounded-lg border px-3 py-2">History</a>
+        {user.admin&&<a href="/coding" className="rounded-lg border px-3 py-2">Coding agent</a>}
         {user.admin&&<a href="/admin/improvements" className="rounded-lg border px-3 py-2">Improvements{pendingImprovements>0&&<span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">{pendingImprovements}</span>}</a>}
         <button title="Explicitly index recent Gmail, Drive, and Calendar content for your private Knowledge RAG corpus" disabled={ragSyncing} onClick={()=>void syncKnowledge()} className="rounded-lg border px-3 py-2 disabled:opacity-50">{ragSyncing?"Indexing…":"Index my Workspace"}</button>
         <span>{user.email}</span>

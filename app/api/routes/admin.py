@@ -1,5 +1,6 @@
 import json
 import asyncio
+import hashlib
 import re
 from datetime import datetime, timedelta
 
@@ -151,9 +152,18 @@ def _candidate_build_view(row) -> dict:
         sanitized_input, _json_object(sanitized_input.get("selected_option")),
     )
     superseded_by_policy = bool(
-        item.get("model_policy_version") != MODEL_POLICY_VERSION
-        or item.get("tool_policy_version") != TOOL_POLICY_VERSION
+        not item.get("coding_run_id") and (
+            item.get("model_policy_version") != MODEL_POLICY_VERSION
+            or item.get("tool_policy_version") != TOOL_POLICY_VERSION
+        )
     )
+    approval_preview = None
+    if (
+        item.get("coding_run_status") == "awaiting_approval"
+        and item.get("encrypted_approval_manifest")
+    ):
+        from app.coding.repository import decrypt_json
+        approval_preview = decrypt_json(item["encrypted_approval_manifest"])
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
@@ -229,6 +239,14 @@ def _candidate_build_view(row) -> dict:
             "eligible" if admission["eligible"] else "evidence_required"
         ),
         "admission_reason_codes": admission["reason_codes"],
+        "coding_run_id": item.get("coding_run_id"),
+        "coding_run_status": item.get("coding_run_status"),
+        "coding_current_phase": item.get("coding_current_phase"),
+        "coding_approval_action_hash": item.get("coding_approval_action_hash"),
+        "coding_approval_expires_at": item.get("coding_approval_expires_at"),
+        "coding_approval_preview": approval_preview,
+        "coding_pull_request_url": item.get("coding_pull_request_url"),
+        "coding_ci_check_url": item.get("coding_ci_check_url"),
     }
 
 
@@ -273,10 +291,18 @@ async def candidate_builds(status: str | None = None, limit: int = 100):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT b.*,p.proposal_key,p.title,
+                      r.status AS coding_run_status,
+                      r.current_phase AS coding_current_phase,
+                      r.approval_action_hash AS coding_approval_action_hash,
+                      r.approval_expires_at AS coding_approval_expires_at,
+                      r.encrypted_approval_manifest,
+                      r.pull_request_url AS coding_pull_request_url,
+                      r.ci_check_url AS coding_ci_check_url,
                       (SELECT count(*) FROM candidate_build_files f
                         WHERE f.build_id=b.id) AS file_count
                  FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
+               LEFT JOIN coding_runs r ON r.id=b.coding_run_id
                WHERE ($1::text IS NULL OR b.status=$1)
                ORDER BY b.created_at DESC LIMIT $2""",
             status, max(1, min(limit, 200)),
@@ -371,11 +397,14 @@ async def new_policy_candidate_attempt(
             source["proposal_id"],
             f"candidate_builder_new_policy_attempt_{str(new_id)[:8]}", payload,
         )
-    try:
-        from app.improvements.publisher import dispatch_candidate_builder
-        dispatch = await dispatch_candidate_builder(str(new_id))
-    except Exception as exc:
-        dispatch = {"status": "not_dispatched", "reason": str(exc)}
+    from app.improvements.builder import enqueue_durable_coding_run_for_build
+    coding_run = await enqueue_durable_coding_run_for_build(
+        pool, new_id, sanitized_input, request.state.user_id,
+    )
+    dispatch = (
+        {"status": "durable_coding_queued", "coding_run_id": str(coding_run["id"])}
+        if coding_run else {"status": "not_dispatched"}
+    )
     return {
         "source_build_id": build_id,
         "build_id": str(new_id),
@@ -687,11 +716,14 @@ async def remediate_candidate_validation_failure(
                      ($1,'grafana','candidate_ci_remediation_queued','sent',$2::jsonb)""",
             source["proposal_id"], payload,
         )
-    try:
-        from app.improvements.publisher import dispatch_candidate_builder
-        dispatch = await dispatch_candidate_builder(str(new_id))
-    except Exception as exc:
-        dispatch = {"status": "not_dispatched", "reason": type(exc).__name__}
+    from app.improvements.builder import enqueue_durable_coding_run_for_build
+    coding_run = await enqueue_durable_coding_run_for_build(
+        pool, new_id, sanitized_input, "trusted-ci-remediation",
+    )
+    dispatch = (
+        {"status": "durable_coding_queued", "coding_run_id": str(coding_run["id"])}
+        if coding_run else {"status": "not_dispatched"}
+    )
     return {
         "source_build_id": build_id,
         "build_id": str(new_id),
@@ -785,6 +817,44 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
             json.dumps(manifest_patch),
             build["proposal_id"],
         )
+        if build["coding_run_id"]:
+            ci_url = (
+                f"https://github.com/{body.repository}/actions/runs/{body.run_id}"
+            )
+            await conn.execute(
+                """UPDATE coding_runs SET status='completed',current_phase='ci_passed',
+                   publication_status='ci_passed',candidate_commit=$1,ci_check_url=$2,
+                   completed_at=now(),lease_owner=NULL,lease_expires_at=NULL,
+                   updated_at=now() WHERE id=$3""",
+                body.commit_sha, ci_url, build["coding_run_id"],
+            )
+            attestation_bytes = json.dumps(
+                body.model_dump(), sort_keys=True, default=str,
+            ).encode()
+            await conn.execute(
+                """INSERT INTO coding_artifacts
+                   (run_id,user_id,artifact_type,content_hash,external_url,metadata,
+                    verification_status,verified_at)
+                   SELECT id,user_id,'ci_attestation',$1,$2,$3::jsonb,'verified',now()
+                   FROM coding_runs WHERE id=$4 ON CONFLICT DO NOTHING""",
+                hashlib.sha256(attestation_bytes).hexdigest(), ci_url,
+                json.dumps({
+                    "suite_version": body.suite_version,
+                    "workflow": body.workflow,
+                    "run_id": body.run_id,
+                    "commit_sha": body.commit_sha,
+                    "passed": True,
+                }), build["coding_run_id"],
+            )
+            await conn.execute(
+                """INSERT INTO coding_run_events
+                   (run_id,user_id,event_type,phase,message,payload)
+                   SELECT id,user_id,'coding_ci_passed','ci_passed',
+                          'Trusted GitHub Actions validation passed',$1::jsonb
+                   FROM coding_runs WHERE id=$2""",
+                json.dumps({"ci_url": ci_url, "commit_sha": body.commit_sha}),
+                build["coding_run_id"],
+            )
     return {"build_id": build_id, "status": "validated", "content_hash": digest}
 
 

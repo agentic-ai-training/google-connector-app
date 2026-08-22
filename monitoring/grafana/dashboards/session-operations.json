@@ -146,10 +146,15 @@
       "type":"table","title":"Operational OKF selections","gridPos":{"h":10,"w":24,"x":0,"y":152},
       "datasource":{"type":"postgres","uid":"postgres-reporting"},
       "targets":[{"format":"table","rawSql":"SELECT e.run_id,r.session_id,e.payload->'document_ids' AS documents,e.payload->'operational_tags' AS structured_tags,e.payload->>'selection_policy' AS selection_policy,e.created_at FROM agent_run_events e JOIN agent_runs r ON r.id=e.run_id WHERE e.event_type='okf_context_selected' AND e.created_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY e.created_at DESC LIMIT 250","refId":"A"}]
+    },
+    {
+      "type":"table","title":"Durable coding runs and approval/CI state","gridPos":{"h":12,"w":24,"x":0,"y":162},
+      "datasource":{"type":"postgres","uid":"postgres-reporting"},
+      "targets":[{"format":"table","rawSql":"SELECT id,regexp_replace(user_id,'(^.).*(@.*$)','\\1***\\2') AS user_id,repository,request_excerpt,status,current_phase,planner_model,model_policy_version,tool_policy_version,approval_status,publication_status,pull_request_url,ci_check_url,input_tokens+output_tokens AS tokens,attempt_count,error_category,created_at,completed_at FROM reporting.coding_run_status WHERE created_at BETWEEN $__timeFrom() AND $__timeTo() ORDER BY created_at DESC LIMIT 200","refId":"A"}]
     }
   ],
   "refresh":"30s","schemaVersion":41,
   "tags":["google-connector","sessions","workflows"],
   "templating":{"list":[]},"time":{"from":"now-24h","to":"now"},
-  "title":"Google Connector Session Operations","uid":"google-connector-session-operations","version":8
+  "title":"Google Connector Session Operations","uid":"google-connector-session-operations","version":9
 }

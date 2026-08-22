@@ -1,5 +1,6 @@
 import os
 import asyncio
+import hashlib
 import json
 import uuid
 
@@ -162,6 +163,119 @@ def test_rag_source_sync_is_durable_deduplicated_and_tenant_scoped():
         client.portal.call(cleanup)
 
 
+def test_coding_runs_are_encrypted_tenant_scoped_and_hash_approved():
+    from app.api.main import app
+    from app.coding.repository import encrypt_json
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+
+    run_id = None
+    settings = get_settings()
+    original_enabled = settings.coding_agent_enabled
+    original_admin_only = settings.coding_agent_admin_only
+    original_allowlist = settings.coding_allowed_repositories
+    settings.coding_agent_enabled = True
+    settings.coding_worker_enabled = False
+    settings.coding_agent_admin_only = True
+    settings.coding_allowed_repositories = (
+        "agentic-ai-training/google-connector-app"
+    )
+    try:
+        with TestClient(app) as client:
+            admin = client.post(
+                "/auth/token", json={"email": "achintyat256@gmail.com"}
+            ).json()["access_token"]
+            user = client.post(
+                "/auth/token", json={"email": "coding-other@example.com"}
+            ).json()["access_token"]
+            admin_headers = {"Authorization": f"Bearer {admin}"}
+            user_headers = {"Authorization": f"Bearer {user}"}
+            payload = {
+                "repository": "agentic-ai-training/google-connector-app",
+                "base_ref": "main",
+                "request": "Fix the parser without changing its public schema.",
+                "idempotency_key": f"coding-{uuid.uuid4()}",
+                "source_egress_consent": True,
+            }
+            denied = client.post("/coding/runs", headers=user_headers, json=payload)
+            assert denied.status_code == 403
+            created = client.post("/coding/runs", headers=admin_headers, json=payload)
+            assert created.status_code == 200
+            run_id = created.json()["run"]["id"]
+            assert "encrypted_request" not in created.json()["run"]
+
+            duplicate = client.post("/coding/runs", headers=admin_headers, json=payload)
+            assert duplicate.status_code == 200
+            assert duplicate.json()["run"]["id"] == run_id
+            assert client.get(
+                f"/coding/runs/{run_id}", headers=user_headers
+            ).status_code == 403
+
+            action_hash = "a" * 64
+
+            async def seed_approval():
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    encrypted = await conn.fetchval(
+                        "SELECT encrypted_request FROM coding_runs WHERE id=$1",
+                        uuid.UUID(run_id),
+                    )
+                    assert payload["request"] not in encrypted
+                    await conn.execute(
+                        """UPDATE coding_runs SET status='awaiting_approval',
+                           current_phase='awaiting_approval',approval_status='pending',
+                           approval_action_hash=$1,approval_expires_at=now()+interval '1 hour',
+                           encrypted_approval_manifest=$2 WHERE id=$3""",
+                        action_hash,
+                        encrypt_json({"changes": [{"path": "app/parser.py"}]}),
+                        uuid.UUID(run_id),
+                    )
+
+            client.portal.call(seed_approval)
+            detail = client.get(
+                f"/coding/runs/{run_id}", headers=admin_headers
+            )
+            assert detail.status_code == 200
+            assert detail.json()["run"]["approval_preview"]["changes"][0][
+                "path"
+            ] == "app/parser.py"
+            mismatch = client.post(
+                f"/coding/runs/{run_id}/decision", headers=admin_headers,
+                json={"action_hash": "b" * 64, "decision": "approved", "note": ""},
+            )
+            assert mismatch.status_code == 409
+            approved = client.post(
+                f"/coding/runs/{run_id}/decision", headers=admin_headers,
+                json={
+                    "action_hash": action_hash,
+                    "decision": "approved",
+                    "note": "Reviewed exact diff",
+                },
+            )
+            assert approved.status_code == 200
+            assert approved.json()["run"]["status"] == "approved"
+            events = client.get(
+                f"/coding/runs/{run_id}/events", headers=admin_headers
+            )
+            assert events.status_code == 200
+            assert any(
+                item["event_type"] == "coding_approved"
+                for item in events.json()["events"]
+            )
+            async def cleanup():
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "DELETE FROM coding_runs WHERE id=$1", uuid.UUID(run_id)
+                    )
+            client.portal.call(cleanup)
+            run_id = None
+    finally:
+        settings.coding_agent_enabled = original_enabled
+        settings.coding_agent_admin_only = original_admin_only
+        settings.coding_allowed_repositories = original_allowlist
+
+
 def test_contextual_workflow_and_failure_inbox_are_durable():
     from app.api.main import app
     from app.db.connection import get_pool
@@ -229,6 +343,80 @@ def test_contextual_workflow_and_failure_inbox_are_durable():
                 await conn.execute("DELETE FROM failure_incidents WHERE id=$1", uuid.UUID(incident_id))
                 await conn.execute("DELETE FROM agent_runs WHERE id=$1", uuid.UUID(run_id))
         client.portal.call(cleanup)
+
+
+def test_failure_candidate_is_bridged_to_the_shared_durable_coding_runtime():
+    from app.api.main import app
+    from app.config.settings import get_settings
+    from app.db.connection import get_pool
+    from app.improvements.builder import enqueue_durable_coding_run_for_build
+
+    marker = str(uuid.uuid4())
+    settings = get_settings()
+    original_enabled = settings.coding_agent_enabled
+    original_shared = settings.candidate_builder_use_coding_runtime
+    settings.coding_agent_enabled = True
+    settings.candidate_builder_use_coding_runtime = True
+    try:
+        with TestClient(app) as client:
+            async def exercise():
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    proposal_id = await conn.fetchval(
+                        """INSERT INTO improvement_proposals
+                           (proposal_key,proposal_type,title,sanitized_summary,status,
+                            content_hash,candidate_kind,candidate_state)
+                           VALUES($1,'policy','Shared runtime fixture','sanitized',
+                                  'awaiting_review',$2,'diagnosis','diagnosis_only')
+                           RETURNING id""",
+                        f"shared-coding-{marker}", hashlib.sha256(marker.encode()).hexdigest(),
+                    )
+                    build_id = await conn.fetchval(
+                        """INSERT INTO candidate_builds
+                           (proposal_id,selected_option,mode,base_commit,model_name,
+                            model_policy_version,tool_policy_version,token_budget,
+                            sanitized_input,created_by)
+                           VALUES($1,'A','single',$2,$3,'fixture-model','fixture-tools',
+                                  12000,$4::jsonb,$5) RETURNING id""",
+                        proposal_id, "a" * 40, settings.candidate_builder_model,
+                        json.dumps({"fixture": True}), "shared-runtime-admin",
+                    )
+                coding = await enqueue_durable_coding_run_for_build(
+                    pool, build_id, {
+                        "title": "Concrete parser failure", "component": "planner",
+                        "service": "calendar", "operation": "create_event",
+                        "root_cause": "A typed date field was rejected.",
+                        "selected_option": {"id": "A", "automation_eligible": True},
+                    }, "shared-runtime-admin",
+                )
+                async with pool.acquire() as conn:
+                    build = await conn.fetchrow(
+                        "SELECT coding_run_id,status,checkpoint FROM candidate_builds WHERE id=$1",
+                        build_id,
+                    )
+                    run = await conn.fetchrow(
+                        """SELECT status,encrypted_request,request_excerpt,
+                                  okf_bundle_version,okf_document_ids,okf_selection_reason
+                             FROM coding_runs WHERE id=$1""",
+                        coding["id"],
+                    )
+                    await conn.execute("DELETE FROM improvement_proposals WHERE id=$1", proposal_id)
+                    await conn.execute("DELETE FROM coding_runs WHERE id=$1", coding["id"])
+                return dict(build), dict(run)
+
+            build, run = client.portal.call(exercise)
+            assert build["status"] == "investigating"
+            assert build["coding_run_id"] is not None
+            assert build["checkpoint"]["runtime"] == "durable_coding_v1"
+            assert run["status"] == "queued"
+            assert "typed date field" not in run["encrypted_request"]
+            assert len(run["request_excerpt"]) <= 240
+            assert run["okf_bundle_version"]
+            assert "workflows/durable-coding-agent.md" in run["okf_document_ids"]
+            assert run["okf_selection_reason"] == "structured_coding_governance_tags_v1"
+    finally:
+        settings.coding_agent_enabled = original_enabled
+        settings.candidate_builder_use_coding_runtime = original_shared
 
 
 def test_chat_delivery_is_channel_safe_and_clarifications_are_run_bound():

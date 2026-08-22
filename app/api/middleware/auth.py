@@ -229,7 +229,7 @@ async def auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
     protected = request.url.path.startswith(
-        ("/chat", "/runs", "/sessions", "/feedback", "/history", "/admin", "/auth/me",
+        ("/chat", "/runs", "/sessions", "/coding", "/feedback", "/history", "/admin", "/auth/me",
          "/auth/frontend-candidate",
          "/auth/account-data")
     ) or (request.url.path == "/auth/google" and request.method == "DELETE")

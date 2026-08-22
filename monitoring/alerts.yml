@@ -71,6 +71,16 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations: {summary: "A governed Groq candidate build failed before canary"}
+      - alert: DurableCodingRunFailed
+        expr: agent_coding_runs{status="failed"} > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "A durable coding run failed before trusted completion"}
+      - alert: DurableCodingLifecycleOverdue
+        expr: agent_coding_runs_overdue > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "A coding approval, worker lease, or trusted CI deadline is overdue"}
       - alert: RepeatedWriteToolSelectionFailures
         expr: sum(rate(agent_tool_selection_failures_total[15m])) > 0.05
         for: 10m
