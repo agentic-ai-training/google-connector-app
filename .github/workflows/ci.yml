@@ -83,6 +83,8 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config --quiet
+      - name: Build the production Rust container stage
+        run: docker build --target coding-runtime-builder -f Dockerfile .
       - name: Verify sensitive local files are not tracked or present in history
         run: |
           if git ls-files | grep -E '(^|/)(\.env|credentials\.json|google-oauth-web\.json|token\.(pkl|json))$'; then

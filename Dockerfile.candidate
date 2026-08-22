@@ -1,5 +1,6 @@
 FROM rust:1.98-slim AS coding-runtime-builder
 WORKDIR /src/coding_runtime
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY coding_runtime/Cargo.toml coding_runtime/Cargo.lock ./
 COPY coding_runtime/src ./src
 RUN cargo build --release --locked
