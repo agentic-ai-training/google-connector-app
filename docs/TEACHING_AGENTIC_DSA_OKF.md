@@ -2397,3 +2397,40 @@ a fixed-dimensional vector used for similarity search. Replacing Gemini/Groq gen
 does not change the Ollama `nomic-embed-text` vectors because the two pipelines are
 independent. Re-indexing is required only when the embedding model, dimension, chunker, or
 relevant indexed representation changes—not whenever the response model changes.
+
+<a id="dictionary-lexical-program-analysis"></a>
+## Lexical program analysis
+
+Lexical program analysis scans bounded source text for declarations, imports, and control-
+flow markers without constructing a complete language AST or resolving runtime dispatch.
+For `N` source characters, a fixed collection of regular scans is normally `O(N)` time and
+bounded output is `O(K)`, where `K` is the configured result ceiling. It is useful for
+localization and prioritization, but it cannot prove a complete dependency graph,
+cyclomatic complexity, or asymptotic Big-O. The Rust broker therefore returns explicit
+`complete_static_graph: false`, `cyclomatic_complexity_proven: false`, and
+`big_o_inferred: false` fields. A planner may use these observations to choose the next
+exact read; a verifier may not use them as success evidence.
+
+<a id="dictionary-conversion-contract"></a>
+## Language-conversion contract
+
+A language-conversion contract binds a recognized source file and target language to the
+source SHA-256, detected risk features, available fixed validation profiles, and required
+differential evidence. It does not translate code. The transformation remains an exact
+patch or expected-absent creation inside an ephemeral sandbox. Correctness requires target
+parsing/compilation plus shared normal, boundary, and failure fixtures. This separates the
+planning question “what must be preserved?” from the unprovable claim “these programs are
+equivalent.” Contract construction scans one bounded file in `O(N)` time; behavioral proof
+cost depends on the target compiler and test suite.
+
+<a id="dictionary-semantic-equivalence"></a>
+## Semantic equivalence
+
+Two programs are semantically equivalent for a declared observation set when every allowed
+input produces the same externally relevant output, error, state transition, and side
+effect. Universal equivalence is undecidable for general programs, so a production coding
+agent must never infer it from syntax similarity or one successful example. This project
+uses a practical evidence ladder: hash-bound source, explicit public contract, target
+compiler, differential fixtures, integration tests, and human review for unresolved
+language/runtime differences. The conversion broker always starts with
+`semantic_equivalence_proven: false`.

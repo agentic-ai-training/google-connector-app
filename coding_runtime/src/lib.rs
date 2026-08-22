@@ -53,6 +53,22 @@ pub enum ToolRequest {
         #[serde(default)]
         paths: Vec<String>,
     },
+    LanguageInventory {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    DependencyInventory {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    ComplexityInventory {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
+    ConversionContract {
+        source_path: String,
+        target_language: String,
+    },
     ApplyExactPatch {
         path: String,
         expected_sha256: String,
@@ -147,6 +163,10 @@ pub fn parse_request(input: &str) -> Result<ToolRequest, BrokerError> {
         "hash_file" => &["tool", "path"],
         "project_summary" => &["tool"],
         "find_symbols" => &["tool", "query", "paths"],
+        "language_inventory" => &["tool", "paths"],
+        "dependency_inventory" => &["tool", "paths"],
+        "complexity_inventory" => &["tool", "paths"],
+        "conversion_contract" => &["tool", "source_path", "target_language"],
         "apply_exact_patch" => &["tool", "path", "expected_sha256", "old", "replacement"],
         "create_file" => &["tool", "path", "expected_absent", "content"],
         "git_status" => &["tool"],
@@ -218,6 +238,13 @@ impl Broker {
             ToolRequest::HashFile { path } => self.hash_file(&path),
             ToolRequest::ProjectSummary => self.project_summary(),
             ToolRequest::FindSymbols { query, paths } => self.find_symbols(&query, &paths),
+            ToolRequest::LanguageInventory { paths } => self.language_inventory(&paths),
+            ToolRequest::DependencyInventory { paths } => self.dependency_inventory(&paths),
+            ToolRequest::ComplexityInventory { paths } => self.complexity_inventory(&paths),
+            ToolRequest::ConversionContract {
+                source_path,
+                target_language,
+            } => self.conversion_contract(&source_path, &target_language),
             ToolRequest::ApplyExactPatch {
                 path,
                 expected_sha256,
@@ -592,6 +619,274 @@ impl Broker {
         Ok(json!({"matches": matches, "truncated": matches.len() >= MAX_SEARCH_MATCHES}))
     }
 
+    fn analysis_files(&self, paths: &[String]) -> Result<(Vec<PathBuf>, bool), BrokerError> {
+        let roots = if paths.is_empty() {
+            vec![self.root.clone()]
+        } else {
+            paths
+                .iter()
+                .map(|path| self.safe_path(path, true, false))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut files = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut truncated = false;
+        for root in roots {
+            let entries: Box<dyn Iterator<Item = Result<DirEntry, walkdir::Error>>> =
+                if root.is_file() {
+                    Box::new(WalkDir::new(root).max_depth(0).into_iter())
+                } else {
+                    Box::new(
+                        WalkDir::new(root)
+                            .max_depth(20)
+                            .follow_links(false)
+                            .into_iter()
+                            .filter_entry(is_visible_entry),
+                    )
+                };
+            for entry in entries {
+                let entry =
+                    entry.map_err(|error| BrokerError::new("walk_failed", error.to_string()))?;
+                if !entry.file_type().is_file() || entry.file_type().is_symlink() {
+                    continue;
+                }
+                let relative = entry.path().strip_prefix(&self.root).map_err(|_| {
+                    BrokerError::new("path_escape", "analysis path escaped workspace")
+                })?;
+                if path_is_sensitive(relative)
+                    || path_is_generated(relative)
+                    || !is_text_candidate(relative)
+                    || !seen.insert(relative.to_path_buf())
+                {
+                    continue;
+                }
+                let within_limit = entry
+                    .metadata()
+                    .map(|metadata| metadata.len() as usize <= MAX_READ_BYTES)
+                    .unwrap_or(false);
+                if !within_limit {
+                    continue;
+                }
+                files.push(entry.path().to_path_buf());
+                if files.len() >= MAX_FILES {
+                    truncated = true;
+                    break;
+                }
+            }
+            if truncated {
+                break;
+            }
+        }
+        Ok((files, truncated))
+    }
+
+    fn language_inventory(&self, paths: &[String]) -> Result<Value, BrokerError> {
+        let (files, truncated) = self.analysis_files(paths)?;
+        let mut languages = std::collections::BTreeMap::<String, Value>::new();
+        let mut analyzed_files = 0_usize;
+        for path in files {
+            let relative = path
+                .strip_prefix(&self.root)
+                .map_err(|_| BrokerError::new("path_escape", "language path escaped"))?;
+            let Some(language) = source_language(relative) else {
+                continue;
+            };
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            analyzed_files += 1;
+            let current = languages
+                .entry(language.to_string())
+                .or_insert_with(|| json!({"files":0,"bytes":0,"lines":0}));
+            current["files"] = json!(current["files"].as_u64().unwrap_or(0) + 1);
+            current["bytes"] = json!(current["bytes"].as_u64().unwrap_or(0) + content.len() as u64);
+            current["lines"] =
+                json!(current["lines"].as_u64().unwrap_or(0) + content.lines().count() as u64);
+        }
+        Ok(json!({
+            "analysis_kind":"extension_grounded_language_inventory",
+            "languages":languages,
+            "analyzed_files":analyzed_files,
+            "truncated":truncated,
+            "semantic_claim":false,
+        }))
+    }
+
+    fn dependency_inventory(&self, paths: &[String]) -> Result<Value, BrokerError> {
+        let (files, file_truncated) = self.analysis_files(paths)?;
+        let mut edges = Vec::new();
+        let mut truncated = file_truncated;
+        for path in files {
+            let relative = path
+                .strip_prefix(&self.root)
+                .map_err(|_| BrokerError::new("path_escape", "dependency path escaped"))?;
+            let Some(language) = source_language(relative) else {
+                continue;
+            };
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            for (index, line) in content.lines().enumerate() {
+                for (kind, target) in lexical_dependencies(language, line) {
+                    edges.push(json!({
+                        "path":relative.to_string_lossy().replace('\\', "/"),
+                        "language":language,
+                        "line":index + 1,
+                        "kind":kind,
+                        "target":bounded_chars(&target, 300),
+                    }));
+                    if edges.len() >= MAX_SEARCH_MATCHES {
+                        truncated = true;
+                        break;
+                    }
+                }
+                if edges.len() >= MAX_SEARCH_MATCHES {
+                    break;
+                }
+            }
+            if edges.len() >= MAX_SEARCH_MATCHES {
+                break;
+            }
+        }
+        Ok(json!({
+            "analysis_kind":"bounded_lexical_dependency_inventory",
+            "edges":edges,
+            "truncated":truncated,
+            "complete_static_graph":false,
+            "warning":"Dynamic imports, generated code, runtime dispatch, and language-specific resolution require dedicated analyzers.",
+        }))
+    }
+
+    fn complexity_inventory(&self, paths: &[String]) -> Result<Value, BrokerError> {
+        let (files, file_truncated) = self.analysis_files(paths)?;
+        let declaration = RegexBuilder::new(
+            r"(?x)^\s*(?:pub(?:\([^)]*\))?\s+|export\s+|async\s+|static\s+)*
+              (?:def|fn|function|class|interface|func)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .build()
+        .map_err(|error| BrokerError::new("analysis_failed", error.to_string()))?;
+        let decisions = RegexBuilder::new(
+            r"\b(?:if|elif|else\s+if|for|while|match|case|catch|except|when|switch)\b|&&|\|\|",
+        )
+        .build()
+        .map_err(|error| BrokerError::new("analysis_failed", error.to_string()))?;
+        let mut results = Vec::new();
+        let mut truncated = file_truncated;
+        for path in files {
+            let relative = path
+                .strip_prefix(&self.root)
+                .map_err(|_| BrokerError::new("path_escape", "complexity path escaped"))?;
+            let Some(language) = source_language(relative) else {
+                continue;
+            };
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            let mut names = Vec::new();
+            for line in content.lines() {
+                if let Some(capture) = declaration.captures(line)
+                    && let Some(name) = capture.get(1)
+                    && names.len() < 200
+                {
+                    names.push(name.as_str().to_string());
+                }
+            }
+            let recursion_candidates = names
+                .iter()
+                .filter(|name| content.match_indices(name.as_str()).count() > 1)
+                .take(50)
+                .cloned()
+                .collect::<Vec<_>>();
+            results.push(json!({
+                "path":relative.to_string_lossy().replace('\\', "/"),
+                "language":language,
+                "lines":content.lines().count(),
+                "non_blank_lines":content.lines().filter(|line| !line.trim().is_empty()).count(),
+                "declarations":names,
+                "decision_markers":decisions.find_iter(&content).count(),
+                "recursion_candidates":recursion_candidates,
+            }));
+            if results.len() >= MAX_SEARCH_MATCHES {
+                truncated = true;
+                break;
+            }
+        }
+        Ok(json!({
+            "analysis_kind":"bounded_lexical_complexity_inventory",
+            "files":results,
+            "truncated":truncated,
+            "big_o_inferred":false,
+            "cyclomatic_complexity_proven":false,
+            "warning":"Counts are localization evidence, not semantic complexity proofs; inspect exact control flow and benchmarks before changing algorithms.",
+        }))
+    }
+
+    fn conversion_contract(
+        &self,
+        source_path: &str,
+        target_language: &str,
+    ) -> Result<Value, BrokerError> {
+        let path = self.safe_path(source_path, true, true)?;
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| BrokerError::new("path_escape", "conversion path escaped"))?;
+        let source = source_language(relative).ok_or_else(|| {
+            BrokerError::new("unsupported_language", "source language is not recognized")
+        })?;
+        let target = normalize_target_language(target_language).ok_or_else(|| {
+            BrokerError::new("unsupported_language", "target language is not recognized")
+        })?;
+        if source == target {
+            return Err(BrokerError::new(
+                "invalid_argument",
+                "source and target languages are the same",
+            ));
+        }
+        let content = fs::read_to_string(&path)
+            .map_err(|error| BrokerError::new("read_failed", error.to_string()))?;
+        let feature_terms = [
+            ("async", ["async ", "await "].as_slice()),
+            (
+                "exceptions",
+                ["try", "catch", "except", "throw", "raise"].as_slice(),
+            ),
+            (
+                "generics",
+                ["<T", "typing.", "TypeVar", "where T"].as_slice(),
+            ),
+            (
+                "macros_or_codegen",
+                ["macro!", "#[derive", "@generated"].as_slice(),
+            ),
+            (
+                "unsafe_or_ffi",
+                ["unsafe", "extern ", "ffi", "ctypes"].as_slice(),
+            ),
+            (
+                "concurrency",
+                ["thread", "spawn", "asyncio", "goroutine", "channel"].as_slice(),
+            ),
+        ];
+        let features = feature_terms
+            .iter()
+            .filter(|(_, terms)| terms.iter().any(|term| content.contains(term)))
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+        let validation_profiles = target_validation_profiles(target);
+        Ok(json!({
+            "analysis_kind":"hash_bound_conversion_contract",
+            "source_path":relative.to_string_lossy().replace('\\', "/"),
+            "source_language":source,
+            "target_language":target,
+            "source_sha256":sha256_bytes(content.as_bytes()),
+            "source_features":features,
+            "required_evidence":[
+                "target parser or compiler passes",
+                "source and target behavior use the same fixtures",
+                "differential tests pass for normal, boundary, and failure cases",
+                "public API and side-effect differences are reviewed",
+            ],
+            "available_validation_profiles":validation_profiles,
+            "semantic_equivalence_proven":false,
+            "automatic_conversion_performed":false,
+            "mutation_boundary":"Only hash-bound apply_exact_patch/create_file actions in an ephemeral sandbox may implement the conversion.",
+        }))
+    }
+
     fn apply_exact_patch(
         &self,
         path: &str,
@@ -957,12 +1252,172 @@ impl ToolRequest {
             Self::HashFile { .. } => "hash_file",
             Self::ProjectSummary => "project_summary",
             Self::FindSymbols { .. } => "find_symbols",
+            Self::LanguageInventory { .. } => "language_inventory",
+            Self::DependencyInventory { .. } => "dependency_inventory",
+            Self::ComplexityInventory { .. } => "complexity_inventory",
+            Self::ConversionContract { .. } => "conversion_contract",
             Self::ApplyExactPatch { .. } => "apply_exact_patch",
             Self::CreateFile { .. } => "create_file",
             Self::GitStatus => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::RunValidation { .. } => "run_validation",
         }
+    }
+}
+
+fn source_language(path: &Path) -> Option<&'static str> {
+    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if name == "dockerfile" {
+        return Some("dockerfile");
+    }
+    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    match extension.as_str() {
+        "py" | "pyi" => Some("python"),
+        "rs" => Some("rust"),
+        "ts" | "tsx" => Some("typescript"),
+        "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+        "go" => Some("go"),
+        "java" => Some("java"),
+        "kt" | "kts" => Some("kotlin"),
+        "dart" => Some("dart"),
+        "cs" => Some("csharp"),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
+        "c" | "h" => Some("c"),
+        "rb" => Some("ruby"),
+        "php" => Some("php"),
+        "sh" | "bash" | "zsh" => Some("shell"),
+        "sql" => Some("sql"),
+        "yaml" | "yml" => Some("yaml"),
+        "toml" => Some("toml"),
+        "json" => Some("json"),
+        "md" | "mdx" => Some("markdown"),
+        _ => None,
+    }
+}
+
+fn normalize_target_language(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "python" | "py" => Some("python"),
+        "rust" | "rs" => Some("rust"),
+        "typescript" | "ts" => Some("typescript"),
+        "javascript" | "js" | "node" | "nodejs" => Some("javascript"),
+        "go" | "golang" => Some("go"),
+        "java" => Some("java"),
+        "kotlin" | "kt" => Some("kotlin"),
+        "dart" | "flutter" => Some("dart"),
+        "c#" | "csharp" | "cs" => Some("csharp"),
+        "c++" | "cpp" => Some("cpp"),
+        "c" => Some("c"),
+        "ruby" | "rb" => Some("ruby"),
+        "php" => Some("php"),
+        _ => None,
+    }
+}
+
+fn target_validation_profiles(language: &str) -> Vec<&'static str> {
+    match language {
+        "python" => vec!["python_compile", "python_lint", "python_unit"],
+        "rust" => vec!["rust_format", "rust_test"],
+        "typescript" | "javascript" => vec!["web_lint", "web_build"],
+        "dart" => vec!["flutter_analyze", "flutter_test"],
+        _ => Vec::new(),
+    }
+}
+
+fn first_quoted(value: &str) -> Option<String> {
+    let candidate = ['\'', '"']
+        .into_iter()
+        .filter_map(|quote| value.find(quote).map(|start| (start, quote)))
+        .min_by_key(|(start, _)| *start);
+    if let Some((start, quote)) = candidate {
+        let rest = &value[start + quote.len_utf8()..];
+        if let Some(end) = rest.find(quote) {
+            return Some(rest[..end].to_string());
+        }
+    }
+    if let Some(start) = value.find('<') {
+        let rest = &value[start + 1..];
+        if let Some(end) = rest.find('>') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
+fn lexical_dependencies(language: &str, line: &str) -> Vec<(&'static str, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with('#') && !matches!(language, "c" | "cpp")
+    {
+        return Vec::new();
+    }
+    match language {
+        "python" if trimmed.starts_with("from ") => trimmed
+            .strip_prefix("from ")
+            .and_then(|rest| rest.split_whitespace().next())
+            .map(|target| vec![("from_import", target.to_string())])
+            .unwrap_or_default(),
+        "python" if trimmed.starts_with("import ") => trimmed
+            .trim_start_matches("import ")
+            .split(',')
+            .filter_map(|item| item.split_whitespace().next())
+            .map(|target| ("import", target.to_string()))
+            .collect(),
+        "typescript" | "javascript" if trimmed.starts_with("import ") => first_quoted(trimmed)
+            .map(|target| vec![("import", target)])
+            .unwrap_or_default(),
+        "typescript" | "javascript" if trimmed.contains("require(") => first_quoted(trimmed)
+            .map(|target| vec![("require", target)])
+            .unwrap_or_default(),
+        "rust" if trimmed.starts_with("use ") => vec![(
+            "use",
+            trimmed
+                .trim_start_matches("use ")
+                .trim_end_matches(';')
+                .to_string(),
+        )],
+        "rust" if trimmed.starts_with("mod ") => vec![(
+            "module",
+            trimmed
+                .trim_start_matches("mod ")
+                .trim_end_matches(';')
+                .to_string(),
+        )],
+        "go" if trimmed.starts_with("import ") => first_quoted(trimmed)
+            .map(|target| vec![("import", target)])
+            .unwrap_or_default(),
+        "java" | "kotlin" if trimmed.starts_with("import ") => vec![(
+            "import",
+            trimmed
+                .trim_start_matches("import ")
+                .trim_end_matches(';')
+                .to_string(),
+        )],
+        "dart" if trimmed.starts_with("import ") => first_quoted(trimmed)
+            .map(|target| vec![("import", target)])
+            .unwrap_or_default(),
+        "csharp" if trimmed.starts_with("using ") => vec![(
+            "using",
+            trimmed
+                .trim_start_matches("using ")
+                .trim_end_matches(';')
+                .to_string(),
+        )],
+        "c" | "cpp" if trimmed.starts_with("#include") => first_quoted(trimmed)
+            .map(|target| vec![("include", target)])
+            .unwrap_or_default(),
+        "ruby" if trimmed.starts_with("require ") => first_quoted(trimmed)
+            .map(|target| vec![("require", target)])
+            .unwrap_or_default(),
+        "php" if trimmed.starts_with("use ") => vec![(
+            "use",
+            trimmed
+                .trim_start_matches("use ")
+                .trim_end_matches(';')
+                .to_string(),
+        )],
+        _ => Vec::new(),
     }
 }
 
@@ -1195,6 +1650,56 @@ mod tests {
         });
         assert!(symbols.ok);
         assert_eq!(symbols.result["matches"][0]["line"], 1);
+    }
+
+    #[test]
+    fn language_dependency_and_complexity_tools_return_bounded_evidence() {
+        let (temp, broker) = fixture();
+        fs::write(
+            temp.path().join("app/worker.ts"),
+            "import { run } from './runtime';\nexport function choose(value: number) {\n  if (value > 1) return run(value);\n  return value;\n}\n",
+        )
+        .unwrap();
+        let languages = broker.execute(ToolRequest::LanguageInventory {
+            paths: vec!["app".into()],
+        });
+        assert!(languages.ok);
+        assert_eq!(languages.result["languages"]["python"]["files"], 1);
+        assert_eq!(languages.result["languages"]["typescript"]["files"], 1);
+
+        let dependencies = broker.execute(ToolRequest::DependencyInventory {
+            paths: vec!["app".into()],
+        });
+        assert!(dependencies.ok);
+        assert_eq!(dependencies.result["complete_static_graph"], false);
+        assert_eq!(dependencies.result["edges"][0]["target"], "./runtime");
+
+        let complexity = broker.execute(ToolRequest::ComplexityInventory {
+            paths: vec!["app/worker.ts".into()],
+        });
+        assert!(complexity.ok);
+        assert_eq!(complexity.result["big_o_inferred"], false);
+        assert_eq!(complexity.result["cyclomatic_complexity_proven"], false);
+        assert_eq!(complexity.result["files"][0]["decision_markers"], 1);
+    }
+
+    #[test]
+    fn conversion_contract_is_hash_bound_and_never_claims_equivalence() {
+        let (_temp, broker) = fixture();
+        let contract = broker.execute(ToolRequest::ConversionContract {
+            source_path: "app/main.py".into(),
+            target_language: "Rust".into(),
+        });
+        assert!(contract.ok);
+        assert_eq!(contract.result["source_language"], "python");
+        assert_eq!(contract.result["target_language"], "rust");
+        assert_eq!(contract.result["semantic_equivalence_proven"], false);
+        assert_eq!(contract.result["automatic_conversion_performed"], false);
+        assert_eq!(
+            contract.result["available_validation_profiles"][1],
+            "rust_test"
+        );
+        assert_eq!(contract.result["source_sha256"].as_str().unwrap().len(), 64);
     }
 
     #[test]

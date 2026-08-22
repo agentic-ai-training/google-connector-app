@@ -550,12 +550,15 @@ capability set. It is not yet a general production-grade autonomous platform bec
 - Some production behavior has required fixes after live discovery.
 - RAG and policy alternatives need more representative user evidence.
 - Candidate generation is safe but does not yet converge reliably or cheaply.
-- The candidate builder does not yet route through the new Rust broker or reproduce a
-  failure in a durable isolated coding workspace.
-- The shared coding control plane now has durable APIs/workers, reversible existing/new
-  file transformations, and separate read-only process/log, schema-only database, and
-  deployment-inspection brokers. Arbitrary shell/SQL and production mutations remain
-  deliberately outside model authority.
+- Failure candidates now route through the shared durable coding runtime. The Rust broker
+  supplies repository, language, dependency, bounded-complexity, conversion-contract,
+  process/log, schema-only database, and deployment evidence; exact patches and new files
+  execute only in a fresh sandbox. A complete real failure-to-canary lifecycle still needs
+  governed production evidence.
+- Dependency and complexity inventories are bounded lexical localization aids, not
+  complete static-analysis proofs. Broad language conversion still requires target
+  compilers and differential fixtures; arbitrary shell/SQL and production mutations
+  remain deliberately outside model authority.
 - Load, disaster recovery, penetration, and long-duration canary evidence are not yet
   sufficient to claim broad enterprise readiness.
 - Portal lifecycle information is functional but too dense for a growing history.
@@ -573,8 +576,8 @@ These ratings describe architectural maturity, not a contractual certification:
 | Observability | Strong foundation | Metrics, traces and durable session evidence |
 | Retrieval | Moderate | Source-aware implementation exists; production evaluation is incomplete |
 | Improvement governance | Strong design | Human gates, CI evidence and isolated canary |
-| Candidate coding ability | Strong pilot foundation | Failure strategies use durable source-grounded coding runs, hash approval, draft PR and trusted CI |
-| General coding agent | Moderate pilot foundation | Hosted/local flows, reversible edits and specialist read brokers exist; broad language transformations and production mutation controllers remain governed expansion |
+| Candidate coding ability | Strong pilot foundation | Failure strategies use durable source-grounded Rust-broker runs, hash approval, draft PR and trusted CI |
+| General coding agent | Moderate-to-strong pilot foundation | Hosted/local flows, reversible edits and language/dependency/complexity/conversion evidence exist; semantic conversion proof and production mutation controllers remain governed expansion |
 | Enterprise production proof | Incomplete | More load, security, restore and canary evidence needed |
 
 ## 17. How the existing services should improve

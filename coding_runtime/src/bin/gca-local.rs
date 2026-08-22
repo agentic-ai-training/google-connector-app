@@ -211,6 +211,10 @@ fn execute_readonly_broker(arguments: &[String]) -> Result<(), String> {
         ToolRequest::Inventory { .. }
             | ToolRequest::ProjectSummary
             | ToolRequest::FindSymbols { .. }
+            | ToolRequest::LanguageInventory { .. }
+            | ToolRequest::DependencyInventory { .. }
+            | ToolRequest::ComplexityInventory { .. }
+            | ToolRequest::ConversionContract { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. }

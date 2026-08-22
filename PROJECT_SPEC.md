@@ -2074,6 +2074,12 @@ boundaries.
 Separate Rust brokers expose only bounded process names (never command arguments), workspace
 log tails, migration inventories, schema-only PostgreSQL metadata in a read-only transaction,
 and non-mutating Compose/image inspection. No arbitrary terminal text or SQL is registered.
+The repository broker additionally exposes extension-grounded language counts, bounded
+lexical import/dependency edges, bounded lexical control-flow/declaration counts, and a
+hash-bound language-conversion contract. These outputs explicitly deny complete-static-
+graph, Big-O/cyclomatic-proof, and semantic-equivalence status; they localize the exact
+source and tests that must be inspected and verified instead of turning heuristics into
+success claims.
 The semantic cache policy is executable: immutable source and validation evidence may be
 content-addressed; repository/source/schema observations use version-specific invalidation;
 process/log/deployment state expires within seconds; secrets, raw private content, approvals,

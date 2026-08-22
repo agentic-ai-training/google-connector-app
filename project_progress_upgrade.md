@@ -2102,6 +2102,10 @@ guardrails pass under candidate tool policy v19.
   atomic application, and rollback.
 - [x] Add separate process/log/migration, PostgreSQL schema, and Compose/image inspection
   brokers. Credentials remain outside model inputs and database transactions are read-only.
+- [x] Add Rust language, bounded lexical dependency, and bounded lexical complexity
+  inventories plus a hash-bound source-to-target conversion contract. Mark incomplete
+  static graphs, Big-O/cyclomatic non-proofs, and semantic-equivalence non-proofs
+  explicitly so analysis evidence cannot be mistaken for verification.
 - [x] Preload a deterministic project summary, cap model-visible tool output, reduce turns,
   and stop before the coding planner's 10,000-token cumulative provider budget.
 

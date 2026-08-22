@@ -268,6 +268,44 @@ fn readonly_broker_command_rejects_mutation_tools() {
 }
 
 #[test]
+fn readonly_broker_exposes_bounded_program_analysis_tools() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(
+        workspace.path().join("main.py"),
+        "import json\n\ndef choose(value):\n    if value:\n        return json.dumps(value)\n    return 'none'\n",
+    )
+    .unwrap();
+    for request in [
+        json!({"tool":"language_inventory","paths":["main.py"]}),
+        json!({"tool":"dependency_inventory","paths":["main.py"]}),
+        json!({"tool":"complexity_inventory","paths":["main.py"]}),
+        json!({"tool":"conversion_contract","source_path":"main.py","target_language":"rust"}),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+            .args([
+                "broker-read",
+                "--workspace",
+                workspace.path().to_str().unwrap(),
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(request.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "request failed: {request}");
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["ok"], true, "request failed: {request}");
+    }
+}
+
+#[test]
 fn resume_rejects_a_path_like_run_identifier_before_network_access() {
     let workspace = TempDir::new().unwrap();
     let state = TempDir::new().unwrap();

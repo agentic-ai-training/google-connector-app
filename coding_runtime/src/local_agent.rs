@@ -365,6 +365,10 @@ fn broker_request(name: &str, arguments: &Value) -> Result<Value, String> {
         "inventory",
         "project_summary",
         "find_symbols",
+        "language_inventory",
+        "dependency_inventory",
+        "complexity_inventory",
+        "conversion_contract",
         "search_literal",
         "read_lines",
         "hash_file",
@@ -432,6 +436,10 @@ fn validate_submitted_plan(plan: &Value) -> Result<(), String> {
             ToolRequest::Inventory { .. }
             | ToolRequest::ProjectSummary
             | ToolRequest::FindSymbols { .. }
+            | ToolRequest::LanguageInventory { .. }
+            | ToolRequest::DependencyInventory { .. }
+            | ToolRequest::ComplexityInventory { .. }
+            | ToolRequest::ConversionContract { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. } => {}
@@ -466,6 +474,22 @@ fn tool_schemas() -> Vec<Value> {
         function_tool(
             "find_symbols",
             json!({"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["query","paths"]}),
+        ),
+        function_tool(
+            "language_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "dependency_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "complexity_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "conversion_contract",
+            json!({"type":"object","additionalProperties":false,"properties":{"source_path":{"type":"string"},"target_language":{"type":"string"}},"required":["source_path","target_language"]}),
         ),
         function_tool(
             "search_literal",
@@ -633,5 +657,35 @@ mod tests {
         );
         assert!(broker_request("apply_exact_patch", &json!({})).is_err());
         assert!(broker_request("run_validation", &json!({})).is_err());
+    }
+
+    #[test]
+    fn model_registry_exposes_analysis_without_new_authority() {
+        for (name, arguments) in [
+            ("language_inventory", json!({"paths":["app"]})),
+            ("dependency_inventory", json!({"paths":["app"]})),
+            ("complexity_inventory", json!({"paths":["app"]})),
+            (
+                "conversion_contract",
+                json!({"source_path":"app/main.py","target_language":"rust"}),
+            ),
+        ] {
+            assert!(broker_request(name, &arguments).is_ok(), "missing {name}");
+        }
+        let names = tool_schemas()
+            .into_iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        for expected in [
+            "language_inventory",
+            "dependency_inventory",
+            "complexity_inventory",
+            "conversion_contract",
+        ] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
+        assert!(!names.contains(&"shell".to_string()));
+        assert!(!names.contains(&"execute_sql".to_string()));
+        assert!(!names.contains(&"deploy".to_string()));
     }
 }
