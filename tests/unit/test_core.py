@@ -834,7 +834,7 @@ def test_json_tool_protocol_still_executes_only_through_bounded_tools(monkeypatc
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     get_settings.cache_clear()
     try:
@@ -891,7 +891,7 @@ def test_candidate_tool_loop_resumes_after_durable_turn_checkpoint(monkeypatch, 
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     get_settings.cache_clear()
     checkpoint = {}
@@ -977,7 +977,7 @@ def test_candidate_builder_reserves_json_only_finalization_turns(monkeypatch, tm
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     get_settings.cache_clear()
     try:
@@ -1030,7 +1030,7 @@ def test_candidate_reviewer_envelope_is_not_validated_as_candidate_files(
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     get_settings.cache_clear()
     try:
@@ -1223,7 +1223,7 @@ def test_candidate_builder_corrects_invalid_final_contract_once(monkeypatch, tmp
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     get_settings.cache_clear()
     try:
@@ -1283,7 +1283,7 @@ def test_candidate_builder_corrects_invalid_python_before_review(monkeypatch, tm
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
     monkeypatch.setattr("app.improvements.builder.AsyncGroq", lambda **_: client)
-    monkeypatch.setenv("GROQ_API_KEY", "unit-test-key")
+    monkeypatch.setenv("CODING_GROQ_API_KEY", "unit-test-key")
     monkeypatch.setenv("CANDIDATE_BUILDER_FALLBACK_MODELS", "")
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "generated.py").write_text("value = 0\n")

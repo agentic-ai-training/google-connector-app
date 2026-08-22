@@ -27,7 +27,7 @@ from app.mlops.metrics import (
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_POLICY_VERSION = "adaptive-roles-v4-grounded-author-review"
-TOOL_POLICY_VERSION = "bounded-repo-tools-v18-required-patch-compact-history"
+TOOL_POLICY_VERSION = "bounded-repo-tools-v19-shared-rust-broker"
 BUILDER_HISTORY_MAX_CHARS = 24_000
 BUILDER_413_RETRY_MAX_CHARS = 12_000
 BUILDER_GROUNDING_SOURCE_LINES = 36
@@ -117,6 +117,17 @@ def _required_initial_candidate_tool(tools: BoundedRepositoryTools) -> str:
         if any(path.startswith("app/") for path in tools.read_paths)
         else "stage_candidate_file"
     )
+
+
+def _coding_groq_key() -> str:
+    """Return only the credential dedicated to isolated coding workloads."""
+    key = get_settings().coding_groq_api_key.strip()
+    if not key or "your_" in key:
+        raise CandidateBuilderFailure(
+            "coding_model_credential_unavailable",
+            terminal_policy=True,
+        )
+    return key
 
 
 def candidate_build_admission(incident: dict, option: dict) -> dict:
@@ -1008,7 +1019,7 @@ async def _groq_json(
     job: dict, sources: list[dict], role: str,
 ) -> tuple[dict, int, list[str]]:
     settings = get_settings()
-    client = AsyncGroq(api_key=settings.groq_api_key)
+    client = AsyncGroq(api_key=_coding_groq_key())
     response, model, _ = await _candidate_completion(
         client, job,
         messages=[{"role": "user", "content": _candidate_prompt(job, sources, role)}],
@@ -1041,7 +1052,7 @@ async def _groq_tool_json(
 ) -> tuple[dict, int, list[str]]:
     """Run a bounded tool loop; Groq never receives a shell or network tool."""
     settings = get_settings()
-    client = AsyncGroq(api_key=settings.groq_api_key)
+    client = AsyncGroq(api_key=_coding_groq_key())
     resume = dict(progress or {})
     if resume and resume.get("active_role") != role:
         raise CandidateBuilderFailure(

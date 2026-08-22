@@ -1973,3 +1973,21 @@ allocation-DP, dual-worker and Grafana validation all pass. Direct binary and Py
 wrapper probes successfully localized candidate-builder source, validated the worktree,
 and hashed an approved source file. Docker Compose configuration passes. Production
 release remains externally blocked because the Railway project reports an expired trial.
+
+### Epic 57.3 — Candidate read-boundary adoption
+
+- [x] Route packaged candidate inventory, literal search and bounded source reads through
+  the Rust broker while retaining a deterministic Python fallback for source-only test
+  environments.
+- [x] Fail closed on broker policy/protocol errors instead of silently bypassing them.
+- [x] Build the broker inside isolated candidate-generation Actions before any model call.
+- [x] Activate `bounded-repo-tools-v19-shared-rust-broker`; older unfinished policies are
+  displayed as superseded and are ineligible for worker claims.
+- [x] Add tests proving shared-broker delegation and denial propagation.
+- [x] Separate candidate model access behind `CODING_GROQ_API_KEY` and omit that credential
+  from every Rust invocation; the remaining non-coding Groq migration is tracked in Epic
+  57.2 and is not falsely marked complete.
+
+Post-integration evidence: 319 full Python tests and 75 focused candidate/broker tests
+pass; Rust format, Clippy, tests, Flake8, Bandit, Docker Compose rendering and diff
+guardrails pass under candidate tool policy v19.

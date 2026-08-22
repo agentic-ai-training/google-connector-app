@@ -8,6 +8,10 @@ use one deterministic Rust tool broker. Neither an LLM nor a browser receives a 
 production OAuth credentials, database owner credentials, deployment credentials, or a
 way to assert that validation passed.
 
+The isolated coding/candidate process reads `CODING_GROQ_API_KEY`; ordinary application
+services continue their provider-migration phase and must not inherit that credential.
+The Rust subprocess receives neither the coding key nor the legacy application key.
+
 “AI for tool calling, not code generation” means the model may select a typed operation
 and bounded arguments. Arbitrary source bodies, shell programs, SQL mutations and CI
 attestations are not model outputs. Novel edits therefore require a trusted deterministic
@@ -78,6 +82,12 @@ passes and the trusted CI identity supplies validation evidence.
 
 Old terminal/fileless builds remain immutable and are labelled superseded. They are never
 resumed as if a safe checkpoint existed.
+
+Candidate policy v19 uses the broker for generic repository inventory, literal search and
+bounded source reads whenever the packaged binary exists. Python keeps AST/symbol analysis
+and in-memory candidate staging until equivalent typed Rust transformations exist. A
+broker denial is terminal for that tool call; it cannot trigger an invisible Python
+bypass. Source-only unit environments may use the deterministic Python reader explicitly.
 
 ## Token discipline and planning principles
 
