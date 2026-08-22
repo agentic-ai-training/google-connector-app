@@ -2003,6 +2003,13 @@ Cloud's bounded `503 Loading` cold-start state (and only retry-safe 429/502/503/
 responses) while authentication, authorization, and validation failures remain terminal.
 Regression tests prove both transient recovery and immediate 403 failure.
 
+Railway release-boundary correction (2026-08-22): the production workflow now consumes
+only `RAILWAY_TOKEN_17407`, explicitly links project
+`db6865d1-da2c-4640-ab95-090d8b73bf98` and environment
+`568a6180-3144-482a-a02a-8a4091f1ab05`, and verifies the project identity before variable
+mutation, deployment, log inspection, or attestation. This prevents a stale checked-out
+CLI link or the expired 17408 token from selecting production implicitly.
+
 ### Epic 57.3 — Candidate read-boundary adoption
 
 - [x] Route packaged candidate inventory, literal search and bounded source reads through
