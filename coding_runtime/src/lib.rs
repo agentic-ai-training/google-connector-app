@@ -13,6 +13,8 @@ use tempfile::Builder as TempDirBuilder;
 use wait_timeout::ChildExt;
 use walkdir::{DirEntry, WalkDir};
 
+pub mod local_agent;
+
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256_000;
 const MAX_READ_BYTES: usize = 512_000;
 const MAX_FILES: usize = 10_000;
@@ -729,6 +731,7 @@ pub fn path_is_generated(path: &Path) -> bool {
         matches!(
             component.as_os_str().to_string_lossy().as_ref(),
             ".git"
+                | ".gca-local"
                 | "node_modules"
                 | "build"
                 | "dist"

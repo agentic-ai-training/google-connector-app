@@ -2032,10 +2032,19 @@ guardrails pass under candidate tool policy v19.
 
 ### Epic 58.4 — Remaining local natural-language orchestration
 
-- [ ] Add the durable local request/plan/checkpoint layer that translates a natural-language
-  coding request into the same typed broker actions without granting model shell authority.
-- [ ] Add source-consent controls that make explicit which bounded excerpts may leave the
-  machine for a Groq-hosted planner; support deterministic plan import when source must
+- [x] Add a local natural-language request/plan journal that translates a coding request
+  into the same typed broker actions without granting model shell authority.
+- [x] Add source-consent controls that make explicit which bounded excerpts may leave the
+  machine for the fixed Groq endpoint; retain deterministic plan import when source must
   remain fully offline.
-- [ ] Add a human-readable diff renderer and multi-file transactional apply/rollback
-  manifest artifact above the already working hash-bound transactional execution core.
+- [x] Run model investigation through an environment-cleared read-only child and sandbox
+  preview through another keyless child; never forward `CODING_GROQ_API_KEY` into either.
+- [x] Bound model turns, source-result history, provider errors, output tokens, model names,
+  and supported tool schemas; require sequential typed calls and a patch-followed-by-
+  validation plan before freezing it.
+- [x] Add versioned, bounded, mode-`0600` model-message checkpoints and a traversal-safe
+  `resume-request` command. Resume renews source-egress consent, requires the dedicated key,
+  retains aggregate token/turn limits, and continues after the last completed tool turn.
+- [x] Add a bounded human-readable unified-diff renderer and private approval manifest above
+  the hash-bound multi-file transactional apply/rollback core. Approved execution reruns
+  validation in a fresh sandbox and advances the manifest from awaiting approval to applied.
