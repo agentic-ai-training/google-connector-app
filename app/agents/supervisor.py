@@ -73,7 +73,7 @@ FAILED_TOOL_PATTERN = re.compile(
 
 
 def recover_rejected_tool_call(exc: Exception) -> AIMessage | None:
-    """Recover the structured call Groq includes with tool_use_failed errors."""
+    """Recover a structured call included in a provider tool-validation error."""
     match = FAILED_TOOL_PATTERN.search(str(exc))
     if not match:
         return None

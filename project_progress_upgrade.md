@@ -1996,6 +1996,13 @@ runtime/planner/tool tests pass 229/229 and Flake8 passes. Production is deliber
 switched until a distinct Gemini credential can be live-probed; this avoids converting a
 security migration into an availability regression.
 
+Grafana publication evidence (2026-08-22): the Editor-scoped service-account credential
+published and read back `google-connector-agent` version 6 and
+`google-connector-session-operations` version 3. The publisher now tolerates Grafana
+Cloud's bounded `503 Loading` cold-start state (and only retry-safe 429/502/503/504
+responses) while authentication, authorization, and validation failures remain terminal.
+Regression tests prove both transient recovery and immediate 403 failure.
+
 ### Epic 57.3 — Candidate read-boundary adoption
 
 - [x] Route packaged candidate inventory, literal search and bounded source reads through
