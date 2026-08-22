@@ -6,6 +6,24 @@ on:
     branches: [main]
   workflow_dispatch:
 jobs:
+  coding-runtime:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: coding_runtime
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: coding_runtime
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
   backend:
     runs-on: ubuntu-latest
     services:

@@ -1939,3 +1939,37 @@ dual-worker, and Grafana schema validations pass. Audit-recommended patch upgrad
 `aiohttp`, `cryptography`, `langgraph-checkpoint-postgres`, Next.js, PostCSS and their
 transitive frontend dependencies leave both Python and npm audits at zero known
 vulnerabilities. Dependency audit evidence remains separate from candidate correctness.
+## Sprint 57 — Rust coding-agent execution boundary
+
+### Epic 57.1 — Shared deterministic broker
+
+- [x] Add a Rust JSON tool broker shared by future user-facing coding runs and governed
+  candidate engineering.
+- [x] Bound repository inventory, literal search, line reads, file hashing, Git inspection,
+  and fixed Python/web/Flutter/Rust validation profiles.
+- [x] Deny shell text, arbitrary programs, inherited application secrets, absolute paths,
+  parent traversal, symlink escape and credential-file reads.
+- [x] Add Python protocol isolation tests and Rust security/functional tests.
+- [x] Add Rust formatting, Clippy and test gates to trusted CI.
+- [x] Document the durable architecture, cache semantics, Karpathy/Ponytail planning rules,
+  and the boundary between deterministic tool calling and arbitrary code generation.
+
+### Epic 57.2 — Remaining governed expansion
+
+- [ ] Add durable coding-run/step/artifact tables and version-pinned worker claims.
+- [ ] Add typed, reversible transformation recipes with expected-hash preconditions.
+- [ ] Add separate least-privilege process/log, database and deployment brokers.
+- [ ] Route admitted candidate strategies through compiled evidence and the Rust broker.
+- [ ] Add authenticated coding-run APIs/frontend progress without exposing raw terminal
+  authority.
+- [ ] Move the application runtime away from Groq so only the isolated coding/candidate
+  service receives a dedicated coding Groq credential.
+
+Implementation evidence (2026-08-22): Rust format, Clippy with warnings denied, four
+Rust unit/security tests, release build, three Python protocol-isolation tests, 317 full
+Python tests with PostgreSQL integrations, Flake8, Bandit, pip-audit, Next lint/build,
+Flutter analyze/test, 44 planner goldens, workflow replay, chunking, policy, context-DP,
+allocation-DP, dual-worker and Grafana validation all pass. Direct binary and Python
+wrapper probes successfully localized candidate-builder source, validated the worktree,
+and hashed an approved source file. Docker Compose configuration passes. Production
+release remains externally blocked because the Railway project reports an expired trial.

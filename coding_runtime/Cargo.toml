@@ -1,0 +1,20 @@
+[package]
+name = "google-connector-coding-runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Least-privilege deterministic tool broker for the Google Connector coding agent"
+
+[dependencies]
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3.20"
+walkdir = "2.5"
+wait-timeout = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
