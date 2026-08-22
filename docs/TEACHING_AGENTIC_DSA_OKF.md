@@ -2350,3 +2350,87 @@ A specialist broker owns one narrow authority domain—repository, process/log, 
 deployment. Its result is a typed observation with bounded size and provenance. A specialist
 is not necessarily another LLM; deterministic specialists are cheaper, more testable, and
 cannot hallucinate an operation that their enum does not contain.
+
+<a id="dictionary-provider-boundary"></a>
+## Model-provider boundary
+
+A model-provider boundary is an adapter plus a credential and policy boundary that keeps
+application reasoning independent from a particular hosted model. In this project,
+ordinary Workspace/composition calls pass through the Gemini runtime adapter, while the
+isolated coding/candidate planner alone may use Groq. A legacy route label is data, not
+authority: interpreting `groq_fast` from an old checkpoint maps it to the current fast
+runtime tier and never recreates a Groq client.
+
+From a DSA perspective, provider selection is a total function over a small enum rather
+than arbitrary string dispatch:
+
+```python
+def runtime_model(tier: str, fallback: bool) -> str:
+    table = {
+        ("fast", False): "gemini-2.5-flash",
+        ("reasoning", False): "gemini-2.5-pro",
+        ("fast", True): "gemini-2.5-flash-lite",
+        ("reasoning", True): "gemini-2.5-flash-lite",
+    }
+    return table[(tier, fallback)]
+```
+
+Lookup is average `O(1)`. More importantly, the finite key space makes an invalid provider
+state unrepresentable after validation and prevents a fallback from crossing into another
+credential plane.
+
+<a id="dictionary-credential-plane"></a>
+## Credential plane
+
+A credential plane is the set of processes and operations that can receive one secret.
+The runtime plane receives `RUNTIME_API_KEY`; the coding plane receives
+`CODING_GROQ_API_KEY`; the keyless sandbox receives neither. Equality is rejected because
+two differently named variables containing the same secret would still collapse the
+authority boundary. This is an object-capability invariant, not merely configuration
+tidiness.
+
+<a id="dictionary-generation-embedding-separation"></a>
+## Generation–embedding separation
+
+A generation model predicts response/tool-call tokens. An embedding model maps content to
+a fixed-dimensional vector used for similarity search. Replacing Gemini/Groq generation
+does not change the Ollama `nomic-embed-text` vectors because the two pipelines are
+independent. Re-indexing is required only when the embedding model, dimension, chunker, or
+relevant indexed representation changes—not whenever the response model changes.
+
+<a id="dictionary-lexical-program-analysis"></a>
+## Lexical program analysis
+
+Lexical program analysis scans bounded source text for declarations, imports, and control-
+flow markers without constructing a complete language AST or resolving runtime dispatch.
+For `N` source characters, a fixed collection of regular scans is normally `O(N)` time and
+bounded output is `O(K)`, where `K` is the configured result ceiling. It is useful for
+localization and prioritization, but it cannot prove a complete dependency graph,
+cyclomatic complexity, or asymptotic Big-O. The Rust broker therefore returns explicit
+`complete_static_graph: false`, `cyclomatic_complexity_proven: false`, and
+`big_o_inferred: false` fields. A planner may use these observations to choose the next
+exact read; a verifier may not use them as success evidence.
+
+<a id="dictionary-conversion-contract"></a>
+## Language-conversion contract
+
+A language-conversion contract binds a recognized source file and target language to the
+source SHA-256, detected risk features, available fixed validation profiles, and required
+differential evidence. It does not translate code. The transformation remains an exact
+patch or expected-absent creation inside an ephemeral sandbox. Correctness requires target
+parsing/compilation plus shared normal, boundary, and failure fixtures. This separates the
+planning question “what must be preserved?” from the unprovable claim “these programs are
+equivalent.” Contract construction scans one bounded file in `O(N)` time; behavioral proof
+cost depends on the target compiler and test suite.
+
+<a id="dictionary-semantic-equivalence"></a>
+## Semantic equivalence
+
+Two programs are semantically equivalent for a declared observation set when every allowed
+input produces the same externally relevant output, error, state transition, and side
+effect. Universal equivalence is undecidable for general programs, so a production coding
+agent must never infer it from syntax similarity or one successful example. This project
+uses a practical evidence ladder: hash-bound source, explicit public contract, target
+compiler, differential fixtures, integration tests, and human review for unresolved
+language/runtime differences. The conversion broker always starts with
+`semantic_equivalence_proven: false`.

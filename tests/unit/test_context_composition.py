@@ -484,7 +484,7 @@ Previous assistant result: Networking and meeting peers can improve your search.
 async def test_composition_routes_deep_writing_to_reasoning_model():
     assert (
         await route_model_node({"message": "Write a detailed project roadmap"})
-    )["model_to_use"] == "groq_reasoning"
+    )["model_to_use"] == "runtime_reasoning"
 
 
 @pytest.mark.asyncio
@@ -496,7 +496,7 @@ async def test_composition_node_is_tool_free_and_returns_finished_content(monkey
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda *_args, **_kwargs: _LLM())
     result = await make_service_node("composition")({
         "message": "Write an application",
-        "model_to_use": "groq_reasoning",
+        "model_to_use": "runtime_reasoning",
         "services": ["composition"],
         "allowed_tools": [],
         "requires_write": False,

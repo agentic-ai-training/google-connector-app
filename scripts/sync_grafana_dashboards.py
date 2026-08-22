@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote
@@ -19,6 +20,8 @@ DASHBOARDS = (
     ROOT / "monitoring/grafana/dashboards/session-operations.json",
 )
 CONFIRMATION = "SYNC GRAFANA DASHBOARDS"
+TRANSIENT_HTTP_STATUSES = frozenset({429, 502, 503, 504})
+MAX_TRANSIENT_ATTEMPTS = 6
 
 
 def remap_datasource_uid(value, source_uid: str, target_uid: str):
@@ -58,6 +61,38 @@ def build_dashboard_payload(path: Path, folder_uid: str | None = None) -> dict:
     return payload
 
 
+def open_with_transient_retry(
+    request: Request,
+    *,
+    timeout: int = 30,
+    attempts: int = MAX_TRANSIENT_ATTEMPTS,
+    sleeper=time.sleep,
+):
+    """Open one Grafana request, retrying only bounded transient responses.
+
+    Grafana Cloud may wake a sleeping stack with ``503 Loading``. Dashboard
+    publication is idempotent because callers reconcile the current version and
+    submit with ``overwrite=True``, so a bounded retry is safe. Authentication,
+    authorization, validation, and all other client errors fail immediately.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return urlopen(request, timeout=timeout)  # nosec B310: configured HTTPS endpoint
+        except HTTPError as exc:
+            if exc.code not in TRANSIENT_HTTP_STATUSES or attempt == attempts:
+                raise
+            retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+            try:
+                delay = min(max(float(retry_after), 0.0), 10.0)
+            except ValueError:
+                delay = min(2 ** (attempt - 1), 10)
+            if not retry_after:
+                delay = min(2 ** (attempt - 1), 10)
+            exc.close()
+            sleeper(delay)
+    raise RuntimeError("unreachable Grafana retry state")
+
+
 def publish(base_url: str, token: str, payload: dict) -> dict:
     dashboard = dict(payload["dashboard"])
     uid = str(dashboard["uid"])
@@ -66,7 +101,7 @@ def publish(base_url: str, token: str, payload: dict) -> dict:
         headers={"Authorization": f"Bearer {token}"},
     )
     try:
-        with urlopen(lookup, timeout=30) as response:  # nosec B310: configured HTTPS endpoint
+        with open_with_transient_retry(lookup) as response:
             existing = json.loads(response.read().decode()).get("dashboard") or {}
             if existing.get("version") is not None:
                 dashboard["version"] = int(existing["version"])
@@ -84,7 +119,7 @@ def publish(base_url: str, token: str, payload: dict) -> dict:
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     try:
-        with urlopen(request, timeout=30) as response:  # nosec B310: configured HTTPS endpoint
+        with open_with_transient_retry(request) as response:
             return json.loads(response.read().decode())
     except HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:500]

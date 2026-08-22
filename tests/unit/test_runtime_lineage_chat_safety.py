@@ -819,7 +819,7 @@ async def test_chat_contract_binds_trusted_recipient_and_resolved_space(monkeypa
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
 
     result = await make_service_node("chat")({
-        "message": "send hello", "model_to_use": "groq_fast",
+        "message": "send hello", "model_to_use": "runtime_fast",
         "services": ["chat"],
         "allowed_tools": ["resolve_chat_destination", "send_chat_message"],
         "tool_arguments": {"destination": "approved@example.com"},
@@ -875,7 +875,7 @@ async def test_completed_write_contract_does_not_require_post_tool_model_call(
 
     result = await make_service_node("calendar")({
         "message": "create a meeting",
-        "model_to_use": "groq_fast",
+        "model_to_use": "runtime_fast",
         "services": ["calendar"],
         "allowed_tools": ["create_calendar_event"],
         "requires_write": True,
@@ -942,7 +942,7 @@ async def test_ordered_sheet_calls_bind_created_id_before_population(monkeypatch
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
     result = await make_service_node("sheets")({
-        "message": "create and populate", "model_to_use": "groq_fast",
+        "message": "create and populate", "model_to_use": "runtime_fast",
         "services": ["sheets"],
         "allowed_tools": ["create_google_sheet", "write_google_sheet"],
         "requires_write": True, "operation": "create_and_write",
@@ -996,7 +996,7 @@ async def test_partial_write_failure_preserves_successful_artifact_evidence(monk
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
     result = await make_service_node("sheets")({
-        "message": "create and populate", "model_to_use": "groq_fast",
+        "message": "create and populate", "model_to_use": "runtime_fast",
         "services": ["sheets"],
         "allowed_tools": ["create_google_sheet", "write_google_sheet"],
         "requires_write": True, "operation": "create_and_write",

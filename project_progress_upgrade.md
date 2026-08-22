@@ -1968,8 +1968,15 @@ vulnerabilities. Dependency audit evidence remains separate from candidate corre
   durable coding runtime; linked builds cannot be claimed or retried by the legacy builder.
 - [x] Add authenticated administrator-pilot coding-run APIs/frontend progress without
   exposing raw terminal authority.
-- [ ] Move the application runtime away from Groq so only the isolated coding/candidate
-  service receives a dedicated coding Groq credential.
+- [x] Replace ordinary Workspace/composition and offline RAG evaluation model construction
+  with a fail-closed Gemini runtime provider using `RUNTIME_API_KEY`; retain legacy stored
+  route-name compatibility without importing or authenticating a Groq runtime client.
+- [x] Remove `langchain-groq`, general `GROQ_API_KEY` configuration, and the shared GitHub
+  secret name from application/runtime surfaces. Groq remains only behind
+  `CODING_GROQ_API_KEY` in the isolated coding/candidate control plane.
+- [ ] Seal a distinct `RUNTIME_API_KEY` in the API/worker and GitHub RAG-evaluation
+  environments, live-probe tool calling, then delete the legacy `GROQ_API_KEY` Railway and
+  GitHub secrets before releasing this provider migration.
 
 Implementation evidence (2026-08-22): Rust format and Clippy with warnings denied pass;
 12 Rust unit/security tests and seven CLI integration tests pass. The full Python suite
@@ -1980,6 +1987,28 @@ allocation-DP, dual-worker, Grafana validation, Docker Compose rendering, secret
 checks, and the migration 002 -> 015 downgrade/forward-repair cycle all pass. The project
 has been migrated to the new Railway workspace owned by `achintya17407`; deployment of
 this branch remains part of the governed release step rather than an expired-trial block.
+
+Provider-migration evidence (2026-08-22): the runtime router now constructs only
+`ChatGoogleGenerativeAI` with stable Gemini 2.5 model IDs, rejects any non-Gemini runtime
+provider and shared runtime/coding credential, and preserves old in-flight route labels as
+data-only compatibility. The weekly evaluator uses the same provider boundary. Focused
+runtime/planner/tool tests pass 229/229 and Flake8 passes. Production is deliberately not
+switched until a distinct Gemini credential can be live-probed; this avoids converting a
+security migration into an availability regression.
+
+Grafana publication evidence (2026-08-22): the Editor-scoped service-account credential
+published and read back `google-connector-agent` version 6 and
+`google-connector-session-operations` version 3. The publisher now tolerates Grafana
+Cloud's bounded `503 Loading` cold-start state (and only retry-safe 429/502/503/504
+responses) while authentication, authorization, and validation failures remain terminal.
+Regression tests prove both transient recovery and immediate 403 failure.
+
+Railway release-boundary correction (2026-08-22): the production workflow now consumes
+only `RAILWAY_TOKEN_17407`, explicitly links project
+`db6865d1-da2c-4640-ab95-090d8b73bf98` and environment
+`568a6180-3144-482a-a02a-8a4091f1ab05`, and verifies the project identity before variable
+mutation, deployment, log inspection, or attestation. This prevents a stale checked-out
+CLI link or the expired 17408 token from selecting production implicitly.
 
 ### Epic 57.3 — Candidate read-boundary adoption
 
@@ -2080,6 +2109,10 @@ guardrails pass under candidate tool policy v19.
   atomic application, and rollback.
 - [x] Add separate process/log/migration, PostgreSQL schema, and Compose/image inspection
   brokers. Credentials remain outside model inputs and database transactions are read-only.
+- [x] Add Rust language, bounded lexical dependency, and bounded lexical complexity
+  inventories plus a hash-bound source-to-target conversion contract. Mark incomplete
+  static graphs, Big-O/cyclomatic non-proofs, and semantic-equivalence non-proofs
+  explicitly so analysis evidence cannot be mistaken for verification.
 - [x] Preload a deterministic project summary, cap model-visible tool output, reduce turns,
   and stop before the coding planner's 10,000-token cumulative provider budget.
 

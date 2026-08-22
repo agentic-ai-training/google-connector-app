@@ -9,8 +9,10 @@ production OAuth credentials, database owner credentials, deployment credentials
 way to assert that validation passed.
 
 The isolated coding/candidate process reads `CODING_GROQ_API_KEY`; ordinary application
-services continue their provider-migration phase and must not inherit that credential.
-The Rust subprocess receives neither the coding key nor the legacy application key.
+services use a distinct Gemini `RUNTIME_API_KEY` and must not inherit the coding
+credential. The Rust subprocess receives neither provider key. Legacy persisted route
+labels may still be interpreted while old runs finish, but they never select a Groq
+runtime client.
 
 Repository ingress has two first-class modes. Hosted repositories use a least-privilege
 GitHub App and short-lived installation tokens. Private folders that are not hosted—or
@@ -183,13 +185,13 @@ or retry the same work.
 
 | Family | Safe operations | Additional gate for mutation |
 |---|---|---|
-| Repository | inventory, symbols, references, bounded reads, hashes | transformation recipe, expected hash, reversible patch |
+| Repository | inventory, symbols, bounded reads, hashes, language/dependency inventories | transformation recipe, expected hash, reversible patch |
 | Validation | compile, lint, unit/integration tests, diff inspection | none; read-only execution profile |
 | Processes | process name/parent/age/state, bounded workspace log tail, migration inventory | no command arguments, signals, or arbitrary paths |
 | Database | server/schema/table/extension metadata in read-only transactions | credentials injected by trusted caller; no SQL supplied by model |
 | DevOps | Compose validation/status and local image metadata | no build, push, login, restart, scale, delete, or deploy operation |
-| Conversion | AST/IR parse and language feature inventory | verified converter recipe plus differential tests |
-| Algorithms | complexity inventory, invariant and data-flow checks | benchmark/evaluation evidence before replacement |
+| Conversion | hash-bound source/target contract and feature-risk inventory | exact patch/create recipe plus compiler and differential tests |
+| Algorithms | bounded lexical complexity localization with explicit non-proof flags | exact control-flow inspection and benchmark/evaluation evidence before replacement |
 
 ## Candidate-builder integration
 
@@ -203,11 +205,18 @@ passes and the trusted CI identity supplies validation evidence.
 Old terminal/fileless builds remain immutable and are labelled superseded. They are never
 resumed as if a safe checkpoint existed.
 
-Candidate policy v19 uses the broker for generic repository inventory, literal search and
-bounded source reads whenever the packaged binary exists. Python keeps AST/symbol analysis
-and in-memory candidate staging until equivalent typed Rust transformations exist. A
-broker denial is terminal for that tool call; it cannot trigger an invisible Python
-bypass. Source-only unit environments may use the deterministic Python reader explicitly.
+Candidate policy v19 uses the shared durable coding runtime and Rust broker for repository
+inventory, language/dependency/complexity evidence, literal/symbol search, bounded source
+reads, hash-bound transformations, and validation planning whenever the packaged binary
+exists. Existing Python candidate records keep their immutable historical evidence and
+the in-memory compatibility reader remains for source-only unit environments; it is not a
+hidden fallback after a Rust broker denial. A broker denial is terminal for that tool call.
+
+The dependency and complexity tools deliberately label their output as bounded lexical
+evidence. They do not claim a complete call graph, cyclomatic score, Big-O proof, or
+semantic equivalence. The conversion tool creates a source-hash-bound evidence contract;
+actual conversion still requires an exact sandbox transformation, target compiler/parser,
+shared behavioral fixtures, and differential tests.
 
 ## Token discipline and planning principles
 

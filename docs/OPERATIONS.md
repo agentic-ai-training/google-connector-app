@@ -13,6 +13,16 @@ Start with `docker compose up -d --build`; inspect with `docker compose ps -a` a
 `docker compose logs --tail=200 api worker`. The API runs Alembic before serving and
 the worker starts only after the API health check passes.
 
+## Production Railway identity
+
+The control deployment is pinned to Railway project
+`db6865d1-da2c-4640-ab95-090d8b73bf98` and production environment
+`568a6180-3144-482a-a02a-8a4091f1ab05` in the 17407 workspace. GitHub Actions reads the
+dedicated `RAILWAY_TOKEN_17407` secret, explicitly links that project/environment, and
+verifies the returned project ID before setting variables, deploying, reading logs, or
+attesting. Do not restore the generic legacy `RAILWAY_TOKEN`; a checkout may retain an old
+local Railway link and must never be trusted as deployment authority.
+
 ## State and failure recovery
 
 - Expired worker leases are reclaimed automatically.
@@ -154,8 +164,10 @@ Without `--apply` the command performs no network request.
 
 ## Quota and OAuth
 
-For Groq 429 errors, safe simple reads may use the configured small model. Complex or
-mutating workflows remain resumable and wait for quality quota. For OAuth failures,
+For runtime-provider 429 errors, safe simple reads may use the configured Gemini
+Flash-Lite fallback. Complex or mutating workflows remain resumable and wait for quality
+quota. A coding-only Groq 429 pauses only coding/candidate planning and cannot trigger a
+fallback in ordinary Workspace execution. For OAuth failures,
 check `/auth/me` missing scopes, reconnect once, and verify the exact production
 callback URI in Google Cloud. Never log access/refresh tokens.
 

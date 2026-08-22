@@ -15,4 +15,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ASYNC_DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          RUNTIME_MODEL_PROVIDER: gemini
+          RUNTIME_API_KEY: ${{ secrets.RUNTIME_API_KEY }}

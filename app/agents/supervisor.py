@@ -73,7 +73,7 @@ FAILED_TOOL_PATTERN = re.compile(
 
 
 def recover_rejected_tool_call(exc: Exception) -> AIMessage | None:
-    """Recover the structured call Groq includes with tool_use_failed errors."""
+    """Recover a structured call included in a provider tool-validation error."""
     match = FAILED_TOOL_PATTERN.search(str(exc))
     if not match:
         return None
@@ -480,7 +480,7 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
         result = await tool.ainvoke(call.get("args", {}))
         envelope = project_tool_result(
             tool.name, result,
-            max_tokens=get_settings().groq_tool_result_max_tokens,
+            max_tokens=get_settings().runtime_tool_result_max_tokens,
         )
         if envelope.truncated:
             try:
@@ -566,12 +566,12 @@ def make_service_node(service: str, pool=None):
             if allowed_tools:
                 available = [tool for tool in available if tool.name in allowed_tools]
             by_name = {tool.name: tool for tool in available}
-            model_choice = state.get("model_to_use", "groq_fast")
+            model_choice = state.get("model_to_use", "runtime_fast")
             completion_budget = max(
                 1,
                 int(
                     state.get("completion_token_budget")
-                    or get_settings().groq_max_tokens
+                    or get_settings().runtime_max_tokens
                 ),
             )
             llm_token_options = (
@@ -646,9 +646,9 @@ def make_service_node(service: str, pool=None):
                     try:
                         bounded_messages, context_report = fit_messages_to_budget(
                             messages, available,
-                            context_limit=get_settings().groq_context_window_tokens,
+                            context_limit=get_settings().runtime_context_window_tokens,
                             reserved_completion_tokens=completion_budget,
-                            safety_tokens=get_settings().groq_context_safety_tokens,
+                            safety_tokens=get_settings().runtime_context_safety_tokens,
                         )
                         model_context_preflight_tokens.labels(used_model).observe(
                             context_report.estimated_input_tokens
@@ -713,9 +713,9 @@ def make_service_node(service: str, pool=None):
                             try:
                                 bounded_messages, context_report = fit_messages_to_budget(
                                     messages, available,
-                                    context_limit=get_settings().groq_context_window_tokens,
+                                    context_limit=get_settings().runtime_context_window_tokens,
                                     reserved_completion_tokens=completion_budget,
-                                    safety_tokens=get_settings().groq_context_safety_tokens,
+                                    safety_tokens=get_settings().runtime_context_safety_tokens,
                                 )
                                 response = await llm.ainvoke(bounded_messages)
                             except Exception as fallback_exc:
@@ -782,7 +782,7 @@ def make_service_node(service: str, pool=None):
                         )))
                         # A non-reasoning quality route is the safest recovery when a
                         # reasoning completion spent its allowance without visible text.
-                        model_choice = "groq_fast"
+                        model_choice = "runtime_fast"
                         llm_base = get_llm(
                             model_choice, **llm_token_options,
                         )

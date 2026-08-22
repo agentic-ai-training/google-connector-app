@@ -9,15 +9,16 @@ INSECURE_JWT_SECRETS = {
 }
 
 class Settings(BaseSettings):
-    groq_api_key: str = ""
-    groq_fast_model: str = "llama-3.3-70b-versatile"
-    groq_reasoning_model: str = "openai/gpt-oss-120b"
-    groq_fallback_model: str = "llama-3.1-8b-instant"
-    groq_max_tokens: int = 800
-    groq_composition_max_tokens: int = 4000
-    groq_context_window_tokens: int = 32768
-    groq_tool_result_max_tokens: int = 2000
-    groq_context_safety_tokens: int = 1024
+    runtime_model_provider: str = "gemini"
+    runtime_api_key: str = ""
+    runtime_fast_model: str = "gemini-2.5-flash"
+    runtime_reasoning_model: str = "gemini-2.5-pro"
+    runtime_fallback_model: str = "gemini-2.5-flash-lite"
+    runtime_max_tokens: int = 800
+    runtime_composition_max_tokens: int = 4000
+    runtime_context_window_tokens: int = 32768
+    runtime_tool_result_max_tokens: int = 2000
+    runtime_context_safety_tokens: int = 1024
     coding_groq_api_key: str = ""
     coding_agent_enabled: bool = False
     coding_worker_enabled: bool = False
@@ -81,8 +82,8 @@ class Settings(BaseSettings):
     max_embedding_jobs_per_user: int = 500
     max_embedding_payload_chars: int = 250000
     rag_query_embedding_timeout_seconds: float = 8.0
-    groq_daily_token_budget: int = 100000
-    groq_quality_reserve_tokens: int = 15000
+    runtime_daily_token_budget: int = 100000
+    runtime_quality_reserve_tokens: int = 15000
     candidate_builder_enabled: bool = True
     candidate_builder_model: str = "llama-3.3-70b-versatile"
     candidate_builder_fallback_models: str = (
@@ -132,6 +133,16 @@ class Settings(BaseSettings):
             if not re.fullmatch(r"[0-9a-f]{40}", self.railway_git_commit_sha):
                 raise ValueError("RAILWAY_GIT_COMMIT_SHA must be a complete Git SHA")
             self.deployment_version = self.railway_git_commit_sha
+        return self
+
+    @model_validator(mode="after")
+    def enforce_runtime_provider_boundary(self):
+        """Keep Groq credentials exclusive to coding and candidate execution."""
+        provider = self.runtime_model_provider.strip().casefold()
+        if provider != "gemini":
+            raise ValueError("RUNTIME_MODEL_PROVIDER must be gemini")
+        if self.runtime_api_key and self.runtime_api_key == self.coding_groq_api_key:
+            raise ValueError("Runtime and coding provider credentials must be distinct")
         return self
 
 @lru_cache
