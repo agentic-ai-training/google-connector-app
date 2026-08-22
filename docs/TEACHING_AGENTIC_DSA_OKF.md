@@ -2049,3 +2049,64 @@ typed message-count frame even when the sentence also contains the generic verb 
 Parser implementations commonly rank by explicit frame coverage, operation priority,
 and then source position. Tests must include collisions, because testing each pattern in
 isolation cannot prove the precedence relation.
+
+<a id="dictionary-capability-broker"></a>
+## Capability broker
+
+A capability broker is a small trusted program that converts a typed request into one
+bounded operating-system action. The caller receives capabilities such as `read_lines`
+or `run_validation(profile=python_compile)`, never a general shell. This changes the
+security question from “is this generated command safe?” to “is this registered state
+transition allowed?” Dispatch is usually a hash-map or enum match, giving expected
+`O(1)` tool selection; the selected tool then has its own complexity and resource bound.
+
+In this project the broker is written in Rust. Serde rejects malformed JSON, an enum
+restricts tool names and validation profiles, canonical paths must remain below one
+workspace root, and subprocesses receive a cleared environment. Rust's memory safety is
+useful, but it does not automatically create authority safety: path, process, network,
+credential and output policies must still be explicit and tested.
+
+<a id="dictionary-allowlist"></a>
+## Command allowlist
+
+An allowlist is a finite set of exact programs and argument templates accepted by a
+policy boundary. It differs from a blocklist: a blocklist attempts to enumerate dangerous
+strings in an effectively unbounded command language. The Rust broker maps a validation
+profile to fixed executable arguments and invokes it without a shell, so metacharacters
+cannot acquire shell meaning. Membership testing in a small array is `O(k)` for `k`
+programs; a set makes it expected `O(1)` when the catalog grows. The important invariant
+is that user/model input selects an identifier, not executable grammar.
+
+<a id="dictionary-canonical-path"></a>
+## Canonical path and symlink containment
+
+A lexical path such as `workspace/docs/file.md` is not enough to prove containment,
+because `docs` might be a symbolic link to another directory. Canonicalization resolves
+`.`/`..`, mount aliases and symlinks to an operating-system path. The broker rejects
+absolute paths and parent traversal first, resolves the existing path (or the nearest
+existing parent for a proposed file), and then verifies that the result starts beneath
+the canonical workspace root. Complexity is proportional to path components plus file-
+system lookups. Rechecking the preimage hash immediately before mutation is also needed
+to control time-of-check/time-of-use races.
+
+<a id="dictionary-bounded-stream-drain"></a>
+## Bounded stream drain
+
+A child process can deadlock if it fills an stdout/stderr pipe while the parent waits for
+exit. Reading only the first `B` bytes is also insufficient if the reader then stops: the
+remaining producer still blocks. A bounded stream drain therefore reads concurrently,
+retains at most `B` bytes, discards later bytes, and continues draining until EOF. Memory
+is `O(B)` even if total output is `N`, while I/O work remains `O(N)`. The result includes
+an explicit truncation marker so absence of later text is never mistaken for complete
+evidence.
+
+<a id="dictionary-content-addressed-cache"></a>
+## Content-addressed cache
+
+A content-addressed cache keys a result by the hash of its semantic inputs rather than a
+mutable name. Validation evidence can be keyed by repository-tree hash, toolchain
+version, validation-profile version and relevant environment policy. Identical inputs
+produce the same key; a changed source file cannot silently reuse old success. Hashing
+`n` input bytes costs `O(n)` and lookup is expected `O(1)`. This is appropriate for
+immutable build facts, but never substitutes for current process health, OAuth state or
+read-after-write verification.

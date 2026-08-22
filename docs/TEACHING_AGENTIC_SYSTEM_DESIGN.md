@@ -471,6 +471,7 @@ flowchart TD
     N --> FI[Failure intelligence]
     FI --> IP[Improvement portal]
     IP --> CB[GitHub Actions candidate builder]
+    CB --> RB[Rust deterministic tool broker]
     CB --> CI[Trusted no-secret CI]
     CI --> CAN[Isolated Railway or Vercel candidate]
 ```
@@ -493,6 +494,9 @@ flowchart TD
   model traces, and PostgreSQL session dashboards.
 - Improvement system: granular incidents, two strategy choices, candidate builder,
   trusted CI, isolated canary, measurement, promotion, and rollback records.
+- Coding execution boundary: a locally validated Rust broker now provides bounded reads,
+  search, hashing, Git inspection and fixed validation profiles without shell authority.
+  Durable coding-run routing and mutation recipes are the next integration stage.
 - Delivery: Railway backend/worker/candidate services, Vercel control and preview
   frontends, GitHub Actions validation/deployment workflows.
 
@@ -542,8 +546,10 @@ capability set. It is not yet a general production-grade autonomous platform bec
 - Some production behavior has required fixes after live discovery.
 - RAG and policy alternatives need more representative user evidence.
 - Candidate generation is safe but does not yet converge reliably or cheaply.
-- The candidate builder cannot execute commands or reproduce failures interactively.
-- There is no general coding-agent sandbox, process registry, or database broker.
+- The candidate builder does not yet route through the new Rust broker or reproduce a
+  failure in a durable isolated coding workspace.
+- The read/validation broker exists, but general reversible edits, process/log and
+  database/deployment brokers are not implemented yet.
 - Load, disaster recovery, penetration, and long-duration canary evidence are not yet
   sufficient to claim broad enterprise readiness.
 - Portal lifecycle information is functional but too dense for a growing history.
@@ -561,8 +567,8 @@ These ratings describe architectural maturity, not a contractual certification:
 | Observability | Strong foundation | Metrics, traces and durable session evidence |
 | Retrieval | Moderate | Source-aware implementation exists; production evaluation is incomplete |
 | Improvement governance | Strong design | Human gates, CI evidence and isolated canary |
-| Candidate coding ability | Early-to-moderate | Bounded patch tools, no executable coding sandbox |
-| General coding agent | Not implemented | No terminal/process/database execution plane |
+| Candidate coding ability | Moderate foundation | Bounded patch tools plus a tested read/validation broker; integration remains |
+| General coding agent | Early foundation | Rust read/validation boundary exists; durable APIs, edits and specialist brokers remain |
 | Enterprise production proof | Incomplete | More load, security, restore and canary evidence needed |
 
 ## 17. How the existing services should improve
@@ -713,4 +719,3 @@ output to a dependent step's input.
 
 **Version pinning** — Binding a run to immutable executor, policy, tool, model, prompt,
 retrieval, OKF, and deployment versions so its behavior is attributable and resumable.
-

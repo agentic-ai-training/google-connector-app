@@ -12,3 +12,4 @@ mobile/build
 mobile/.dart_tool
 mobile/.gradle
 .pytest_cache
+coding_runtime/target
