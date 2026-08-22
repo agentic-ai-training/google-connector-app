@@ -85,6 +85,9 @@ export function getToken(){
 
 export function beginGoogleLogin(){
   const returnTo=CONTROL_FRONTEND_URL||window.location.origin;
+  // This is an intentional cross-origin navigation to the backend OAuth route,
+  // not an internal Next.js route that useRouter can handle.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.assign(`${API}/auth/google/login?return_to=${encodeURIComponent(returnTo)}`);
 }
 

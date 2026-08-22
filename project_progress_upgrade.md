@@ -1913,3 +1913,29 @@ then correctly classified V13 build `cdef10f5` as evidence-required and V13 Cale
 build `69c23cb6` as eligible. Fresh V14 build `20144854` exposed the stricter fallback-
 history boundary before any provider tokens were used; the bounded-grounding regression
 above is the focused follow-up correction.
+
+### Sprint 56 follow-up — authoritative admission and lifecycle closure
+
+- [x] Reject every occurrence-level candidate with empty concrete evidence, not only
+  generic persistence/unknown categories. Cross-cluster themes remain eligible only
+  through their separately identified aggregate evidence basis.
+- [x] Derive read/write shape from the production service/operation/tool and write-
+  contract registries. Use the operation-name pattern only as an explicitly labelled
+  offline fallback when the runtime registry cannot load.
+- [x] Prevent the builder worker itself from claiming rejected, expired, rolled-back,
+  or old-policy queued builds. This closes the race between the minute maintenance loop
+  and the worker claim transaction.
+- [x] Preserve the raw historical build state while projecting old-policy attempts as
+  `superseded_by_current_builder_policy` in the protected portal API. Eligible evidence
+  may be cloned into a fresh build; the historical attempt is never resumed in place.
+- [x] Extend regression coverage for registry-derived read/write correction, empty-
+  evidence admission, and superseded lifecycle projection.
+
+Local follow-up evidence on 2026-08-22: all 314 Python tests pass with the local
+PostgreSQL integration boundary enabled; the focused candidate suite passes 173/173.
+Backend compilation/Flake8/Bandit, frontend ESLint/build, Flutter analyze/tests,
+44/44 planner goldens, 16/16 no-network workflow replays, policy/chunking/context/DP,
+dual-worker, and Grafana schema validations pass. Audit-recommended patch upgrades for
+`aiohttp`, `cryptography`, `langgraph-checkpoint-postgres`, Next.js, PostCSS and their
+transitive frontend dependencies leave both Python and npm audits at zero known
+vulnerabilities. Dependency audit evidence remains separate from candidate correctness.
