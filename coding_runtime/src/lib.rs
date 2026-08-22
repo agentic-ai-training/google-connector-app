@@ -22,6 +22,10 @@ const DEFAULT_MAX_OUTPUT_BYTES: usize = 256_000;
 const MAX_READ_BYTES: usize = 512_000;
 const MAX_FILES: usize = 10_000;
 const MAX_SEARCH_MATCHES: usize = 200;
+const MAX_ANALYSIS_FILES: usize = 2_000;
+const MAX_ANALYSIS_BYTES: u64 = 32 * 1_048_576;
+const MAX_COMPLEXITY_FILES: usize = 50;
+const MAX_DECLARATIONS_PER_FILE: usize = 25;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
@@ -631,6 +635,7 @@ impl Broker {
         let mut files = Vec::new();
         let mut seen = BTreeSet::new();
         let mut truncated = false;
+        let mut total_bytes = 0_u64;
         for root in roots {
             let entries: Box<dyn Iterator<Item = Result<DirEntry, walkdir::Error>>> =
                 if root.is_file() {
@@ -660,18 +665,21 @@ impl Broker {
                 {
                     continue;
                 }
-                let within_limit = entry
+                let metadata = entry
                     .metadata()
-                    .map(|metadata| metadata.len() as usize <= MAX_READ_BYTES)
-                    .unwrap_or(false);
+                    .map_err(|error| BrokerError::new("read_failed", error.to_string()))?;
+                let within_limit = metadata.len() as usize <= MAX_READ_BYTES;
                 if !within_limit {
                     continue;
                 }
-                files.push(entry.path().to_path_buf());
-                if files.len() >= MAX_FILES {
+                if files.len() >= MAX_ANALYSIS_FILES
+                    || total_bytes.saturating_add(metadata.len()) > MAX_ANALYSIS_BYTES
+                {
                     truncated = true;
                     break;
                 }
+                total_bytes += metadata.len();
+                files.push(entry.path().to_path_buf());
             }
             if truncated {
                 break;
@@ -780,15 +788,15 @@ impl Broker {
             for line in content.lines() {
                 if let Some(capture) = declaration.captures(line)
                     && let Some(name) = capture.get(1)
-                    && names.len() < 200
+                    && names.len() < MAX_DECLARATIONS_PER_FILE
                 {
-                    names.push(name.as_str().to_string());
+                    names.push(bounded_chars(name.as_str(), 120));
                 }
             }
             let recursion_candidates = names
                 .iter()
                 .filter(|name| content.match_indices(name.as_str()).count() > 1)
-                .take(50)
+                .take(10)
                 .cloned()
                 .collect::<Vec<_>>();
             results.push(json!({
@@ -800,7 +808,7 @@ impl Broker {
                 "decision_markers":decisions.find_iter(&content).count(),
                 "recursion_candidates":recursion_candidates,
             }));
-            if results.len() >= MAX_SEARCH_MATCHES {
+            if results.len() >= MAX_COMPLEXITY_FILES {
                 truncated = true;
                 break;
             }
@@ -834,6 +842,14 @@ impl Broker {
             return Err(BrokerError::new(
                 "invalid_argument",
                 "source and target languages are the same",
+            ));
+        }
+        let metadata = fs::metadata(&path)
+            .map_err(|error| BrokerError::new("read_failed", error.to_string()))?;
+        if metadata.len() as usize > MAX_READ_BYTES {
+            return Err(BrokerError::new(
+                "read_limit",
+                "conversion source exceeds the bounded read limit",
             ));
         }
         let content = fs::read_to_string(&path)
@@ -1700,6 +1716,40 @@ mod tests {
             "rust_test"
         );
         assert_eq!(contract.result["source_sha256"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn analysis_bounds_hostile_identifiers_and_oversized_conversion_sources() {
+        let (temp, broker) = fixture();
+        let identifier = "a".repeat(20_000);
+        fs::write(
+            temp.path().join("app/hostile.py"),
+            format!("def {identifier}():\n    return 1\n"),
+        )
+        .unwrap();
+        let complexity = broker.execute(ToolRequest::ComplexityInventory {
+            paths: vec!["app/hostile.py".into()],
+        });
+        assert!(complexity.ok);
+        assert!(
+            complexity.result["files"][0]["declarations"][0]
+                .as_str()
+                .unwrap()
+                .len()
+                <= 120
+        );
+
+        fs::write(
+            temp.path().join("app/oversized.py"),
+            vec![b'x'; MAX_READ_BYTES + 1],
+        )
+        .unwrap();
+        let conversion = broker.execute(ToolRequest::ConversionContract {
+            source_path: "app/oversized.py".into(),
+            target_language: "rust".into(),
+        });
+        assert!(!conversion.ok);
+        assert_eq!(conversion.error.unwrap().code, "read_limit");
     }
 
     #[test]
