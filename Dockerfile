@@ -13,6 +13,8 @@ ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache
 RUN mkdir -p "$TIKTOKEN_CACHE_DIR" && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 COPY . .
 COPY --from=coding-runtime-builder /src/coding_runtime/target/release/google-connector-coding-runtime /usr/local/bin/google-connector-coding-runtime
+COPY --from=coding-runtime-builder /src/coding_runtime/target/release/gca-local /usr/local/bin/gca-local
 ENV CODING_RUNTIME_BINARY=/usr/local/bin/google-connector-coding-runtime
+ENV CODING_LOCAL_RUNNER_BINARY=/usr/local/bin/gca-local
 EXPOSE 8000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

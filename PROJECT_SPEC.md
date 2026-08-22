@@ -2043,3 +2043,34 @@ and runbooks using structured service/operation/risk/tool/content tags plus lexi
 relevance and records selection evidence. Hard schemas, tool ceilings, approval, OAuth,
 idempotency, and postcondition verification remain executable code and cannot be
 overridden by OKF text.
+
+## Addendum — Durable user-facing and improvement coding control plane
+
+User repository requests and admitted failure-intelligence strategies share one durable
+coding runtime. PostgreSQL stores tenant-scoped runs, ordered steps, append-only events,
+artifacts, encrypted requests/plans, immutable executor/model/tool/OKF versions, leases,
+token usage, approval hashes, draft-PR identity, CI evidence, retention, and deletion.
+Failure proposals retain their portal-compatible candidate record but link to exactly one
+coding run; the legacy Groq-heavy builder must neither claim nor retry linked builds.
+
+Hosted repositories use a least-privilege GitHub App or the explicitly documented migration
+fallback. Local private folders—including folders without Git—use `gca-local`. The Groq
+model may select typed repository observations and structured hash-guarded transformations.
+It receives no shell, process signals, database/deployment credentials, Google OAuth tokens,
+merge/deploy authority, or ability to assert validation. New and replaced files execute in
+a fresh keyless sandbox, require fixed validation, and receive a human decision bound to the
+exact frozen plan hash before another clean execution can publish a draft PR. Trusted CI,
+canary, promotion, merge, and production deployment remain independent evidence/authority
+boundaries.
+
+Separate Rust brokers expose only bounded process names (never command arguments), workspace
+log tails, migration inventories, schema-only PostgreSQL metadata in a read-only transaction,
+and non-mutating Compose/image inspection. No arbitrary terminal text or SQL is registered.
+The semantic cache policy is executable: immutable source and validation evidence may be
+content-addressed; repository/source/schema observations use version-specific invalidation;
+process/log/deployment state expires within seconds; secrets, raw private content, approvals,
+write results, and live postconditions are never satisfied by cache.
+
+Coding runs select and pin human-approved OKF coding/candidate workflows by structured tags.
+OKF can improve planning context and explanations but cannot add tools, permissions, scopes,
+commands, credentials, approvals, validation truth, or release authority.

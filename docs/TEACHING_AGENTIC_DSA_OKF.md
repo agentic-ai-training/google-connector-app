@@ -2264,3 +2264,89 @@ SHA-256, every preimage and result hash, validation evidence and lifecycle statu
 helps a human reason; the hashes prevent a reviewed plan from silently changing. The system
 must use both because readable text alone is not an integrity boundary, while hashes alone
 are not meaningfully reviewable.
+
+## Coding control plane: DSA view
+
+The hosted/local coding runtime is a useful composition of several structures rather than
+one mysterious “coding agent”:
+
+```mermaid
+flowchart LR
+    I[Encrypted request] --> Q[(Lease queue)]
+    Q --> P[Bounded planner]
+    P --> G[Typed action graph]
+    G --> S[Ephemeral sandbox]
+    S --> H{Hash-bound approval}
+    H -->|approved| V[Fresh validation]
+    V --> R[Draft PR]
+    R --> C[Trusted CI]
+    C --> X[Separate canary/promotion gates]
+```
+
+The queue is an ordered set with transactional exclusion (`FOR UPDATE SKIP LOCKED`). The
+plan is a directed sequence/DAG whose mutation nodes carry preconditions and whose final
+mutation must precede a validation node. The preimage map is a hash map from path to
+SHA-256; it gives average constant-time lookup during stale-write detection and rollback.
+The changed-file list is a transaction log: apply in order, then traverse the applied prefix
+in reverse if a later replacement fails. That reverse traversal is the same stack discipline
+used in backtracking algorithms.
+
+Project summary and symbol lookup are deterministic indexes. They reduce the branching
+factor before model planning: instead of choosing among every line in every file, the model
+chooses among bounded declarations and neighborhoods. This improves both token complexity
+and error probability. A ten-thousand-token cumulative ceiling is a resource invariant, not
+a target; the planner must stop safely when the next transition cannot fit.
+
+Dynamic caching is a type-directed function:
+
+```python
+def cache_policy(entity_type: str) -> tuple[bool, int, str]:
+    if entity_type in {"secret", "write_result", "approval"}:
+        return False, 0, "never"
+    if entity_type == "immutable_source":
+        return True, 90 * 86400, "content_hash_changed"
+    if entity_type in {"process_health", "log_tail", "deployment_status"}:
+        return True, 5, "time_or_identity_changed"
+    return False, 0, "unclassified"
+```
+
+This resembles algebraic data-type pattern matching: each semantic variant has different
+validity rules. Treating all entries as `(key, value, TTL)` would discard the invariant that
+a five-second health observation can never prove a current deployment or completed write.
+
+The process/log, database, deployment, and repository brokers are separate capability
+graphs. Separation prevents an edge from “read source” to “execute arbitrary SQL” merely
+because one agent asked for both. The orchestrator may compose outputs, but credentials and
+mutation authority never become graph data visible to the planning model.
+
+<a id="dictionary-capability-broker"></a>
+## Capability broker
+
+A capability broker is a small typed mediator that exposes a finite set of operations. Its
+security comes from absence as much as validation: if `kill_process`, arbitrary `shell`, or
+raw `execute_sql` is not in the enum, no prompt can invoke it. In Python, model the same idea
+with a discriminated union of Pydantic models and an exhaustive dispatcher; avoid a generic
+`command: str` escape hatch.
+
+<a id="dictionary-expected-absent"></a>
+## Expected-absent precondition
+
+An expected-absent precondition is compare-and-set for file creation. The operation succeeds
+only if the destination still does not exist. This prevents a “new file” plan from silently
+overwriting work created after planning. Database `INSERT ... ON CONFLICT` and object-store
+conditional writes use the same concurrency pattern.
+
+<a id="dictionary-semantic-cache"></a>
+## Semantic cache policy
+
+A semantic cache policy derives cacheability, TTL, and invalidation from what the value
+means, its producer/source versions, and its authority boundary. It is stronger than LRU or
+a global TTL: eviction algorithms manage space, while semantic invalidation manages truth.
+
+<a id="dictionary-specialist-broker"></a>
+## Specialist broker
+
+A specialist broker owns one narrow authority domain—repository, process/log, database, or
+deployment. Its result is a typed observation with bounded size and provenance. A specialist
+is not necessarily another LLM; deterministic specialists are cheaper, more testable, and
+cannot hallucinate an operation that their enum does not contain.

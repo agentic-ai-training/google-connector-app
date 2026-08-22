@@ -49,7 +49,7 @@ checkpoint and never repeats a write without reconciliation.
 
 ## Rust broker v0.2
 
-The first broker release provides:
+The repository broker provides:
 
 - bounded repository inventory, literal search, line reads and SHA-256 hashing;
 - structured Git status and diff inspection;
@@ -60,12 +60,18 @@ The first broker release provides:
 - direct process execution with an allowlist, cleared environment and no shell.
 - exact single-occurrence text replacement guarded by the complete source-file SHA-256,
   available only to a mutable broker created inside an ephemeral workspace.
+- expected-absent new-file creation with the same preview, validation, approval, atomic
+  application, and rollback boundary;
+- aggregate project manifests/language/test counts and declaration-aware symbol lookup so
+  the planner does not spend model turns rediscovering basic repository structure.
 
 It intentionally does not provide arbitrary writes, package installation, raw SQL,
-network access, deployment or process termination. Those require separate typed brokers,
-approval classes, idempotency contracts and tests. This is a security property, not a
-missing hidden terminal. The normal JSON broker executable remains read-only; only its
-trusted local orchestrator can construct the ephemeral mutable variant.
+network access, deployment or process termination. Separate compiled read-only brokers now
+provide process names without arguments, workspace log tails, migration inventories,
+PostgreSQL server/schema/extension metadata in a forced read-only transaction, and
+Compose/image inspection without build/push/restart/deploy. This separation is a security
+property, not a missing hidden terminal. The normal JSON broker executable remains
+read-only; only its trusted local orchestrator can construct the ephemeral mutable variant.
 
 ## Local private/non-Git runner
 
@@ -131,7 +137,7 @@ gca-local plan-request \
 `--allow-cloud-source true` is mandatory because the request and bounded source excerpts
 leave the machine for the Groq API. Omit it when source must remain fully offline and use
 `execute-plan` with a locally prepared typed plan instead. Natural-language mode reads only
-`CODING_GROQ_API_KEY`, uses the fixed Groq HTTPS endpoint, permits at most twelve sequential
+`CODING_GROQ_API_KEY`, uses the fixed Groq HTTPS endpoint, permits at most ten sequential
 tool turns, disables parallel tool calls, caps each result inserted into model history, and
 requires a tool call on every turn. It cannot select another provider or arbitrary endpoint.
 
@@ -165,15 +171,23 @@ and uses that token for candidate Actions, draft PRs and governed promotion. Par
 configuration fails closed. `GITHUB_PROPOSAL_TOKEN` is retained only for migration and
 should be removed after the App path is verified.
 
-## Planned deterministic tool families
+Hosted runs are available through the administrator-pilot `/coding` page and `/coding/runs`
+API. A run records its encrypted request, source-egress consent, immutable base commit,
+planner/tool/OKF versions, ordered steps/events/artifacts, leases, heartbeats, tokens,
+approval hash/expiry, branch/PR, trusted-CI URL, errors, retention, and deletion state.
+The worker creates only a draft PR; it does not merge or deploy. Failure-intelligence
+candidate records link to one coding run so the legacy candidate worker cannot also claim
+or retry the same work.
+
+## Deterministic tool families
 
 | Family | Safe operations | Additional gate for mutation |
 |---|---|---|
 | Repository | inventory, symbols, references, bounded reads, hashes | transformation recipe, expected hash, reversible patch |
 | Validation | compile, lint, unit/integration tests, diff inspection | none; read-only execution profile |
-| Processes | list owned processes, health, bounded logs | approved service identity; no arbitrary PID kill |
-| Database | schema/plan/read-only query, sanitized dump metadata | dedicated role, migration allowlist, backup and approval |
-| DevOps | manifest render, image/SBOM scan, deployment status | signed artifact and human production gate |
+| Processes | process name/parent/age/state, bounded workspace log tail, migration inventory | no command arguments, signals, or arbitrary paths |
+| Database | server/schema/table/extension metadata in read-only transactions | credentials injected by trusted caller; no SQL supplied by model |
+| DevOps | Compose validation/status and local image metadata | no build, push, login, restart, scale, delete, or deploy operation |
 | Conversion | AST/IR parse and language feature inventory | verified converter recipe plus differential tests |
 | Algorithms | complexity inventory, invariant and data-flow checks | benchmark/evaluation evidence before replacement |
 
@@ -212,6 +226,12 @@ project's Karpathy-style rules (think, simplify, make surgical changes, verify) 
 Ponytail ladder (question existence, reuse, standard/platform/library mechanisms, then
 minimum custom code), without deleting required security or correctness controls.
 
+Natural-language planning preloads a deterministic project summary, caps each model-visible
+tool result at 8,000 characters, permits at most ten sequential turns and refuses the next
+provider call when its cumulative preflight would exceed 10,000 tokens. The ceiling may
+block an underspecified oversized request; it never weakens source, validation, approval,
+or release gates to force a result.
+
 ## Dynamic cache policy
 
 Cache behavior is selected by data semantics, not a global TTL:
@@ -227,6 +247,20 @@ Cache behavior is selected by data semantics, not a global TTL:
 Every cache entry records producer version, source version, ACL/tenant, creation time,
 expiry/invalidation rule and content hash. A cache hit cannot satisfy a live-write
 postcondition or production-health claim.
+
+This is implemented by encrypted tenant-scoped `coding_cache_entries`. Unknown entities
+fail closed. Immutable source/validation evidence is content-addressed; repository,
+excerpt, schema, process/log, deployment, and OKF observations use different TTL and
+invalidation rules. Secrets, raw private content, write results, and approvals are rejected.
+
+## OKF in the coding runtime
+
+Each coding run pins the latest trusted bundle and selects public coding/candidate workflow
+documents through structured tags. The IDs, bundle hash, and selection reason are durable
+evidence and the bounded content is supplied to planning as operational guidance. The
+compiled broker schemas, path policy, credential separation, approval hash, fixed
+validation, GitHub/CI identity, and release gates remain authoritative if OKF is absent,
+stale, malformed, or adversarial.
 
 ## Scaling decisions
 

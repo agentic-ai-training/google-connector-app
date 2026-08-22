@@ -13,7 +13,10 @@ use tempfile::Builder as TempDirBuilder;
 use wait_timeout::ChildExt;
 use walkdir::{DirEntry, WalkDir};
 
+pub mod database;
+pub mod deployment;
 pub mod local_agent;
+pub mod ops;
 
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256_000;
 const MAX_READ_BYTES: usize = 512_000;
@@ -44,11 +47,22 @@ pub enum ToolRequest {
     HashFile {
         path: String,
     },
+    ProjectSummary,
+    FindSymbols {
+        query: String,
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     ApplyExactPatch {
         path: String,
         expected_sha256: String,
         old: String,
         replacement: String,
+    },
+    CreateFile {
+        path: String,
+        expected_absent: bool,
+        content: String,
     },
     GitStatus,
     GitDiff {
@@ -131,7 +145,10 @@ pub fn parse_request(input: &str) -> Result<ToolRequest, BrokerError> {
         "search_literal" => &["tool", "query", "paths", "case_sensitive"],
         "read_lines" => &["tool", "path", "start_line", "end_line"],
         "hash_file" => &["tool", "path"],
+        "project_summary" => &["tool"],
+        "find_symbols" => &["tool", "query", "paths"],
         "apply_exact_patch" => &["tool", "path", "expected_sha256", "old", "replacement"],
+        "create_file" => &["tool", "path", "expected_absent", "content"],
         "git_status" => &["tool"],
         "git_diff" => &["tool", "staged", "path"],
         "run_validation" => &["tool", "profile", "timeout_seconds"],
@@ -199,12 +216,19 @@ impl Broker {
                 end_line,
             } => self.read_lines(&path, start_line, end_line),
             ToolRequest::HashFile { path } => self.hash_file(&path),
+            ToolRequest::ProjectSummary => self.project_summary(),
+            ToolRequest::FindSymbols { query, paths } => self.find_symbols(&query, &paths),
             ToolRequest::ApplyExactPatch {
                 path,
                 expected_sha256,
                 old,
                 replacement,
             } => self.apply_exact_patch(&path, &expected_sha256, &old, &replacement),
+            ToolRequest::CreateFile {
+                path,
+                expected_absent,
+                content,
+            } => self.create_file(&path, expected_absent, &content),
             ToolRequest::GitStatus => {
                 self.run_program("git", &["status", "--short", "--branch"], &self.root, 20)
             }
@@ -405,6 +429,169 @@ impl Broker {
         )
     }
 
+    fn project_summary(&self) -> Result<Value, BrokerError> {
+        let mut extensions = std::collections::BTreeMap::<String, usize>::new();
+        let mut manifests = Vec::new();
+        let mut tests = 0_usize;
+        let mut files = 0_usize;
+        for entry in WalkDir::new(&self.root)
+            .max_depth(12)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(is_visible_entry)
+        {
+            let entry =
+                entry.map_err(|error| BrokerError::new("walk_failed", error.to_string()))?;
+            if !entry.file_type().is_file() || entry.file_type().is_symlink() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(&self.root)
+                .map_err(|_| BrokerError::new("path_escape", "summary path escaped workspace"))?;
+            if path_is_sensitive(relative) || path_is_generated(relative) {
+                continue;
+            }
+            files += 1;
+            if files > MAX_FILES {
+                break;
+            }
+            let extension = relative
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("[none]")
+                .to_ascii_lowercase();
+            *extensions.entry(extension).or_default() += 1;
+            let name = relative
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if matches!(
+                name,
+                "pyproject.toml"
+                    | "requirements.txt"
+                    | "package.json"
+                    | "Cargo.toml"
+                    | "pubspec.yaml"
+                    | "go.mod"
+                    | "pom.xml"
+                    | "Dockerfile"
+                    | "docker-compose.yml"
+                    | "docker-compose.yaml"
+            ) && manifests.len() < 100
+            {
+                manifests.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+            if relative.components().any(|part| {
+                matches!(
+                    part.as_os_str().to_string_lossy().as_ref(),
+                    "test" | "tests" | "spec"
+                )
+            }) || name.starts_with("test_")
+                || name.ends_with("_test.rs")
+            {
+                tests += 1;
+            }
+        }
+        Ok(json!({
+            "file_count": files.min(MAX_FILES),
+            "truncated": files > MAX_FILES,
+            "extension_counts": extensions,
+            "manifests": manifests,
+            "test_file_count": tests,
+        }))
+    }
+
+    fn find_symbols(&self, query: &str, paths: &[String]) -> Result<Value, BrokerError> {
+        if query.trim().is_empty()
+            || query.len() > 200
+            || !query
+                .chars()
+                .all(|value| value.is_alphanumeric() || matches!(value, '_' | ':' | '.' | '-'))
+        {
+            return Err(BrokerError::new(
+                "invalid_argument",
+                "symbol query is invalid",
+            ));
+        }
+        let roots = if paths.is_empty() {
+            vec![self.root.clone()]
+        } else {
+            paths
+                .iter()
+                .map(|path| self.safe_path(path, true, false))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let escaped = regex::escape(query.trim());
+        let patterns = [
+            format!(r"^\s*(?:async\s+)?def\s+{escaped}\b"),
+            format!(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+{escaped}\b"),
+            format!(
+                r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|const|let|var)\s+{escaped}\b"
+            ),
+            format!(r"^\s*class\s+{escaped}\b"),
+        ];
+        let matchers = patterns
+            .iter()
+            .map(|pattern| {
+                RegexBuilder::new(pattern)
+                    .case_insensitive(false)
+                    .build()
+                    .map_err(|error| BrokerError::new("invalid_argument", error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut matches = Vec::new();
+        for root in roots {
+            for entry in WalkDir::new(root)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(is_visible_entry)
+            {
+                let entry =
+                    entry.map_err(|error| BrokerError::new("walk_failed", error.to_string()))?;
+                if !entry.file_type().is_file() || entry.file_type().is_symlink() {
+                    continue;
+                }
+                let relative = entry.path().strip_prefix(&self.root).map_err(|_| {
+                    BrokerError::new("path_escape", "symbol path escaped workspace")
+                })?;
+                if path_is_sensitive(relative)
+                    || path_is_generated(relative)
+                    || !is_text_candidate(relative)
+                {
+                    continue;
+                }
+                if entry
+                    .metadata()
+                    .map(|item| item.len() as usize > MAX_READ_BYTES)
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+                let content = fs::read_to_string(entry.path()).unwrap_or_default();
+                for (index, line) in content.lines().enumerate() {
+                    if matchers.iter().any(|matcher| matcher.is_match(line)) {
+                        matches.push(json!({
+                            "path": relative.to_string_lossy().replace('\\', "/"),
+                            "line": index + 1,
+                            "declaration": bounded_chars(line.trim(), 500),
+                        }));
+                        if matches.len() >= MAX_SEARCH_MATCHES {
+                            break;
+                        }
+                    }
+                }
+                if matches.len() >= MAX_SEARCH_MATCHES {
+                    break;
+                }
+            }
+            if matches.len() >= MAX_SEARCH_MATCHES {
+                break;
+            }
+        }
+        Ok(json!({"matches": matches, "truncated": matches.len() >= MAX_SEARCH_MATCHES}))
+    }
+
     fn apply_exact_patch(
         &self,
         path: &str,
@@ -486,6 +673,91 @@ impl Broker {
             "after_sha256": sha256_bytes(updated.as_bytes()),
             "bytes": updated.len(),
         }))
+    }
+
+    fn create_file(
+        &self,
+        path: &str,
+        expected_absent: bool,
+        content: &str,
+    ) -> Result<Value, BrokerError> {
+        if !self.allow_mutations {
+            return Err(BrokerError::new(
+                "mutation_denied",
+                "new files are allowed only inside an ephemeral mutable workspace",
+            ));
+        }
+        if !expected_absent || content.len() > MAX_READ_BYTES {
+            return Err(BrokerError::new(
+                "invalid_argument",
+                "create_file requires expected_absent=true and bounded content",
+            ));
+        }
+        let path = self.safe_new_path(path)?;
+        if path.exists() {
+            return Err(BrokerError::new(
+                "precondition_failed",
+                "new file already exists",
+            ));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| BrokerError::new("write_failed", "new file has no parent"))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        temporary
+            .write_all(content.as_bytes())
+            .and_then(|_| temporary.as_file().sync_all())
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        temporary
+            .persist_noclobber(&path)
+            .map_err(|error| BrokerError::new("write_failed", error.error.to_string()))?;
+        Ok(json!({
+            "path": self.relative(&path)?,
+            "before_sha256": Value::Null,
+            "after_sha256": sha256_bytes(content.as_bytes()),
+            "bytes": content.len(),
+        }))
+    }
+
+    fn safe_new_path(&self, raw: &str) -> Result<PathBuf, BrokerError> {
+        let candidate = Path::new(raw.trim());
+        if candidate.as_os_str().is_empty()
+            || candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+            || path_is_sensitive(candidate)
+            || path_is_generated(candidate)
+        {
+            return Err(BrokerError::new("path_denied", "new file path is denied"));
+        }
+        let mut cursor = self.root.clone();
+        for component in candidate.components() {
+            let Component::Normal(name) = component else {
+                return Err(BrokerError::new("path_denied", "new file path is invalid"));
+            };
+            cursor.push(name);
+            if cursor.exists() {
+                let metadata = fs::symlink_metadata(&cursor)
+                    .map_err(|error| BrokerError::new("path_invalid", error.to_string()))?;
+                if metadata.file_type().is_symlink() {
+                    return Err(BrokerError::new(
+                        "path_escape",
+                        "new file path crosses a symlink",
+                    ));
+                }
+            }
+        }
+        if !cursor.starts_with(&self.root) {
+            return Err(BrokerError::new(
+                "path_escape",
+                "new file path escapes workspace",
+            ));
+        }
+        Ok(cursor)
     }
 
     fn git_diff(&self, staged: bool, path: Option<&str>) -> Result<Value, BrokerError> {
@@ -683,7 +955,10 @@ impl ToolRequest {
             Self::SearchLiteral { .. } => "search_literal",
             Self::ReadLines { .. } => "read_lines",
             Self::HashFile { .. } => "hash_file",
+            Self::ProjectSummary => "project_summary",
+            Self::FindSymbols { .. } => "find_symbols",
             Self::ApplyExactPatch { .. } => "apply_exact_patch",
+            Self::CreateFile { .. } => "create_file",
             Self::GitStatus => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::RunValidation { .. } => "run_validation",
@@ -906,5 +1181,36 @@ mod tests {
                 .unwrap()
                 .contains("return 'local'")
         );
+    }
+
+    #[test]
+    fn summary_and_symbol_lookup_are_bounded_and_source_grounded() {
+        let (_temp, broker) = fixture();
+        let summary = broker.execute(ToolRequest::ProjectSummary);
+        assert!(summary.ok);
+        assert_eq!(summary.result["extension_counts"]["py"], 1);
+        let symbols = broker.execute(ToolRequest::FindSymbols {
+            query: "hello".into(),
+            paths: vec!["app".into()],
+        });
+        assert!(symbols.ok);
+        assert_eq!(symbols.result["matches"][0]["line"], 1);
+    }
+
+    #[test]
+    fn new_file_requires_mutable_broker_and_absence_precondition() {
+        let (temp, broker) = fixture();
+        let request = || ToolRequest::CreateFile {
+            path: "tests/test_new.py".into(),
+            expected_absent: true,
+            content: "def test_new():\n    assert True\n".into(),
+        };
+        let denied = broker.execute(request());
+        assert!(!denied.ok);
+        let mutable = Broker::new_mutable(temp.path()).unwrap();
+        assert!(mutable.execute(request()).ok);
+        let duplicate = mutable.execute(request());
+        assert!(!duplicate.ok);
+        assert_eq!(duplicate.error.unwrap().code, "precondition_failed");
     }
 }

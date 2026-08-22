@@ -77,6 +77,13 @@ async def _github_api_headers(client: httpx.AsyncClient, repository: str) -> dic
     }
 
 
+async def github_api_headers(
+    client: httpx.AsyncClient, repository: str,
+) -> dict[str, str]:
+    """Public least-privilege GitHub App header factory for coding workflows."""
+    return await _github_api_headers(client, repository)
+
+
 def proposal_markdown(proposal: dict) -> str:
     """Build a public artifact from curated fields only; evidence rows are excluded."""
     values = {

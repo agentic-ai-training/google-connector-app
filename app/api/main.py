@@ -14,8 +14,9 @@ from app.rag.embedder import NomicEmbedder
 from app.rag.sync.scheduler import scheduler,setup_scheduler
 from app.api.middleware.auth import auth_middleware,router as auth_router
 from app.api.middleware.metrics import metrics_middleware
-from app.api.routes import admin,chat,feedback,history,runs
+from app.api.routes import admin,chat,coding,feedback,history,runs
 from app.runs.worker import worker_loop
+from app.coding.worker import coding_worker_loop
 from app.runs.retention import retention_loop
 from app.rag.jobs import embedding_worker_loop
 from app.rag.user_sync import rag_source_sync_worker_loop
@@ -74,6 +75,13 @@ async def lifespan(app):
             improvement_analysis_loop(pool, retention_stop)
         ) if settings.governed_improvements_enabled and not is_candidate else None
         metrics_task = None if is_candidate else asyncio.create_task(metrics_collection_loop(pool, retention_stop))
+        coding_task = (
+            asyncio.create_task(coding_worker_loop(pool, retention_stop))
+            if settings.coding_agent_enabled
+            and settings.coding_worker_enabled
+            and not is_candidate
+            else None
+        )
         if settings.durable_runs_enabled and settings.embedded_worker_enabled:
             worker_task = asyncio.create_task(worker_loop(app, pool, worker_stop))
         if is_candidate:
@@ -97,6 +105,8 @@ async def lifespan(app):
             await improvement_task
         if metrics_task:
             await metrics_task
+        if coding_task:
+            await coding_task
     if scheduler.running:
         scheduler.shutdown(wait=False)
     await close_pool()
@@ -118,7 +128,7 @@ app.add_middleware(
 # traced without exposing the requested resource identifier or query string.
 app.middleware("http")(auth_middleware)
 app.middleware("http")(metrics_middleware)
-app.include_router(auth_router); app.include_router(chat.router); app.include_router(runs.router); app.include_router(runs.sessions_router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
+app.include_router(auth_router); app.include_router(chat.router); app.include_router(runs.router); app.include_router(runs.sessions_router); app.include_router(coding.router); app.include_router(feedback.router); app.include_router(history.router); app.include_router(admin.router)
 app.mount("/metrics",make_asgi_app())
 @app.get("/health")
 async def health():

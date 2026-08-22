@@ -1956,23 +1956,30 @@ vulnerabilities. Dependency audit evidence remains separate from candidate corre
 
 ### Epic 57.2 — Remaining governed expansion
 
-- [ ] Add durable coding-run/step/artifact tables and version-pinned worker claims.
-- [ ] Add typed, reversible transformation recipes with expected-hash preconditions.
-- [ ] Add separate least-privilege process/log, database and deployment brokers.
-- [ ] Route admitted candidate strategies through compiled evidence and the Rust broker.
-- [ ] Add authenticated coding-run APIs/frontend progress without exposing raw terminal
-  authority.
+- [x] Add durable coding-run/step/event/artifact/cache tables and version-pinned worker
+  claims, heartbeats, lease recovery, approval expiry, CI deadlines, retention, export,
+  deletion, and high-cardinality reporting.
+- [x] Add typed, reversible exact-patch and expected-absent file-creation transformations
+  with preimage hashes, fresh sandbox validation, atomic application, and rollback.
+- [x] Add separate least-privilege Rust process/log, schema-only database, and read-only
+  deployment brokers. No arbitrary process signal, SQL, shell, Docker mutation, or deploy
+  operation is registered.
+- [x] Route admitted candidate strategies and trusted-CI remediation through the shared
+  durable coding runtime; linked builds cannot be claimed or retried by the legacy builder.
+- [x] Add authenticated administrator-pilot coding-run APIs/frontend progress without
+  exposing raw terminal authority.
 - [ ] Move the application runtime away from Groq so only the isolated coding/candidate
   service receives a dedicated coding Groq credential.
 
-Implementation evidence (2026-08-22): Rust format, Clippy with warnings denied, four
-Rust unit/security tests, release build, three Python protocol-isolation tests, 317 full
-Python tests with PostgreSQL integrations, Flake8, Bandit, pip-audit, Next lint/build,
-Flutter analyze/test, 44 planner goldens, workflow replay, chunking, policy, context-DP,
-allocation-DP, dual-worker and Grafana validation all pass. Direct binary and Python
-wrapper probes successfully localized candidate-builder source, validated the worktree,
-and hashed an approved source file. Docker Compose configuration passes. Production
-release remains externally blocked because the Railway project reports an expired trial.
+Implementation evidence (2026-08-22): Rust format and Clippy with warnings denied pass;
+12 Rust unit/security tests and seven CLI integration tests pass. The full Python suite
+passes 330 tests with PostgreSQL integrations; Compileall, Flake8, Bandit and pip-audit
+also pass with no known dependency vulnerabilities. Next lint/build/audit, Flutter
+analyze/test/debug APK, 44 planner goldens, workflow replay, chunking, policy, context-DP,
+allocation-DP, dual-worker, Grafana validation, Docker Compose rendering, secret-history
+checks, and the migration 002 -> 015 downgrade/forward-repair cycle all pass. The project
+has been migrated to the new Railway workspace owned by `achintya17407`; deployment of
+this branch remains part of the governed release step rather than an expired-trial block.
 
 ### Epic 57.3 — Candidate read-boundary adoption
 
@@ -2048,3 +2055,55 @@ guardrails pass under candidate tool policy v19.
 - [x] Add a bounded human-readable unified-diff renderer and private approval manifest above
   the hash-bound multi-file transactional apply/rollback core. Approved execution reruns
   validation in a fresh sandbox and advances the manifest from awaiting approval to applied.
+
+## Sprint 59 — Hosted coding lifecycle, specialist brokers, cache, and OKF
+
+### Epic 59.1 — Governed hosted lifecycle
+
+- [x] Add encrypted tenant-scoped intake, idempotency, source-egress consent, immutable
+  base commit, bounded GitHub archive extraction, and GitHub App token minting.
+- [x] Freeze a validated plan and approval manifest; highlight the exact approval action
+  in both the coding portal and improvement portal.
+- [x] Recreate a keyless sandbox after approval, publish a draft PR without merge/deploy,
+  record branch/commit/PR artifacts, monitor trusted checks, and time out stalled CI.
+- [x] Link failure candidates to their coding run, produce the existing candidate CI
+  manifest, accept only trusted attestation, and surface failure/success in the portal.
+- [ ] Prove the entire sequence against a fresh real failure through approval, draft PR,
+  trusted CI, isolated canary, measured traffic, and promotion/rollback. This is release
+  evidence, not a substitute for the implemented controls.
+
+### Epic 59.2 — Deterministic specialist tools and token ceiling
+
+- [x] Add aggregate project summary and declaration-aware symbol lookup before broad source
+  reads, plus strict sensitive/generated-path filtering and bounded outputs.
+- [x] Add expected-absent file creation for new source/tests with preview, validation,
+  atomic application, and rollback.
+- [x] Add separate process/log/migration, PostgreSQL schema, and Compose/image inspection
+  brokers. Credentials remain outside model inputs and database transactions are read-only.
+- [x] Preload a deterministic project summary, cap model-visible tool output, reduce turns,
+  and stop before the coding planner's 10,000-token cumulative provider budget.
+
+### Epic 59.3 — Dynamic cache, operational knowledge, and observability
+
+- [x] Persist encrypted tenant-scoped cache entries selected by entity semantics, producer
+  and source version; fail closed for unclassified entities.
+- [x] Never cache secrets/raw private content/approvals/write results, and never allow a
+  cache hit to satisfy a live postcondition.
+- [x] Pin the latest trusted OKF bundle and structured coding/candidate workflow documents
+  to every coding run; record selected IDs and reason without granting executable authority.
+- [x] Add Grafana/PostgreSQL coding-run status, approval/CI links, Prometheus state/deadline
+  gauges, and failed/overdue alerts.
+- [x] Add the administrator coding portal with consent, progress, model/token evidence,
+  exact-plan review, cancellation, and draft-PR/CI links.
+
+Implementation evidence on 2026-08-22: migration 015 downgrade/upgrade passes and exposes
+the coding status view and semantic cache table. Python compile/Flake8 and 11 focused coding
+tests pass; tenant/encryption/hash-approval and failure-candidate bridge integrations pass
+against PostgreSQL. Rust format/Clippy pass with warnings denied; 12 unit/security and seven
+CLI integration tests pass. Live local broker probes verified PostgreSQL 17.6 read-only
+metadata, 886 schema columns without row data, 15 migrations, and a valid Compose model.
+Next.js lint/build passes and includes `/coding`. The full repository guardrail set now
+passes locally. A Docker image rebuild was attempted but Docker Desktop was not running;
+the Dockerfile/Compose model remains validated and the trusted Railway/CI build is the
+release authority. Governed release and the real lifecycle exercise remain before these
+changes become production evidence.

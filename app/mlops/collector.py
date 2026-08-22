@@ -1,10 +1,13 @@
 import asyncio
 from contextlib import suppress
 
+from app.config.settings import get_settings
 from app.mlops.metrics import (
     artifact_cleanup_queue,
     candidate_budget_ratio,
     candidate_build_queue,
+    coding_run_queue,
+    coding_run_overdue,
     candidate_progress_state,
     candidate_retry_state,
     canary_routing,
@@ -40,6 +43,11 @@ NOTIFICATION_STATES = ("queued", "sent", "skipped", "failed")
 CANDIDATE_BUILD_STATES = (
     "queued", "investigating", "drafted", "validating", "validated", "failed", "cancelled",
 )
+CODING_RUN_STATES = (
+    "queued", "planning", "awaiting_approval", "approved", "executing",
+    "published", "ci_running", "completed", "failed", "blocked", "cancelled",
+    "reconciling",
+)
 FAILURE_THEME_STATES = ("active", "candidate_building", "resolved", "suppressed")
 OKF_PUBLICATION_STATES = (
     "draft", "validated", "canary", "trusted", "rolled_back", "rejected",
@@ -64,6 +72,10 @@ async def collect_operational_metrics(pool):
             failure_notifications.labels(channel, state).set(0)
     for state in CANDIDATE_BUILD_STATES:
         candidate_build_queue.labels(state).set(0)
+    for state in CODING_RUN_STATES:
+        coding_run_queue.labels(state).set(0)
+    for kind in ("approval_expired", "lease_expired", "ci_timeout"):
+        coding_run_overdue.labels(kind).set(0)
     for state in FAILURE_THEME_STATES:
         failure_theme_queue.labels(state).set(0)
     for state in OKF_PUBLICATION_STATES:
@@ -111,6 +123,21 @@ async def collect_operational_metrics(pool):
             "SELECT status,count(*) AS count FROM candidate_builds GROUP BY status"
         ):
             candidate_build_queue.labels(row["status"]).set(row["count"])
+        for row in await conn.fetch(
+            "SELECT status,count(*) AS count FROM coding_runs WHERE deleted_at IS NULL GROUP BY status"
+        ):
+            coding_run_queue.labels(row["status"]).set(row["count"])
+        overdue = await conn.fetchrow(
+            """SELECT
+                 count(*) FILTER (WHERE status='awaiting_approval' AND approval_expires_at<now()) AS approval_expired,
+                 count(*) FILTER (WHERE status IN ('planning','executing') AND lease_expires_at<now()) AS lease_expired,
+                 count(*) FILTER (WHERE status IN ('published','ci_running')
+                   AND started_at<now()-($1 * interval '1 minute')) AS ci_timeout
+               FROM coding_runs WHERE deleted_at IS NULL""",
+            max(5, get_settings().coding_ci_timeout_minutes),
+        )
+        for kind in ("approval_expired", "lease_expired", "ci_timeout"):
+            coding_run_overdue.labels(kind).set(int(overdue[kind] or 0))
         for row in await conn.fetch(
             """SELECT mode,status,
                       sum(tokens_used)::float /

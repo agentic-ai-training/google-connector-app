@@ -81,6 +81,12 @@ model_context_preflight_compactions = Counter(
 candidate_build_queue = Gauge(
     "agent_candidate_builds", "Groq-only candidate builds by durable state", ["status"],
 )
+coding_run_queue = Gauge(
+    "agent_coding_runs", "Durable coding runs by state", ["status"],
+)
+coding_run_overdue = Gauge(
+    "agent_coding_runs_overdue", "Coding runs past a lifecycle deadline", ["kind"],
+)
 tool_selection_corrections = Counter(
     "agent_tool_selection_corrections_total",
     "Write steps given one constrained missing-tool correction",

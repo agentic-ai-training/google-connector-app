@@ -6,6 +6,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from app.config.settings import get_settings
 from app.mlops.metrics import failure_incidents
 
 
@@ -585,11 +586,18 @@ async def create_or_update_proposal(pool, incident_id, selected_option: str, act
             )
     dispatch = None
     if build_id:
-        try:
-            from app.improvements.publisher import dispatch_candidate_builder
-            dispatch = await dispatch_candidate_builder(str(build_id))
-        except Exception as exc:
-            dispatch = {"status": "not_dispatched", "reason": str(exc)}
+        settings = get_settings()
+        if settings.candidate_builder_use_coding_runtime and settings.coding_agent_enabled:
+            dispatch = {
+                "status": "durable_coding_queued",
+                "reason": "shared version-pinned coding worker owns this build",
+            }
+        else:
+            try:
+                from app.improvements.publisher import dispatch_candidate_builder
+                dispatch = await dispatch_candidate_builder(str(build_id))
+            except Exception as exc:
+                dispatch = {"status": "not_dispatched", "reason": str(exc)}
     result = dict(proposal)
     result["candidate_build_id"] = str(build_id) if build_id else None
     result["candidate_build_status"] = (
@@ -691,11 +699,18 @@ async def create_theme_proposal(pool, theme_id, selected_option: str, actor: str
     build_id = await enqueue_candidate_build(pool, proposal_id, dict(incident), option, actor)
     dispatch = None
     if build_id:
-        try:
-            from app.improvements.publisher import dispatch_candidate_builder
-            dispatch = await dispatch_candidate_builder(str(build_id))
-        except Exception as exc:
-            dispatch = {"status": "not_dispatched", "reason": str(exc)}
+        settings = get_settings()
+        if settings.candidate_builder_use_coding_runtime and settings.coding_agent_enabled:
+            dispatch = {
+                "status": "durable_coding_queued",
+                "reason": "shared version-pinned coding worker owns this build",
+            }
+        else:
+            try:
+                from app.improvements.publisher import dispatch_candidate_builder
+                dispatch = await dispatch_candidate_builder(str(build_id))
+            except Exception as exc:
+                dispatch = {"status": "not_dispatched", "reason": str(exc)}
     return {
         "proposal_key": proposal_key,
         "candidate_build_id": str(build_id) if build_id else None,

@@ -17,6 +17,9 @@ async def apply_retention(pool) -> dict[str, int]:
         ("expired_private_tool_results", "private_tool_results", "DELETE FROM private_tool_results WHERE expires_at < now()", 0),
         ("expired_rag", "rag_chunks", "UPDATE rag_chunks SET deleted_at=now() WHERE deleted_at IS NULL AND indexed_at < now()-($1 * interval '1 day')", settings.workflow_retention_days),
         ("expired_runs", "agent_runs", "UPDATE agent_runs SET deleted_at=now() WHERE deleted_at IS NULL AND retention_until < now() AND status NOT IN ('queued','running','awaiting_approval')", 0),
+        ("expired_coding_approvals", "coding_runs", "UPDATE coding_runs SET status='blocked',current_phase='approval_expired',approval_status='expired',updated_at=now() WHERE status='awaiting_approval' AND approval_expires_at < now()", 0),
+        ("expired_coding_runs", "coding_runs", "UPDATE coding_runs SET deleted_at=now() WHERE deleted_at IS NULL AND retention_until < now() AND status NOT IN ('queued','planning','awaiting_approval','approved','executing','published','ci_running','reconciling')", 0),
+        ("expired_coding_cache", "coding_cache_entries", "DELETE FROM coding_cache_entries WHERE expires_at < now() OR invalidated_at < now()-interval '7 days'", 0),
     ]
     report = {}
     async with pool.acquire() as conn, conn.transaction():
@@ -55,6 +58,8 @@ async def delete_user_data(pool, user_id: str) -> dict[str, int]:
             ("rag_chunks", "DELETE FROM rag_chunks WHERE user_id=$1"),
             ("feedback", "DELETE FROM feedback WHERE user_id=$1"),
             ("conversation_history", "DELETE FROM conversation_history WHERE user_id=$1"),
+            ("coding_runs", "DELETE FROM coding_runs WHERE user_id=$1"),
+            ("coding_cache_entries", "DELETE FROM coding_cache_entries WHERE user_id=$1"),
             ("agent_runs", "DELETE FROM agent_runs WHERE user_id=$1"),
             ("google_oauth_credentials", "DELETE FROM google_oauth_credentials WHERE user_id=$1"),
         )
@@ -113,6 +118,34 @@ async def export_user_data(pool, user_id: str) -> dict:
         google_connected = bool(await conn.fetchval(
             "SELECT EXISTS(SELECT 1 FROM google_oauth_credentials WHERE user_id=$1)", user_id,
         ))
+        coding_runs = [dict(row) for row in await conn.fetch(
+            """SELECT id,repository,base_ref,base_commit,request_excerpt,request_hash,
+                      status,current_phase,executor_version,planner_model,
+                      model_policy_version,tool_policy_version,approval_status,
+                      approval_requested_at,approval_expires_at,approved_at,
+                      publication_status,branch_name,pull_request_number,pull_request_url,
+                      candidate_commit,ci_check_url,input_tokens,output_tokens,attempt_count,
+                      error_category,error_message,created_at,updated_at,started_at,completed_at
+                 FROM coding_runs WHERE user_id=$1 ORDER BY created_at LIMIT 10000""",
+            user_id,
+        )]
+        coding_ids = [row["id"] for row in coding_runs]
+        coding_steps = coding_events = coding_artifacts = []
+        if coding_ids:
+            coding_steps = [dict(row) for row in await conn.fetch(
+                "SELECT * FROM coding_run_steps WHERE run_id=ANY($1::uuid[]) ORDER BY run_id,sequence_no",
+                coding_ids,
+            )]
+            coding_events = [dict(row) for row in await conn.fetch(
+                "SELECT * FROM coding_run_events WHERE run_id=ANY($1::uuid[]) ORDER BY id",
+                coding_ids,
+            )]
+            coding_artifacts = [dict(row) for row in await conn.fetch(
+                """SELECT id,run_id,user_id,artifact_type,content_hash,external_url,
+                          metadata,verification_status,created_at,verified_at
+                     FROM coding_artifacts WHERE run_id=ANY($1::uuid[]) ORDER BY created_at""",
+                coding_ids,
+            )]
     payload = {
         "format": "google-connector-user-export-v1",
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -123,6 +156,9 @@ async def export_user_data(pool, user_id: str) -> dict:
         "runs": runs, "steps": steps, "events": events, "artifacts": artifacts,
         "conversations": conversations, "feedback": feedback,
         "rag_chunks_without_embeddings": rag, "learning_trajectories": trajectories,
+        "coding_runs_without_private_payloads": coding_runs,
+        "coding_steps": coding_steps, "coding_events": coding_events,
+        "coding_artifacts_without_private_payloads": coding_artifacts,
     }
     # Normalize UUID/datetime/Decimal values before the API serializes the payload.
     return json.loads(json.dumps(payload, default=str))

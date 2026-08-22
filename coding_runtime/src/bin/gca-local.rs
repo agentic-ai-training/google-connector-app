@@ -1,6 +1,10 @@
 use google_connector_coding_runtime::{
-    Broker, ToolRequest, local_agent, parse_request, path_is_generated, path_is_sensitive,
-    sha256_bytes,
+    Broker, ToolRequest,
+    database::{DatabaseBroker, DatabaseRequest},
+    deployment::{DeploymentBroker, DeploymentRequest},
+    local_agent,
+    ops::{OpsBroker, OpsRequest},
+    parse_request, path_is_generated, path_is_sensitive, sha256_bytes,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -83,8 +87,20 @@ fn run() -> Result<(), String> {
             reject_unknown_arguments(&arguments, &["--workspace"])?;
             execute_readonly_broker(&arguments)
         }
+        "ops-read" => {
+            reject_unknown_arguments(&arguments, &["--workspace"])?;
+            execute_operations_broker(&arguments)
+        }
+        "database-read" => {
+            reject_unknown_arguments(&arguments, &["--database-url-env"])?;
+            execute_database_broker(&arguments)
+        }
+        "deployment-read" => {
+            reject_unknown_arguments(&arguments, &["--workspace"])?;
+            execute_deployment_broker(&arguments)
+        }
         _ => Err(
-            "usage: gca-local doctor --workspace <path> | gca-local plan-request --workspace <path> --request-file <file> --allow-cloud-source true [--model <groq-model>] [--state-dir <path>] | gca-local resume-request --workspace <path> --run-id <id> --allow-cloud-source true [--state-dir <path>] | gca-local execute-plan --workspace <path> --plan <file> [--approve <plan-sha256>]"
+            "usage: gca-local doctor --workspace <path> | gca-local plan-request --workspace <path> --request-file <file> --allow-cloud-source true [--model <groq-model>] [--state-dir <path>] | gca-local resume-request --workspace <path> --run-id <id> --allow-cloud-source true [--state-dir <path>] | gca-local execute-plan --workspace <path> --plan <file> [--approve <plan-sha256>] | gca-local ops-read --workspace <path> | gca-local database-read --database-url-env <name> | gca-local deployment-read --workspace <path>"
                 .to_string(),
         ),
     }
@@ -193,6 +209,8 @@ fn execute_readonly_broker(arguments: &[String]) -> Result<(), String> {
     if !matches!(
         &request,
         ToolRequest::Inventory { .. }
+            | ToolRequest::ProjectSummary
+            | ToolRequest::FindSymbols { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. }
@@ -205,6 +223,82 @@ fn execute_readonly_broker(arguments: &[String]) -> Result<(), String> {
         "{}",
         serde_json::to_string(&broker.execute(request))
             .map_err(|error| format!("cannot serialize broker response: {error}"))?
+    );
+    Ok(())
+}
+
+fn execute_operations_broker(arguments: &[String]) -> Result<(), String> {
+    let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
+    let mut input = String::new();
+    std::io::stdin()
+        .take((MAX_PLAN_BYTES + 1) as u64)
+        .read_to_string(&mut input)
+        .map_err(|error| format!("cannot read operations request: {error}"))?;
+    if input.len() > MAX_PLAN_BYTES {
+        return Err("operations request exceeds the one-megabyte limit".to_string());
+    }
+    let request: OpsRequest = serde_json::from_str(&input)
+        .map_err(|_| "operations request violates its typed schema".to_string())?;
+    let broker = OpsBroker::new(workspace)?;
+    let response = broker.execute(request);
+    println!(
+        "{}",
+        serde_json::to_string(&response)
+            .map_err(|error| format!("cannot serialize operations response: {error}"))?
+    );
+    Ok(())
+}
+
+fn execute_database_broker(arguments: &[String]) -> Result<(), String> {
+    let variable = required_value(arguments, "--database-url-env")?;
+    if variable.is_empty()
+        || variable.len() > 120
+        || !variable
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err("database URL environment-variable name is invalid".to_string());
+    }
+    let url = std::env::var(variable)
+        .map_err(|_| "selected database URL environment variable is unavailable".to_string())?;
+    let mut input = String::new();
+    std::io::stdin()
+        .take((MAX_PLAN_BYTES + 1) as u64)
+        .read_to_string(&mut input)
+        .map_err(|error| format!("cannot read database request: {error}"))?;
+    if input.len() > MAX_PLAN_BYTES {
+        return Err("database request exceeds the one-megabyte limit".to_string());
+    }
+    let request: DatabaseRequest = serde_json::from_str(&input)
+        .map_err(|_| "database request violates its typed schema".to_string())?;
+    let mut broker = DatabaseBroker::connect(&url)?;
+    let response = broker.execute(request);
+    println!(
+        "{}",
+        serde_json::to_string(&response)
+            .map_err(|error| format!("cannot serialize database response: {error}"))?
+    );
+    Ok(())
+}
+
+fn execute_deployment_broker(arguments: &[String]) -> Result<(), String> {
+    let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
+    let mut input = String::new();
+    std::io::stdin()
+        .take((MAX_PLAN_BYTES + 1) as u64)
+        .read_to_string(&mut input)
+        .map_err(|error| format!("cannot read deployment request: {error}"))?;
+    if input.len() > MAX_PLAN_BYTES {
+        return Err("deployment request exceeds the one-megabyte limit".to_string());
+    }
+    let request: DeploymentRequest = serde_json::from_str(&input)
+        .map_err(|_| "deployment request violates its typed schema".to_string())?;
+    let broker = DeploymentBroker::new(workspace)?;
+    let response = broker.execute(request);
+    println!(
+        "{}",
+        serde_json::to_string(&response)
+            .map_err(|error| format!("cannot serialize deployment response: {error}"))?
     );
     Ok(())
 }
@@ -234,10 +328,12 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
             "plan must contain between 1 and {MAX_ACTIONS} actions"
         ));
     }
-    let last_patch = plan
-        .actions
-        .iter()
-        .rposition(|action| matches!(action, ToolRequest::ApplyExactPatch { .. }));
+    let last_patch = plan.actions.iter().rposition(|action| {
+        matches!(
+            action,
+            ToolRequest::ApplyExactPatch { .. } | ToolRequest::CreateFile { .. }
+        )
+    });
     let last_validation = plan
         .actions
         .iter()
@@ -258,13 +354,20 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
     let mut action_results = Vec::<Value>::new();
 
     for action in plan.actions {
-        if let ToolRequest::ApplyExactPatch { path, .. } = &action {
-            validate_relative_path(path)?;
-            original_hashes.entry(path.clone()).or_insert_with(|| {
-                fs::read(root.join(path))
-                    .map(|bytes| sha256_bytes(&bytes))
-                    .unwrap_or_default()
-            });
+        match &action {
+            ToolRequest::ApplyExactPatch { path, .. } => {
+                validate_relative_path(path)?;
+                original_hashes.entry(path.clone()).or_insert_with(|| {
+                    fs::read(root.join(path))
+                        .map(|bytes| sha256_bytes(&bytes))
+                        .unwrap_or_default()
+                });
+            }
+            ToolRequest::CreateFile { path, .. } => {
+                validate_relative_path(path)?;
+                original_hashes.entry(path.clone()).or_default();
+            }
+            _ => {}
         }
         let response = broker.execute(action);
         let validation_failed = response.tool == "run_validation"
@@ -317,28 +420,49 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
 
     let mut prepared = Vec::new();
     for (path, expected_hash) in &original_hashes {
-        if expected_hash.is_empty() {
-            return Err(format!("patch target is unavailable: {path}"));
-        }
-        let destination = safe_original_file(&root, path)?;
-        let current =
-            fs::read(&destination).map_err(|error| format!("cannot re-read {path}: {error}"))?;
-        if sha256_bytes(&current) != *expected_hash {
-            return Err(format!(
-                "{path} changed after planning; no files were written"
-            ));
-        }
+        let destination = if expected_hash.is_empty() {
+            safe_original_new_file(&root, path)?
+        } else {
+            safe_original_file(&root, path)?
+        };
+        let current = if expected_hash.is_empty() {
+            if destination.exists() {
+                return Err(format!(
+                    "{path} was created after planning; no files were written"
+                ));
+            }
+            None
+        } else {
+            let bytes = fs::read(&destination)
+                .map_err(|error| format!("cannot re-read {path}: {error}"))?;
+            if sha256_bytes(&bytes) != *expected_hash {
+                return Err(format!(
+                    "{path} changed after planning; no files were written"
+                ));
+            }
+            Some(bytes)
+        };
         let updated = fs::read(sandbox.path().join(path))
             .map_err(|error| format!("cannot read validated sandbox file {path}: {error}"))?;
         prepared.push((path.clone(), destination, current, updated));
     }
-    for (applied, (path, destination, _, updated)) in prepared.iter().enumerate() {
-        if let Err(error) = atomic_replace_bytes(updated, destination) {
+    for (applied, (path, destination, preimage, updated)) in prepared.iter().enumerate() {
+        let outcome = if preimage.is_some() {
+            atomic_replace_bytes(updated, destination)
+        } else {
+            atomic_create_bytes(updated, destination)
+        };
+        if let Err(error) = outcome {
             let mut rollback_errors = Vec::new();
             for (rollback_path, rollback_destination, preimage, _) in
                 prepared[..applied].iter().rev()
             {
-                if let Err(rollback_error) = atomic_replace_bytes(preimage, rollback_destination) {
+                let rollback = if let Some(preimage) = preimage {
+                    atomic_replace_bytes(preimage, rollback_destination)
+                } else {
+                    fs::remove_file(rollback_destination).map_err(|item| item.to_string())
+                };
+                if let Err(rollback_error) = rollback {
                     rollback_errors.push(format!("{rollback_path}: {rollback_error}"));
                 }
             }
@@ -517,6 +641,32 @@ fn safe_original_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+fn safe_original_new_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    validate_relative_path(relative)?;
+    let path = root.join(relative);
+    let mut cursor = root.to_path_buf();
+    let parent = Path::new(relative)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(format!("unsafe new file path: {relative}"));
+        };
+        cursor.push(name);
+        if cursor.exists() {
+            let metadata = fs::symlink_metadata(&cursor)
+                .map_err(|error| format!("cannot inspect new file parent: {error}"))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(format!("new file parent is unsafe: {relative}"));
+            }
+        }
+    }
+    if !path.starts_with(root) {
+        return Err(format!("new file escapes the workspace: {relative}"));
+    }
+    Ok(path)
+}
+
 fn collect_changes(
     workspace: &Path,
     sandbox: &Path,
@@ -525,8 +675,12 @@ fn collect_changes(
     originals
         .iter()
         .map(|(path, before)| {
-            let original = fs::read(workspace.join(path))
-                .map_err(|error| format!("cannot read original result {path}: {error}"))?;
+            let original = if before.is_empty() {
+                Vec::new()
+            } else {
+                fs::read(workspace.join(path))
+                    .map_err(|error| format!("cannot read original result {path}: {error}"))?
+            };
             let updated = fs::read(sandbox.join(path))
                 .map_err(|error| format!("cannot read sandbox result {path}: {error}"))?;
             Ok(json!({
@@ -619,5 +773,26 @@ fn atomic_replace_bytes(bytes: &[u8], destination: &Path) -> Result<(), String> 
     temporary
         .persist(destination)
         .map_err(|error| format!("cannot replace destination: {}", error.error))?;
+    Ok(())
+}
+
+fn atomic_create_bytes(bytes: &[u8], destination: &Path) -> Result<(), String> {
+    if destination.exists() {
+        return Err("destination already exists".to_string());
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "destination has no parent".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create destination directory: {error}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("cannot create atomic output: {error}"))?;
+    temporary
+        .write_all(bytes)
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|error| format!("cannot write atomic output: {error}"))?;
+    temporary
+        .persist_noclobber(destination)
+        .map_err(|error| format!("cannot create destination: {}", error.error))?;
     Ok(())
 }

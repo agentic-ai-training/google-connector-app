@@ -548,8 +548,10 @@ capability set. It is not yet a general production-grade autonomous platform bec
 - Candidate generation is safe but does not yet converge reliably or cheaply.
 - The candidate builder does not yet route through the new Rust broker or reproduce a
   failure in a durable isolated coding workspace.
-- The read/validation broker exists, but general reversible edits, process/log and
-  database/deployment brokers are not implemented yet.
+- The shared coding control plane now has durable APIs/workers, reversible existing/new
+  file transformations, and separate read-only process/log, schema-only database, and
+  deployment-inspection brokers. Arbitrary shell/SQL and production mutations remain
+  deliberately outside model authority.
 - Load, disaster recovery, penetration, and long-duration canary evidence are not yet
   sufficient to claim broad enterprise readiness.
 - Portal lifecycle information is functional but too dense for a growing history.
@@ -567,8 +569,8 @@ These ratings describe architectural maturity, not a contractual certification:
 | Observability | Strong foundation | Metrics, traces and durable session evidence |
 | Retrieval | Moderate | Source-aware implementation exists; production evaluation is incomplete |
 | Improvement governance | Strong design | Human gates, CI evidence and isolated canary |
-| Candidate coding ability | Moderate foundation | Bounded patch tools plus a tested read/validation broker; integration remains |
-| General coding agent | Early foundation | Rust read/validation boundary exists; durable APIs, edits and specialist brokers remain |
+| Candidate coding ability | Strong pilot foundation | Failure strategies use durable source-grounded coding runs, hash approval, draft PR and trusted CI |
+| General coding agent | Moderate pilot foundation | Hosted/local flows, reversible edits and specialist read brokers exist; broad language transformations and production mutation controllers remain governed expansion |
 | Enterprise production proof | Incomplete | More load, security, restore and canary evidence needed |
 
 ## 17. How the existing services should improve

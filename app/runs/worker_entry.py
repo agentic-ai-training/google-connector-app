@@ -11,6 +11,7 @@ from app.runs.worker import worker_loop
 from app.rag.jobs import embedding_worker_loop
 from app.rag.user_sync import rag_source_sync_worker_loop
 from app.mlops.tracing import configure_tracing
+from app.coding.worker import coding_worker_loop
 
 
 async def main():
@@ -32,10 +33,13 @@ async def main():
             # compete with the control deployment for global embedding/persistence jobs.
             await worker_loop(app, pool, stop)
         else:
-            await asyncio.gather(
+            loops = [
                 worker_loop(app, pool, stop), embedding_worker_loop(pool, stop),
                 rag_source_sync_worker_loop(pool, stop),
-            )
+            ]
+            if settings.coding_agent_enabled and settings.coding_worker_enabled:
+                loops.append(coding_worker_loop(pool, stop))
+            await asyncio.gather(*loops)
     finally:
         await close_pool()
 
