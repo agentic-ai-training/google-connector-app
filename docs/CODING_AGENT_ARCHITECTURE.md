@@ -115,8 +115,46 @@ their retained preimages and reports any rollback failure for manual reconciliat
 works identically when `.git` does not exist.
 
 The current CLI is the deterministic local execution boundary. The natural-language
-planner remains a separately versioned component: it may request these typed actions but
+planner is a separately bounded Rust component: it may request these typed actions but
 cannot call a shell, read excluded files, mint approval tokens or claim validation passed.
+
+For a Groq-planned request, put the instruction in a local file rather than shell history:
+
+```bash
+printf 'Change the validated parser without changing its public schema.\n' > /tmp/task.txt
+gca-local plan-request \
+  --workspace /path/to/private-project \
+  --request-file /tmp/task.txt \
+  --allow-cloud-source true
+```
+
+`--allow-cloud-source true` is mandatory because the request and bounded source excerpts
+leave the machine for the Groq API. Omit it when source must remain fully offline and use
+`execute-plan` with a locally prepared typed plan instead. Natural-language mode reads only
+`CODING_GROQ_API_KEY`, uses the fixed Groq HTTPS endpoint, permits at most twelve sequential
+tool turns, disables parallel tool calls, caps each result inserted into model history, and
+requires a tool call on every turn. It cannot select another provider or arbitrary endpoint.
+
+Each request writes a mode-`0600` audit journal and frozen plan beneath
+`~/.local/state/gca-local` (or an explicitly selected `--state-dir`). The journal records
+the model, consent, private model/tool messages, hashes, token counts, status and plan
+identity without the API key. If Groq or the process is interrupted after a completed tool
+turn, resume that exact bounded checkpoint (renewing source-egress consent) with:
+
+```bash
+gca-local resume-request \
+  --workspace /path/to/private-project \
+  --run-id local-0123456789abcdef0123 \
+  --allow-cloud-source true
+```
+
+Read-only investigation runs in an environment-cleared child process. Sandbox preview also
+runs in a separate environment-cleared child, so the Groq key is absent before validation
+and mutation authority exists. A successful preview renders a bounded unified diff and
+writes a mode-`0600` `<plan>.approval.json` manifest containing exact before/after hashes,
+the approval token and validation evidence. The approved invocation reruns the complete
+plan in a fresh sandbox, checks every preimage, applies all files transactionally with
+rollback, and changes the manifest status to `applied`.
 
 ## Hosted GitHub App boundary
 

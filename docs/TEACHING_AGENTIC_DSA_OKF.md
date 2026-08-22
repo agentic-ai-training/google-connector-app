@@ -2194,3 +2194,73 @@ That compensation gives application-level transactional behavior, though a rollb
 itself fail during a disk or permission fault and is then surfaced for manual reconciliation.
 A filesystem snapshot or native transaction would provide a stronger platform-specific
 guarantee where available.
+
+<a id="dictionary-authority-separation"></a>
+## Authority separation
+
+Authority separation assigns observation, proposal, validation and mutation to different
+capability boundaries. The Groq planner can select only read tools and submit a structured
+plan. An environment-cleared child owns read-only repository access. A different keyless
+child builds the sandbox, validates, and produces an approval token. Only an explicitly
+approved invocation may copy validated bytes into the authoritative workspace.
+
+This is stronger than asking one agent to “be careful”: no prompt can manufacture a file
+descriptor, shell, provider credential or approval capability that the process does not
+possess. The architecture resembles privilege rings and object-capability systems. The
+number of boundaries adds constant orchestration overhead, while bounded I/O and provider
+latency dominate overall complexity.
+
+<a id="dictionary-source-egress-consent"></a>
+## Source-egress consent
+
+Source-egress consent is an explicit authorization for selected local source excerpts to
+leave the machine for a hosted model. A local workspace is not automatically an offline
+workspace: using a cloud planner necessarily transmits the request and observations it is
+given. The CLI therefore refuses natural-language planning unless the user supplies the
+exact `--allow-cloud-source true` value.
+
+Consent does not expand the source reader's authority. Credential paths, symlinks,
+dependencies and generated output remain excluded, and tool results are bounded before
+entering model history. Fully offline operation uses an imported deterministic plan and
+the same local sandbox executor without a provider call.
+
+<a id="dictionary-local-audit-journal"></a>
+## Local audit journal
+
+A local audit journal is an append-oriented record of request lifecycle facts stored under
+the user's account rather than the project tree. It records timestamps, model identity,
+tool transitions, content hashes, token usage, plan identity and terminal state, while
+excluding the API key. Directory mode `0700` and file mode `0600` restrict ordinary local
+access on Unix systems.
+
+An audit journal and a resumable checkpoint are related but not identical. Audit proves
+what occurred; resume also needs sufficient private conversational state to continue the
+state machine without repeating observations. The local runner stores a versioned, bounded
+private message checkpoint after every completed tool turn. Its transition function is:
+
+```text
+(messages, next_turn, cumulative_budget, provider_failure)
+    + renewed source-egress consent + dedicated key
+    -> next bounded provider/tool transition
+```
+
+The API key and write approval are deliberately absent from the checkpoint. A resume cannot
+change the canonical workspace or replenish the turn budget, and a path-like run ID is
+rejected before file access. This is durable state-machine recovery rather than replay from
+the original request.
+
+<a id="dictionary-unified-diff"></a>
+## Unified diff and approval manifest
+
+A unified diff is a line-oriented representation of changes with a small amount of
+unchanged context. It makes review proportional to the patch instead of the whole file.
+For two sequences of lines, a diff algorithm identifies an edit script containing retained,
+deleted and inserted elements. The renderer bounds output length so a huge generated file
+cannot exhaust the terminal or approval interface; binary files receive hashes rather than
+misleading decoded text.
+
+The approval manifest binds that human-readable view to machine-verifiable facts: plan
+SHA-256, every preimage and result hash, validation evidence and lifecycle status. The diff
+helps a human reason; the hashes prevent a reviewed plan from silently changing. The system
+must use both because readable text alone is not an integrity boundary, while hashes alone
+are not meaningfully reviewable.

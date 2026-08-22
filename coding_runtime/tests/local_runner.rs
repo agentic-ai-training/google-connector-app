@@ -58,6 +58,23 @@ fn non_git_workspace_is_previewed_then_applied_with_exact_approval() {
     let preview: Value = serde_json::from_slice(&preview.stdout).unwrap();
     assert_eq!(preview["status"], "awaiting_local_approval");
     assert_eq!(preview["original_workspace_modified"], false);
+    assert!(
+        preview["changes"][0]["diff"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("-    return 41")
+    );
+    let manifest_path = preview["approval_manifest"].as_str().unwrap();
+    let manifest: Value = serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "awaiting_local_approval");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(manifest_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     assert_eq!(fs::read(&source_path).unwrap(), original);
 
     let token = preview["approval_token"].as_str().unwrap();
@@ -76,6 +93,9 @@ fn non_git_workspace_is_previewed_then_applied_with_exact_approval() {
     assert!(applied.status.success());
     let applied: Value = serde_json::from_slice(&applied.stdout).unwrap();
     assert_eq!(applied["status"], "applied");
+    let applied_manifest: Value =
+        serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+    assert_eq!(applied_manifest["status"], "applied");
     assert!(
         fs::read_to_string(source_path)
             .unwrap()
@@ -121,5 +141,102 @@ fn unknown_cli_authority_is_rejected() {
             .as_str()
             .unwrap()
             .contains("unknown argument")
+    );
+}
+
+#[test]
+fn natural_language_mode_requires_explicit_cloud_source_consent() {
+    let workspace = TempDir::new().unwrap();
+    let request_directory = TempDir::new().unwrap();
+    let request = request_directory.path().join("request.txt");
+    fs::write(&request, "change the answer safely").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args([
+            "plan-request",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--request-file",
+            request.to_str().unwrap(),
+            "--allow-cloud-source",
+            "false",
+        ])
+        .env_remove("CODING_GROQ_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("requires --allow-cloud-source true")
+    );
+}
+
+#[test]
+fn readonly_broker_command_rejects_mutation_tools() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(workspace.path().join("main.py"), "value = 1\n").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args([
+            "broker-read",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            json!({
+                "tool": "apply_exact_patch",
+                "path": "main.py",
+                "expected_sha256": sha256_bytes(b"value = 1\n"),
+                "old": "1",
+                "replacement": "2"
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(workspace.path().join("main.py")).unwrap(),
+        "value = 1\n"
+    );
+}
+
+#[test]
+fn resume_rejects_a_path_like_run_identifier_before_network_access() {
+    let workspace = TempDir::new().unwrap();
+    let state = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args([
+            "resume-request",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--run-id",
+            "../../stolen",
+            "--allow-cloud-source",
+            "true",
+            "--state-dir",
+            state.path().to_str().unwrap(),
+        ])
+        .env("CODING_GROQ_API_KEY", "test-only")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("run ID is invalid")
     );
 }

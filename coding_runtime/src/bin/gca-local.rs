@@ -1,12 +1,15 @@
 use google_connector_coding_runtime::{
-    Broker, ToolRequest, path_is_generated, path_is_sensitive, sha256_bytes,
+    Broker, ToolRequest, local_agent, parse_request, path_is_generated, path_is_sensitive,
+    sha256_bytes,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use similar::TextDiff;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use tempfile::TempDir;
 use walkdir::WalkDir;
 
@@ -14,6 +17,7 @@ const MAX_PLAN_BYTES: usize = 1_048_576;
 const MAX_ACTIONS: usize = 50;
 const MAX_COPY_FILES: usize = 20_000;
 const MAX_COPY_BYTES: u64 = 536_870_912;
+const MAX_DIFF_CHARS: usize = 64_000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,11 +59,161 @@ fn run() -> Result<(), String> {
             reject_unknown_arguments(&arguments, &["--workspace", "--plan", "--approve"])?;
             execute_plan(&arguments)
         }
+        "plan-request" => {
+            reject_unknown_arguments(
+                &arguments,
+                &[
+                    "--workspace",
+                    "--request-file",
+                    "--allow-cloud-source",
+                    "--model",
+                    "--state-dir",
+                ],
+            )?;
+            plan_natural_language_request(&arguments)
+        }
+        "resume-request" => {
+            reject_unknown_arguments(
+                &arguments,
+                &["--workspace", "--run-id", "--allow-cloud-source", "--state-dir"],
+            )?;
+            resume_natural_language_request(&arguments)
+        }
+        "broker-read" => {
+            reject_unknown_arguments(&arguments, &["--workspace"])?;
+            execute_readonly_broker(&arguments)
+        }
         _ => Err(
-            "usage: gca-local doctor --workspace <path> | gca-local execute-plan --workspace <path> --plan <file> [--approve <plan-sha256>]"
+            "usage: gca-local doctor --workspace <path> | gca-local plan-request --workspace <path> --request-file <file> --allow-cloud-source true [--model <groq-model>] [--state-dir <path>] | gca-local resume-request --workspace <path> --run-id <id> --allow-cloud-source true [--state-dir <path>] | gca-local execute-plan --workspace <path> --plan <file> [--approve <plan-sha256>]"
                 .to_string(),
         ),
     }
+}
+
+fn plan_natural_language_request(arguments: &[String]) -> Result<(), String> {
+    let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
+    if required_value(arguments, "--allow-cloud-source")? != "true" {
+        return Err(
+            "natural-language planning requires --allow-cloud-source true because bounded source excerpts are sent to Groq; use execute-plan for fully offline operation"
+                .to_string(),
+        );
+    }
+    let request_path = PathBuf::from(required_value(arguments, "--request-file")?);
+    let request_bytes = read_bounded(&request_path, 48_000)?;
+    let request = String::from_utf8(request_bytes)
+        .map_err(|_| "request file must contain UTF-8 text".to_string())?;
+    let model = optional_value(arguments, "--model")?.unwrap_or("llama-3.3-70b-versatile");
+    let state_directory = optional_value(arguments, "--state-dir")?
+        .map(PathBuf::from)
+        .unwrap_or_else(default_state_directory);
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve local runner executable: {error}"))?;
+    let outcome =
+        local_agent::plan_request(&workspace, &request, model, &state_directory, &executable)?;
+    preview_agent_outcome(&workspace, &executable, outcome)
+}
+
+fn resume_natural_language_request(arguments: &[String]) -> Result<(), String> {
+    let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
+    require_cloud_source_consent(arguments)?;
+    let run_id = required_value(arguments, "--run-id")?;
+    let state_directory = optional_value(arguments, "--state-dir")?
+        .map(PathBuf::from)
+        .unwrap_or_else(default_state_directory);
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve local runner executable: {error}"))?;
+    let outcome = local_agent::resume_request(&workspace, run_id, &state_directory, &executable)?;
+    preview_agent_outcome(&workspace, &executable, outcome)
+}
+
+fn require_cloud_source_consent(arguments: &[String]) -> Result<(), String> {
+    if required_value(arguments, "--allow-cloud-source")? != "true" {
+        return Err(
+            "natural-language planning requires --allow-cloud-source true because bounded source excerpts are sent to Groq; use execute-plan for fully offline operation"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn preview_agent_outcome(
+    workspace: &Path,
+    executable: &Path,
+    outcome: local_agent::LocalAgentOutcome,
+) -> Result<(), String> {
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+    let preview = Command::new(executable)
+        .args(["execute-plan", "--workspace"])
+        .arg(workspace)
+        .arg("--plan")
+        .arg(&outcome.plan_path)
+        .env_clear()
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| format!("cannot start keyless sandbox preview: {error}"))?;
+    let preview_value: Value = serde_json::from_slice(&preview.stdout)
+        .map_err(|_| "keyless sandbox preview returned invalid JSON".to_string())?;
+    if !preview.status.success() || preview_value["ok"] != true {
+        return Err(format!(
+            "generated plan failed sandbox preview: {preview_value}"
+        ));
+    }
+    println!(
+        "{}",
+        json!({
+            "ok": true,
+            "status": "awaiting_local_approval",
+            "run_id": outcome.run_id,
+            "model": outcome.model,
+            "input_tokens": outcome.input_tokens,
+            "output_tokens": outcome.output_tokens,
+            "plan_path": outcome.plan_path,
+            "preview": preview_value,
+            "coding_key_forwarded_to_broker": false,
+        })
+    );
+    Ok(())
+}
+
+fn execute_readonly_broker(arguments: &[String]) -> Result<(), String> {
+    let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
+    let mut input = String::new();
+    std::io::stdin()
+        .take((MAX_PLAN_BYTES + 1) as u64)
+        .read_to_string(&mut input)
+        .map_err(|error| format!("cannot read broker request: {error}"))?;
+    if input.len() > MAX_PLAN_BYTES {
+        return Err("broker request exceeds the one-megabyte limit".to_string());
+    }
+    let request =
+        parse_request(&input).map_err(|_| "broker request violates its schema".to_string())?;
+    if !matches!(
+        &request,
+        ToolRequest::Inventory { .. }
+            | ToolRequest::SearchLiteral { .. }
+            | ToolRequest::ReadLines { .. }
+            | ToolRequest::HashFile { .. }
+    ) {
+        return Err("broker-read accepts only read-only investigation tools".to_string());
+    }
+    let broker = Broker::new(workspace)
+        .map_err(|error| format!("cannot initialize read-only broker: {error:?}"))?;
+    println!(
+        "{}",
+        serde_json::to_string(&broker.execute(request))
+            .map_err(|error| format!("cannot serialize broker response: {error}"))?
+    );
+    Ok(())
+}
+
+fn default_state_directory() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    home.join(".local/state/gca-local")
 }
 
 fn execute_plan(arguments: &[String]) -> Result<(), String> {
@@ -133,8 +287,16 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
         }
     }
 
-    let changes = collect_changes(sandbox.path(), &original_hashes)?;
+    let changes = collect_changes(&root, sandbox.path(), &original_hashes)?;
+    let manifest_path = preview_manifest_path(&plan_path);
     if approval.is_none() {
+        write_preview_manifest(
+            &manifest_path,
+            &approval_token,
+            "awaiting_local_approval",
+            &changes,
+            &action_results,
+        )?;
         println!(
             "{}",
             json!({
@@ -144,6 +306,7 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
                 "original_workspace_modified": false,
                 "changes": changes,
                 "actions": action_results,
+                "approval_manifest": manifest_path,
                 "next_command": format!(
                     "gca-local execute-plan --workspace <path> --plan <file> --approve {approval_token}"
                 ),
@@ -190,6 +353,13 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
             ));
         }
     }
+    write_preview_manifest(
+        &manifest_path,
+        &approval_token,
+        "applied",
+        &changes,
+        &action_results,
+    )?;
     println!(
         "{}",
         json!({
@@ -199,6 +369,7 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
             "original_workspace_modified": true,
             "changes": changes,
             "actions": action_results,
+            "approval_manifest": manifest_path,
         })
     );
     Ok(())
@@ -347,12 +518,15 @@ fn safe_original_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 
 fn collect_changes(
+    workspace: &Path,
     sandbox: &Path,
     originals: &BTreeMap<String, String>,
 ) -> Result<Vec<Value>, String> {
     originals
         .iter()
         .map(|(path, before)| {
+            let original = fs::read(workspace.join(path))
+                .map_err(|error| format!("cannot read original result {path}: {error}"))?;
             let updated = fs::read(sandbox.join(path))
                 .map_err(|error| format!("cannot read sandbox result {path}: {error}"))?;
             Ok(json!({
@@ -360,9 +534,70 @@ fn collect_changes(
                 "before_sha256": before,
                 "after_sha256": sha256_bytes(&updated),
                 "changed": sha256_bytes(&updated) != *before,
+                "diff": bounded_unified_diff(path, &original, &updated),
             }))
         })
         .collect()
+}
+
+fn bounded_unified_diff(path: &str, before: &[u8], after: &[u8]) -> Value {
+    let (Ok(before), Ok(after)) = (std::str::from_utf8(before), std::str::from_utf8(after)) else {
+        return json!({"kind": "binary", "text": null, "truncated": false});
+    };
+    let rendered = TextDiff::from_lines(before, after)
+        .unified_diff()
+        .context_radius(3)
+        .header(&format!("a/{path}"), &format!("b/{path}"))
+        .to_string();
+    let truncated = rendered.chars().count() > MAX_DIFF_CHARS;
+    let text: String = rendered.chars().take(MAX_DIFF_CHARS).collect();
+    json!({"kind": "unified", "text": text, "truncated": truncated})
+}
+
+fn preview_manifest_path(plan_path: &Path) -> PathBuf {
+    let name = plan_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("plan.json");
+    plan_path.with_file_name(format!("{name}.approval.json"))
+}
+
+fn write_preview_manifest(
+    path: &Path,
+    approval_token: &str,
+    status: &str,
+    changes: &[Value],
+    actions: &[Value],
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(&json!({
+        "version": 1,
+        "status": status,
+        "approval_token": approval_token,
+        "changes": changes,
+        "validation_and_action_evidence": actions,
+    }))
+    .map_err(|error| format!("cannot serialize approval manifest: {error}"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "approval manifest path has no parent".to_string())?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("cannot create approval manifest: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot protect approval manifest: {error}"))?;
+    }
+    temporary
+        .write_all(&bytes)
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|error| format!("cannot write approval manifest: {error}"))?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("cannot persist approval manifest: {}", error.error))?;
+    Ok(())
 }
 
 fn atomic_replace_bytes(bytes: &[u8], destination: &Path) -> Result<(), String> {

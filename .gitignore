@@ -16,3 +16,4 @@ backups/
 *.pyc
 .DS_Store
 coding_runtime/target/
+.gca-local/
