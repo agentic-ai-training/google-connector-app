@@ -1,4 +1,6 @@
 from functools import lru_cache
+import re
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_JWT_SECRETS = {
@@ -111,11 +113,26 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = ""
     otel_exporter_otlp_headers: str = ""
     deployment_version: str = "local"
+    railway_git_commit_sha: str = ""
     executor_version: str = ""
     executor_role: str = "control"
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"), extra="ignore"
     )
+
+    @model_validator(mode="after")
+    def prefer_immutable_railway_source_version(self):
+        """Bind runtime evidence to the image Railway actually built.
+
+        A manually managed DEPLOYMENT_VERSION can become stale when Railway's native
+        GitHub integration deploys a new commit. Railway injects this SHA into every
+        repository-backed deployment, so it is the authoritative control version.
+        """
+        if self.railway_git_commit_sha:
+            if not re.fullmatch(r"[0-9a-f]{40}", self.railway_git_commit_sha):
+                raise ValueError("RAILWAY_GIT_COMMIT_SHA must be a complete Git SHA")
+            self.deployment_version = self.railway_git_commit_sha
+        return self
 
 @lru_cache
 def get_settings() -> Settings:

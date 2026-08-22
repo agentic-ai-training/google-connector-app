@@ -2505,6 +2505,19 @@ def test_production_rejects_an_insecure_jwt_secret():
     )
 
 
+def test_railway_image_commit_is_the_authoritative_deployment_version():
+    from app.config.settings import Settings
+
+    commit = "a" * 40
+    settings = Settings(
+        deployment_version="stale-manual-label",
+        railway_git_commit_sha=commit,
+    )
+    assert settings.deployment_version == commit
+    with pytest.raises(ValueError, match="RAILWAY_GIT_COMMIT_SHA"):
+        Settings(railway_git_commit_sha="not-a-complete-sha")
+
+
 def test_capability_questions_are_answered_without_an_llm_call():
     answer = capability_answer("And other than Drive and Gmail, what about Meet?")
     assert answer is not None
