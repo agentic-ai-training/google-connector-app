@@ -28,6 +28,7 @@ def test_runtime_invokes_typed_protocol(tmp_path, monkeypatch):
         assert arguments == [str(binary), "--root", str(tmp_path)]
         assert json.loads(kwargs["input"]) == {"tool": "git_status"}
         assert "GROQ_API_KEY" not in kwargs["env"]
+        assert "CODING_GROQ_API_KEY" not in kwargs["env"]
         return subprocess.CompletedProcess(arguments, 0, '{"ok":true,"result":{}}', "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)

@@ -17,6 +17,7 @@ import yaml
 from app.improvements.candidates import (
     ALLOWED_ROOTS, FORBIDDEN_PARTS, validate_candidate_files,
 )
+from app.coding.runtime import CodingRuntime, CodingRuntimeError
 
 
 class BuilderToolLimitError(RuntimeError):
@@ -45,6 +46,23 @@ class BoundedRepositoryTools:
         self.read_paths: set[str] = set()
         self.started = time.monotonic()
         self.staged: dict[str, dict[str, Any]] = {}
+        runtime = CodingRuntime(self.root)
+        self.rust_runtime = runtime if runtime.binary.is_file() else None
+
+    def _rust(self, request: dict) -> dict | None:
+        """Use the shared Rust boundary when packaged; never mask a broker denial."""
+        if self.rust_runtime is None:
+            return None
+        try:
+            response = self.rust_runtime.invoke(request)
+        except CodingRuntimeError as exc:
+            raise BuilderToolLimitError("shared coding runtime failed") from exc
+        if not response.get("ok"):
+            error = response.get("error") or {}
+            raise ValueError(
+                f"Shared coding runtime denied request: {error.get('code', 'unknown')}"
+            )
+        return response.get("result") or {}
 
     @staticmethod
     def schemas() -> list[dict]:
@@ -253,6 +271,21 @@ class BoundedRepositoryTools:
         prefix = directory.strip().replace("\\", "/").rstrip("/") + "/"
         if not prefix.startswith(ALLOWED_ROOTS):
             raise ValueError("Directory is outside approved roots")
+        if not (self.root / directory).exists():
+            return {"files": [], "truncated": False}
+        rust_result = self._rust({
+            "tool": "inventory", "path": directory, "max_depth": 20,
+        })
+        if rust_result is not None:
+            files = [
+                path for path in (rust_result.get("files") or [])
+                if str(path).startswith(prefix)
+            ]
+            return {
+                "files": files[:500],
+                "truncated": bool(rust_result.get("truncated")) or len(files) > 500,
+                "broker": "rust-v0.1",
+            }
         files = [
             path.relative_to(self.root).as_posix()
             for path in self.root.rglob("*")
@@ -267,6 +300,20 @@ class BoundedRepositoryTools:
         if not needle or len(needle) > 200:
             raise ValueError("Search query must contain 1-200 characters")
         roots = paths or list(ALLOWED_ROOTS)
+        rust_roots = [
+            root for root in roots[:20]
+            if (self.root / root.strip().replace("\\", "/")).exists()
+        ]
+        rust_result = self._rust({
+            "tool": "search_literal", "query": query,
+            "paths": rust_roots, "case_sensitive": False,
+        }) if rust_roots else None
+        if rust_result is not None:
+            return {
+                "matches": list(rust_result.get("matches") or [])[:200],
+                "truncated": bool(rust_result.get("truncated")),
+                "broker": "rust-v0.1",
+            }
         matches = []
         for root in roots[:20]:
             prefix = root.strip().replace("\\", "/")
@@ -302,14 +349,25 @@ class BoundedRepositoryTools:
         target = self._safe_path(path, must_exist=True)
         start = max(1, int(start_line))
         end = min(max(start, int(end_line)), start + 799)
-        lines = target.read_text(encoding="utf-8").splitlines()
-        content = "\n".join(lines[start - 1:end])
+        rust_result = self._rust({
+            "tool": "read_lines", "path": path,
+            "start_line": start, "end_line": end,
+        })
+        if rust_result is not None:
+            content = str(rust_result.get("content") or "")
+        else:
+            lines = target.read_text(encoding="utf-8").splitlines()
+            content = "\n".join(lines[start - 1:end])
         size = len(content.encode())
         self.read_bytes += size
         self.read_paths.add(path)
         if self.read_bytes > self.max_read_bytes:
             raise BuilderToolLimitError("candidate repository read-byte limit exceeded")
-        return {"path": path, "start_line": start, "end_line": end, "content": content}
+        return {
+            "path": path, "start_line": start, "end_line": end,
+            "content": content,
+            "broker": "rust-v0.1" if rust_result is not None else "python-fallback-v1",
+        }
 
     def _python_files(self, paths: list[str] | None = None):
         for root in (paths or ["app/", "tests/"])[:20]:

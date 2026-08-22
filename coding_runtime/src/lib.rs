@@ -358,7 +358,7 @@ impl Broker {
             .lines()
             .enumerate()
             .filter(|(index, _)| *index + 1 >= start_line && *index < end_line)
-            .map(|(index, line)| format!("{}: {}", index + 1, line))
+            .map(|(_, line)| line)
             .collect::<Vec<_>>()
             .join("\n");
         Ok(

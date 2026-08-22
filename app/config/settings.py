@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     groq_context_window_tokens: int = 32768
     groq_tool_result_max_tokens: int = 2000
     groq_context_safety_tokens: int = 1024
+    coding_groq_api_key: str = ""
     private_tool_result_max_bytes: int = 2_000_000
     private_tool_result_retention_hours: int = 24
     database_url: str = "postgresql://agent_user:agent_pass_2024@localhost:5432/agent_db"

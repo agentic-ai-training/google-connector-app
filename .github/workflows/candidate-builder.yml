@@ -17,13 +17,20 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.0'
+      - name: Build the deterministic coding-tool broker
+        working-directory: coding_runtime
+        run: cargo build --release --locked
       - run: pip install -r requirements.txt
       - name: Generate and return a frozen draft without production credentials
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CODING_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           CANDIDATE_BUILDER_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
           CANDIDATE_BUILDER_CALLBACK_TOKEN: ${{ secrets.CANDIDATE_BUILDER_CALLBACK_TOKEN }}
           CANDIDATE_BUILD_ID: ${{ inputs.build_id }}
+          CODING_RUNTIME_BINARY: ${{ github.workspace }}/coding_runtime/target/release/google-connector-coding-runtime
         run: |
           ulimit -v 2097152
           ulimit -u 256
