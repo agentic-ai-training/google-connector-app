@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread::{self, JoinHandle};
@@ -41,6 +41,12 @@ pub enum ToolRequest {
     },
     HashFile {
         path: String,
+    },
+    ApplyExactPatch {
+        path: String,
+        expected_sha256: String,
+        old: String,
+        replacement: String,
     },
     GitStatus,
     GitDiff {
@@ -105,6 +111,7 @@ impl BrokerError {
 pub struct Broker {
     root: PathBuf,
     max_output_bytes: usize,
+    allow_mutations: bool,
 }
 
 pub fn parse_request(input: &str) -> Result<ToolRequest, BrokerError> {
@@ -122,6 +129,7 @@ pub fn parse_request(input: &str) -> Result<ToolRequest, BrokerError> {
         "search_literal" => &["tool", "query", "paths", "case_sensitive"],
         "read_lines" => &["tool", "path", "start_line", "end_line"],
         "hash_file" => &["tool", "path"],
+        "apply_exact_patch" => &["tool", "path", "expected_sha256", "old", "replacement"],
         "git_status" => &["tool"],
         "git_diff" => &["tool", "staged", "path"],
         "run_validation" => &["tool", "profile", "timeout_seconds"],
@@ -159,7 +167,18 @@ impl Broker {
         Ok(Self {
             root,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            allow_mutations: false,
         })
+    }
+
+    /// Creates a broker that may apply hash-guarded structured patches.
+    ///
+    /// This constructor is intended only for an ephemeral workspace owned by a
+    /// trusted orchestrator. The regular broker remains read-only.
+    pub fn new_mutable(root: impl AsRef<Path>) -> Result<Self, BrokerError> {
+        let mut broker = Self::new(root)?;
+        broker.allow_mutations = true;
+        Ok(broker)
     }
 
     pub fn execute(&self, request: ToolRequest) -> ToolResponse {
@@ -178,6 +197,12 @@ impl Broker {
                 end_line,
             } => self.read_lines(&path, start_line, end_line),
             ToolRequest::HashFile { path } => self.hash_file(&path),
+            ToolRequest::ApplyExactPatch {
+                path,
+                expected_sha256,
+                old,
+                replacement,
+            } => self.apply_exact_patch(&path, &expected_sha256, &old, &replacement),
             ToolRequest::GitStatus => {
                 self.run_program("git", &["status", "--short", "--branch"], &self.root, 20)
             }
@@ -233,7 +258,7 @@ impl Broker {
                 .path()
                 .strip_prefix(&self.root)
                 .map_err(|_| BrokerError::new("path_escape", "inventory path escaped workspace"))?;
-            if is_sensitive(relative) || is_generated(relative) {
+            if path_is_sensitive(relative) || path_is_generated(relative) {
                 continue;
             }
             files.push(relative.to_string_lossy().replace('\\', "/"));
@@ -294,8 +319,8 @@ impl Broker {
                 let relative = entry.path().strip_prefix(&self.root).map_err(|_| {
                     BrokerError::new("path_escape", "search path escaped workspace")
                 })?;
-                if is_sensitive(relative)
-                    || is_generated(relative)
+                if path_is_sensitive(relative)
+                    || path_is_generated(relative)
                     || !seen.insert(relative.to_path_buf())
                 {
                     continue;
@@ -378,6 +403,89 @@ impl Broker {
         )
     }
 
+    fn apply_exact_patch(
+        &self,
+        path: &str,
+        expected_sha256: &str,
+        old: &str,
+        replacement: &str,
+    ) -> Result<Value, BrokerError> {
+        if !self.allow_mutations {
+            return Err(BrokerError::new(
+                "mutation_denied",
+                "structured patches are allowed only inside an ephemeral mutable workspace",
+            ));
+        }
+        if old.is_empty() || old.len() > MAX_READ_BYTES || replacement.len() > MAX_READ_BYTES {
+            return Err(BrokerError::new(
+                "invalid_argument",
+                "patch text must be non-empty and remain within the bounded file limit",
+            ));
+        }
+        if expected_sha256.len() != 64
+            || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(BrokerError::new(
+                "invalid_argument",
+                "expected_sha256 must be a 64-character hexadecimal digest",
+            ));
+        }
+        let path = self.safe_path(path, true, true)?;
+        let metadata = fs::metadata(&path)
+            .map_err(|error| BrokerError::new("read_failed", error.to_string()))?;
+        if metadata.len() as usize > MAX_READ_BYTES {
+            return Err(BrokerError::new(
+                "read_limit",
+                "file exceeds the bounded patch limit",
+            ));
+        }
+        let content = fs::read_to_string(&path)
+            .map_err(|error| BrokerError::new("read_failed", error.to_string()))?;
+        let actual_sha256 = sha256_bytes(content.as_bytes());
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(BrokerError::new(
+                "hash_mismatch",
+                "the file changed after the patch was planned",
+            ));
+        }
+        let occurrences = content.match_indices(old).count();
+        if occurrences != 1 {
+            return Err(BrokerError::new(
+                "patch_ambiguous",
+                format!("expected the old text exactly once, found {occurrences} occurrences"),
+            ));
+        }
+        let updated = content.replacen(old, replacement, 1);
+        if updated.len() > MAX_READ_BYTES {
+            return Err(BrokerError::new(
+                "write_limit",
+                "patched file exceeds the bounded file limit",
+            ));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| BrokerError::new("write_failed", "file has no parent directory"))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        temporary
+            .write_all(updated.as_bytes())
+            .and_then(|_| temporary.as_file().sync_all())
+            .map_err(|error| BrokerError::new("write_failed", error.to_string()))?;
+        temporary
+            .persist(&path)
+            .map_err(|error| BrokerError::new("write_failed", error.error.to_string()))?;
+        Ok(json!({
+            "path": self.relative(&path)?,
+            "before_sha256": actual_sha256,
+            "after_sha256": sha256_bytes(updated.as_bytes()),
+            "bytes": updated.len(),
+        }))
+    }
+
     fn git_diff(&self, staged: bool, path: Option<&str>) -> Result<Value, BrokerError> {
         let mut arguments = vec!["diff", "--no-ext-diff", "--no-color"];
         if staged {
@@ -405,11 +513,11 @@ impl Broker {
         }
         let (program, arguments, relative_cwd): (&str, Vec<&str>, &str) = match profile {
             ValidationProfile::PythonCompile => (
-                "python",
+                "python3",
                 vec!["-m", "compileall", "-q", "app", "scripts"],
                 ".",
             ),
-            ValidationProfile::PythonUnit => ("python", vec!["-m", "pytest", "tests", "-q"], "."),
+            ValidationProfile::PythonUnit => ("python3", vec!["-m", "pytest", "tests", "-q"], "."),
             ValidationProfile::PythonLint => ("flake8", vec!["app", "--max-line-length=100"], "."),
             ValidationProfile::WebLint => ("npm", vec!["run", "lint"], "web"),
             ValidationProfile::WebBuild => ("npm", vec!["run", "build"], "web"),
@@ -434,7 +542,7 @@ impl Broker {
         cwd: &Path,
         timeout_seconds: u64,
     ) -> Result<Value, BrokerError> {
-        let allowed = ["git", "python", "flake8", "npm", "flutter", "cargo"];
+        let allowed = ["git", "python3", "flake8", "npm", "flutter", "cargo"];
         if !allowed.contains(&program) {
             return Err(BrokerError::new(
                 "command_denied",
@@ -508,7 +616,7 @@ impl Broker {
                 "absolute paths and parent traversal are denied",
             ));
         }
-        if is_sensitive(candidate) {
+        if path_is_sensitive(candidate) {
             return Err(BrokerError::new(
                 "sensitive_path",
                 "credential and environment paths are denied",
@@ -573,6 +681,7 @@ impl ToolRequest {
             Self::SearchLiteral { .. } => "search_literal",
             Self::ReadLines { .. } => "read_lines",
             Self::HashFile { .. } => "hash_file",
+            Self::ApplyExactPatch { .. } => "apply_exact_patch",
             Self::GitStatus => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::RunValidation { .. } => "run_validation",
@@ -599,7 +708,7 @@ fn is_visible_entry(entry: &DirEntry) -> bool {
         )
 }
 
-fn is_sensitive(path: &Path) -> bool {
+pub fn path_is_sensitive(path: &Path) -> bool {
     path.components().any(|component| {
         let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
         value == ".env"
@@ -615,13 +724,24 @@ fn is_sensitive(path: &Path) -> bool {
     })
 }
 
-fn is_generated(path: &Path) -> bool {
+pub fn path_is_generated(path: &Path) -> bool {
     path.components().any(|component| {
         matches!(
             component.as_os_str().to_string_lossy().as_ref(),
-            "node_modules" | "build" | "dist" | "target" | "__pycache__" | ".venv" | "venv"
+            ".git"
+                | "node_modules"
+                | "build"
+                | "dist"
+                | "target"
+                | "__pycache__"
+                | ".venv"
+                | "venv"
         )
     })
+}
+
+pub fn sha256_bytes(value: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(value))
 }
 
 fn is_text_candidate(path: &Path) -> bool {
@@ -759,5 +879,29 @@ mod tests {
     fn unknown_json_fields_are_rejected() {
         let parsed = parse_request(r#"{"tool":"git_status","command":"rm -rf /"}"#);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn exact_patch_requires_mutable_ephemeral_broker() {
+        let (temp, broker) = fixture();
+        let source = fs::read(temp.path().join("app/main.py")).unwrap();
+        let request = || ToolRequest::ApplyExactPatch {
+            path: "app/main.py".into(),
+            expected_sha256: sha256_bytes(&source),
+            old: "return 'world'".into(),
+            replacement: "return 'local'".into(),
+        };
+        let denied = broker.execute(request());
+        assert!(!denied.ok);
+        assert_eq!(denied.error.unwrap().code, "mutation_denied");
+
+        let mutable = Broker::new_mutable(temp.path()).unwrap();
+        let applied = mutable.execute(request());
+        assert!(applied.ok);
+        assert!(
+            fs::read_to_string(temp.path().join("app/main.py"))
+                .unwrap()
+                .contains("return 'local'")
+        );
     }
 }

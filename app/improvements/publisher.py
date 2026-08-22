@@ -1,10 +1,12 @@
 import base64
 import json
 import re
+import time
 from email.mime.text import MIMEText
 from urllib.parse import quote
 
 import httpx
+import jwt
 
 from app.config.settings import get_settings
 from app.db import google_clients as google
@@ -13,6 +15,66 @@ from app.db import google_clients as google
 _PRIVATE_PATTERN = re.compile(
     r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|(?i:api[_ -]?key|authorization|refresh[_ -]?token)\s*[:=]"
 )
+
+
+def _github_app_private_key(value: str) -> str:
+    """Decode the Railway-friendly GitHub App private-key representation."""
+    value = value.strip()
+    if value.startswith("base64:"):
+        try:
+            return base64.b64decode(value.removeprefix("base64:"), validate=True).decode()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError("GITHUB_CODING_APP_PRIVATE_KEY base64 is invalid") from exc
+    return value.replace("\\n", "\n")
+
+
+async def _github_api_headers(client: httpx.AsyncClient, repository: str) -> dict[str, str]:
+    """Mint a short-lived installation token, with a legacy-token compatibility path."""
+    if repository.count("/") != 1:
+        raise RuntimeError("GITHUB_PROPOSAL_REPOSITORY must be owner/repository")
+    settings = get_settings()
+    app_values = (
+        settings.github_coding_app_id.strip(),
+        settings.github_coding_app_installation_id.strip(),
+        settings.github_coding_app_private_key.strip(),
+    )
+    if any(app_values):
+        if not all(app_values):
+            raise RuntimeError(
+                "GITHUB_CODING_APP_ID, GITHUB_CODING_APP_INSTALLATION_ID, and "
+                "GITHUB_CODING_APP_PRIVATE_KEY must be configured together"
+            )
+        now = int(time.time())
+        app_jwt = jwt.encode(
+            {"iat": now - 60, "exp": now + 540, "iss": app_values[0]},
+            _github_app_private_key(app_values[2]),
+            algorithm="RS256",
+        )
+        response = await client.post(
+            f"https://api.github.com/app/installations/{app_values[1]}/access_tokens",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {app_jwt}",
+                "X-GitHub-Api-Version": "2026-03-10",
+            },
+            json={"repositories": [repository.split("/", 1)[1]]},
+        )
+        response.raise_for_status()
+        token = str(response.json().get("token") or "")
+        if not token:
+            raise RuntimeError("GitHub App did not return an installation token")
+    else:
+        token = settings.github_proposal_token.strip()
+        if not token:
+            raise RuntimeError(
+                "GitHub App repository access is not configured; set the three "
+                "GITHUB_CODING_APP_* values"
+            )
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2026-03-10",
+    }
 
 
 def proposal_markdown(proposal: dict) -> str:
@@ -45,8 +107,6 @@ def proposal_markdown(proposal: dict) -> str:
 
 async def publish_github_draft(proposal: dict, candidate_files: list[dict]) -> dict:
     settings = get_settings()
-    if not settings.github_proposal_token:
-        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     repository = settings.github_proposal_repository.strip("/")
     if repository.count("/") != 1:
         raise RuntimeError("GITHUB_PROPOSAL_REPOSITORY must be owner/repository")
@@ -57,13 +117,9 @@ async def publish_github_draft(proposal: dict, candidate_files: list[dict]) -> d
     markdown = proposal_markdown(proposal)
     branch = f"governed/{proposal['proposal_key']}-{proposal['content_hash'][:8]}"
     path = f".improvement-proposals/{proposal['proposal_key']}.md"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {settings.github_proposal_token}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
     base_url = f"https://api.github.com/repos/{repository}"
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
+        client.headers.update(await _github_api_headers(client, repository))
         repo_response = await client.get(base_url)
         repo_response.raise_for_status()
         default_branch = repo_response.json()["default_branch"]
@@ -148,16 +204,10 @@ def send_proposal_email(proposal: dict, recipient: str) -> dict:
 async def dispatch_candidate_deployment(proposal: dict) -> dict:
     """Start the already human-approved immutable candidate deployment workflow."""
     settings = get_settings()
-    if not settings.github_proposal_token:
-        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     repository = settings.github_proposal_repository.strip("/")
     url = f"https://api.github.com/repos/{repository}/actions/workflows/candidate-deploy.yml/dispatches"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {settings.github_proposal_token}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
+        client.headers.update(await _github_api_headers(client, repository))
         manifest = proposal.get("candidate_manifest") or {}
         response = await client.post(url, json={
             "ref": "main",
@@ -176,16 +226,10 @@ async def dispatch_candidate_cleanup(
 ) -> dict:
     """Scale the isolated candidate executor down after rollback or promotion."""
     settings = get_settings()
-    if not settings.github_proposal_token:
-        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     repository = settings.github_proposal_repository.strip("/")
     url = f"https://api.github.com/repos/{repository}/actions/workflows/candidate-cleanup.yml/dispatches"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {settings.github_proposal_token}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
+        client.headers.update(await _github_api_headers(client, repository))
         response = await client.post(url, json={
             "ref": "main",
             "inputs": {
@@ -201,16 +245,10 @@ async def dispatch_candidate_cleanup(
 async def dispatch_candidate_builder(build_id: str) -> dict:
     """Run Groq patch generation in isolated GitHub Actions on sanitized evidence."""
     settings = get_settings()
-    if not settings.github_proposal_token:
-        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     repository = settings.github_proposal_repository.strip("/")
     url = f"https://api.github.com/repos/{repository}/actions/workflows/candidate-builder.yml/dispatches"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {settings.github_proposal_token}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
+        client.headers.update(await _github_api_headers(client, repository))
         response = await client.post(url, json={
             "ref": "main", "inputs": {"build_id": str(build_id)},
         })
@@ -221,19 +259,14 @@ async def dispatch_candidate_builder(build_id: str) -> dict:
 async def promote_candidate_pr(proposal: dict) -> dict:
     """Mark the frozen draft ready and merge it after explicit human promotion."""
     settings = get_settings()
-    if not settings.github_proposal_token:
-        raise RuntimeError("GITHUB_PROPOSAL_TOKEN is not configured")
     draft = (proposal.get("candidate_manifest") or {}).get("draft_pr") or {}
     number = draft.get("number")
     if not number:
         raise RuntimeError("The candidate draft PR reference is unavailable")
     owner, repository_name = settings.github_proposal_repository.strip("/").split("/", 1)
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {settings.github_proposal_token}",
-        "X-GitHub-Api-Version": "2026-03-10",
-    }
-    async with httpx.AsyncClient(headers=headers, timeout=30) as client:
+    repository = f"{owner}/{repository_name}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        client.headers.update(await _github_api_headers(client, repository))
         query = await client.post("https://api.github.com/graphql", json={
             "query": """query($owner:String!,$name:String!,$number:Int!){
               repository(owner:$owner,name:$name){pullRequest(number:$number){id,isDraft}}

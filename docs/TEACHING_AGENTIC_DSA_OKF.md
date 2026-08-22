@@ -2110,3 +2110,87 @@ produce the same key; a changed source file cannot silently reuse old success. H
 `n` input bytes costs `O(n)` and lookup is expected `O(1)`. This is appropriate for
 immutable build facts, but never substitutes for current process health, OAuth state or
 read-after-write verification.
+
+<a id="dictionary-ephemeral-workspace"></a>
+## Ephemeral workspace
+
+An ephemeral workspace is a temporary copy whose lifetime is bounded to one execution.
+The coding model and mutable broker operate on this copy, never on the user's authoritative
+folder. Let the original tree be `O`, the sandbox copy be `S`, and the candidate transform
+be `T`. Preview computes `T(S)` while preserving invariant `O_after = O_before`. Apply is
+allowed only after validation succeeds and every relevant preimage hash still matches.
+
+Copying `n` files containing `b` total bytes costs `O(n + b)` time and `O(b)` temporary
+storage. This project bounds both quantities and prunes `.git`, credentials, dependencies,
+generated output and symlinks during traversal. Ephemerality limits persistence; it does
+not alone provide isolation, so path policy, cleared environments, resource limits and
+network/credential boundaries remain necessary.
+
+<a id="dictionary-preimage-guard"></a>
+## Preimage hash guard
+
+A preimage is the exact state expected before a transition. For a file mutation, the
+planner supplies `H(file_before)`, where `H` is SHA-256. Immediately before applying the
+change, the broker recomputes the digest and accepts only equality. Hashing `b` bytes is
+`O(b)`; digest comparison is constant time for the fixed 256-bit output.
+
+This is an optimistic-concurrency check: it prevents a patch planned against version `v`
+from silently overwriting version `v+1`. It does not prove that a proposed replacement is
+correct, which is why unique-match constraints, fixed validation and human approval are
+separate gates.
+
+<a id="dictionary-toctou"></a>
+## TOCTOU (time of check to time of use)
+
+TOCTOU is the race window between verifying a property and using it. A path might be safe
+when inspected but replaced by a symlink before writing; a file might match its planned
+content and then change before commit. The local runner reduces this window by resolving
+regular files below a canonical root, rebuilding a fresh sandbox on the approved run,
+rechecking hashes immediately before write, and using a same-directory atomic replacement.
+
+No ordinary user-space sequence can erase every race against a hostile local administrator.
+The security claim is narrower: accidental concurrent edits fail closed, and the model has
+no direct primitive for exploiting the interval. Stronger multi-user isolation would use
+OS sandboxing, file descriptors anchored with `openat`-style APIs, and platform-specific
+flags that reject symlinks.
+
+<a id="dictionary-approval-capability"></a>
+## Hash-bound approval capability
+
+An approval token is a capability only for one exact plan, represented here as
+`SHA256(plan_bytes)`. Changing a path, replacement, expected source hash, validation
+profile or timeout changes the token. The preview displays the token; the apply command
+must present it explicitly. Verification is `O(p)` to hash a plan of `p` bytes.
+
+This is not an identity credential and should not authorize unrelated work. It binds human
+intent to immutable input, while authentication and workspace ownership remain independent
+controls. A production UI should additionally record approver identity, timestamp, policy
+version and plan hash in the durable event log.
+
+<a id="dictionary-github-installation-token"></a>
+## GitHub App installation token
+
+A GitHub App proves its application identity with a short-lived signed JWT, then exchanges
+that assertion for an installation token constrained by the App's installation and granted
+repository permissions. Unlike a personal access token, authority is attached to an App
+installation rather than a human account and the operational token expires automatically.
+
+The project scopes the token request to one configured repository and mints it only when a
+governed GitHub operation begins. Token minting is expected `O(1)` network operations; the
+security benefit comes from smaller authority, shorter lifetime and auditable App identity,
+not from algorithmic complexity.
+
+<a id="dictionary-non-git-workspace"></a>
+## Non-Git workspace
+
+A non-Git workspace is a source directory without commit, branch or index metadata. Safety
+cannot rely on `git diff`, reset or commit history. The local runner therefore uses file
+hashes as identity, a copied sandbox as isolation, a declared changed-file set as the write
+manifest, and atomic replacement as the commit primitive.
+
+For `k` changed files, verification costs the sum of their byte lengths. The runner retains
+all preimages and, if replacement `i` fails, restores replacements `0..i-1` in reverse order.
+That compensation gives application-level transactional behavior, though a rollback can
+itself fail during a disk or permission fault and is then surfaced for manual reconciliation.
+A filesystem snapshot or native transaction would provide a stronger platform-specific
+guarantee where available.
