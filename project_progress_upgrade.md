@@ -1991,3 +1991,51 @@ release remains externally blocked because the Railway project reports an expire
 Post-integration evidence: 319 full Python tests and 75 focused candidate/broker tests
 pass; Rust format, Clippy, tests, Flake8, Bandit, Docker Compose rendering and diff
 guardrails pass under candidate tool policy v19.
+
+## Sprint 58 — Dual repository ingress and local private runner
+
+### Epic 58.1 — Ephemeral structured mutation
+
+- [x] Add an exact single-occurrence patch tool with a mandatory complete-file SHA-256
+  precondition and bounded source/replacement size.
+- [x] Keep the ordinary broker immutable and expose mutation only through an explicitly
+  constructed broker rooted in an ephemeral workspace.
+- [x] Preserve file permissions, write through a same-directory temporary file, and
+  reject ambiguous replacements, stale preimages, secrets, traversal and symlinks.
+- [x] Require a fixed validation profile after the final mutation before any result is
+  eligible to leave the sandbox.
+
+### Epic 58.2 — Local folders without Git
+
+- [x] Add `gca-local doctor` and `gca-local execute-plan` for arbitrary local directories,
+  including folders with no `.git` metadata.
+- [x] Copy only bounded regular source files into a fresh sandbox; exclude `.git`, secret
+  paths, dependency trees and generated outputs.
+- [x] Make the first execution preview-only and return a SHA-256 approval token bound to
+  the exact plan while proving that the original workspace was not modified.
+- [x] On an explicitly approved rerun, repeat sandbox execution and validation, recheck
+  original hashes, and atomically copy back only the declared changed files.
+- [x] Retain every preimage and roll back earlier file replacements if a later replacement
+  fails, surfacing any rollback failure as an explicit reconciliation incident.
+- [x] Add Rust integration coverage for a private non-Git workspace and immutable/mutable
+  broker separation.
+
+### Epic 58.3 — Hosted GitHub App authority
+
+- [x] Add GitHub App ID, installation ID and private-key configuration.
+- [x] Mint short-lived repository-scoped installation tokens on demand for candidate
+  dispatch, draft publication, cleanup and promotion.
+- [x] Fail closed on partial App configuration and keep the long-lived proposal token as
+  a documented migration fallback only.
+- [ ] Install the App on each approved hosted repository and remove the legacy token after
+  a real dispatch/PR lifecycle succeeds; this requires repository-owner configuration.
+
+### Epic 58.4 — Remaining local natural-language orchestration
+
+- [ ] Add the durable local request/plan/checkpoint layer that translates a natural-language
+  coding request into the same typed broker actions without granting model shell authority.
+- [ ] Add source-consent controls that make explicit which bounded excerpts may leave the
+  machine for a Groq-hosted planner; support deterministic plan import when source must
+  remain fully offline.
+- [ ] Add a human-readable diff renderer and multi-file transactional apply/rollback
+  manifest artifact above the already working hash-bound transactional execution core.

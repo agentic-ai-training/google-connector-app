@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     aggregate_retention_days: int = 365
     admin_notification_email: str = ""
     github_proposal_repository: str = "agentic-ai-training/google-connector-app"
+    github_coding_app_id: str = ""
+    github_coding_app_installation_id: str = ""
+    github_coding_app_private_key: str = ""
     github_proposal_token: str = ""
     grafana_cloud_prometheus_url: str = ""
     grafana_cloud_prometheus_username: str = ""

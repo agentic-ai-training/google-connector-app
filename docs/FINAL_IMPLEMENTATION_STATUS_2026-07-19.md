@@ -144,9 +144,11 @@ source succeeds once.
 
 The publisher target is configured as `agentic-ai-training/google-connector-app`
 and remains disabled until production receives a separately scoped credential.
-Create a GitHub App owned by `agentic-ai-training`
-with Contents and Pull requests write access only to this repository, generate a
-short-lived installation token, and store it as `GITHUB_PROPOSAL_TOKEN` in Railway.
+Create a GitHub App owned by `agentic-ai-training` with repository-scoped Contents,
+Pull requests and Actions access, install it only on this repository, and configure its
+App ID, installation ID and private key through the `GITHUB_CODING_APP_*` variables.
+The service generates short-lived installation tokens on demand; do not store them in
+Railway. `GITHUB_PROPOSAL_TOKEN` is supported only as a migration fallback.
 After a
 proposal passes its canary and final human promotion approval, an administrator
 must press **Publish sanitized draft PR** and confirm the frozen hash. The adapter

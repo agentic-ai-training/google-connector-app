@@ -79,9 +79,12 @@ image to restore exact-tokenizer eligibility; never solve this by allowing unbou
 
 After final promotion approval, the **Publish sanitized draft PR** button creates a
 new branch containing only `.improvement-proposals/<key>.md` and opens a draft PR;
-it never auto-merges. It requires `GITHUB_PROPOSAL_REPOSITORY` and a short-lived
-GitHub App installation token in `GITHUB_PROPOSAL_TOKEN` with Contents and Pull
-requests write permission only for this repository. **Send sanitized review email**
+it never auto-merges. Configure `GITHUB_PROPOSAL_REPOSITORY` plus
+`GITHUB_CODING_APP_ID`, `GITHUB_CODING_APP_INSTALLATION_ID`, and
+`GITHUB_CODING_APP_PRIVATE_KEY`. The service mints a short-lived installation token;
+do not store that token. The App needs only repository-scoped Contents, Pull requests,
+and Actions permissions required by the governed lifecycle. `GITHUB_PROPOSAL_TOKEN` is
+a migration fallback, not the target design. **Send sanitized review email**
 is a separate confirmation and requires `ADMIN_NOTIFICATION_EMAIL` plus the
 administrator's connected Google account.
 
