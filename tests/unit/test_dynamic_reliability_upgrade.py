@@ -245,6 +245,28 @@ def test_candidate_admission_blocks_weak_diagnoses_and_derives_write_semantics()
     assert normalized["evidence_validation"]["corrections"] == [
         "request_shape_write_derived_from_operation",
     ]
+    assert normalized["evidence_validation"]["write_derivation_source"] == (
+        "registered_tool_registry"
+    )
+
+    mislabeled_read = normalize_candidate_incident({
+        "service": "gmail", "operation": "search",
+        "request_shape": {"write": True},
+    })
+    assert mislabeled_read["request_shape"]["write"] is False
+    assert mislabeled_read["evidence_validation"]["write_derivation_source"] == (
+        "operation_tool_registry"
+    )
+
+    empty_evidence = candidate_build_admission({
+        "title": "Specific-looking failure", "stage": "execution",
+        "category": "tool_failure", "component": "step_executor",
+        "root_cause": "A tool returned an error", "evidence": {},
+    }, {"automation_eligible": True})
+    assert empty_evidence["eligible"] is False
+    assert empty_evidence["reason_codes"] == [
+        "specific_failure_evidence_required",
+    ]
 
 
 def test_candidate_grounding_reads_real_runtime_and_test_paths(tmp_path):

@@ -121,6 +121,7 @@ def _required_initial_candidate_tool(tools: BoundedRepositoryTools) -> str:
 
 def candidate_build_admission(incident: dict, option: dict) -> dict:
     """Admit only a specific, internally consistent, automatable diagnosis."""
+    incident = normalize_candidate_incident(incident)
     reasons: list[str] = []
     if option.get("automation_eligible") is not True:
         reasons.append("selected_strategy_requires_engineering_evidence")
@@ -128,11 +129,7 @@ def candidate_build_admission(incident: dict, option: dict) -> dict:
         if not str(incident.get(required_field) or "").strip():
             reasons.append(f"missing_{required_field}")
     evidence = incident.get("evidence") or {}
-    root = str(incident.get("root_cause") or "").casefold()
-    if not evidence and option.get("evidence_basis") != "cross_cluster_theme" and (
-        "not specific enough" in root
-        or str(incident.get("category") or "") in {"persistence", "unknown"}
-    ):
+    if not evidence and option.get("evidence_basis") != "cross_cluster_theme":
         reasons.append("specific_failure_evidence_required")
     return {
         "eligible": not reasons,
@@ -148,8 +145,32 @@ def normalize_candidate_incident(incident: dict) -> dict:
     """Derive security-sensitive request facts instead of trusting model labels."""
     value = dict(incident)
     shape = dict(value.get("request_shape") or {})
+    service = str(value.get("service") or "").casefold().strip()
     operation = str(value.get("operation") or "")
-    derived_write = bool(_MUTATING_OPERATION.match(operation))
+    normalized_operation = operation.casefold().strip()
+    derivation_source = "lexical_fallback"
+    derived_write = bool(_MUTATING_OPERATION.match(normalized_operation))
+    try:
+        # Use the same service/operation/tool contracts as the production
+        # planner. The lazy import keeps isolated builder utilities importable.
+        from app.runs.planner import OPERATION_TOOLS
+        from app.tools.contracts import WRITE_CONTRACTS, WRITE_TOOLS
+        from app.tools.registry import registered_tool_names
+
+        operation_tools = OPERATION_TOOLS.get((service, normalized_operation))
+        if (service, normalized_operation) in WRITE_CONTRACTS:
+            derived_write = True
+            derivation_source = "write_contract_registry"
+        elif operation_tools is not None:
+            derived_write = any(tool in WRITE_TOOLS for tool in operation_tools)
+            derivation_source = "operation_tool_registry"
+        elif normalized_operation in registered_tool_names():
+            derived_write = normalized_operation in WRITE_TOOLS
+            derivation_source = "registered_tool_registry"
+    except (ImportError, RuntimeError):
+        # Emergency/offline diagnostics may load without the Google runtime.
+        # Preserve a conservative fallback and expose its weaker provenance.
+        pass
     corrections: list[str] = []
     if operation and bool(shape.get("write")) != derived_write:
         shape["write"] = derived_write
@@ -159,6 +180,7 @@ def normalize_candidate_incident(incident: dict) -> dict:
         "status": "normalized" if corrections else "consistent",
         "corrections": corrections,
         "authority": "deterministic_builder_admission",
+        "write_derivation_source": derivation_source,
     }
     return value
 
@@ -1945,8 +1967,13 @@ async def process_one_candidate_build(pool) -> bool:
         row = await conn.fetchrow(
             """SELECT b.*,p.proposal_key,p.risk_level FROM candidate_builds b
                JOIN improvement_proposals p ON p.id=b.proposal_id
-               WHERE b.status='queued' ORDER BY b.created_at
-               FOR UPDATE SKIP LOCKED LIMIT 1"""
+               WHERE b.status='queued'
+                 AND p.status NOT IN ('rejected','expired','rolled_back')
+                 AND b.model_policy_version=$1
+                 AND b.tool_policy_version=$2
+               ORDER BY b.created_at
+               FOR UPDATE SKIP LOCKED LIMIT 1""",
+            MODEL_POLICY_VERSION, TOOL_POLICY_VERSION,
         )
         if not row:
             return False

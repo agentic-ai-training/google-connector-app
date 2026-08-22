@@ -150,6 +150,10 @@ def _candidate_build_view(row) -> dict:
     admission = candidate_build_admission(
         sanitized_input, _json_object(sanitized_input.get("selected_option")),
     )
+    superseded_by_policy = bool(
+        item.get("model_policy_version") != MODEL_POLICY_VERSION
+        or item.get("tool_policy_version") != TOOL_POLICY_VERSION
+    )
     return {
         key: item.get(key) for key in (
             "id", "proposal_key", "title", "mode", "status", "model_name",
@@ -158,6 +162,11 @@ def _candidate_build_view(row) -> dict:
             "updated_at", "file_count",
         )
     } | {
+        "raw_status": str(item.get("status") or "unknown"),
+        "status": (
+            "superseded_by_current_builder_policy"
+            if superseded_by_policy else str(item.get("status") or "unknown")
+        ),
         "error_message": (
             f"Candidate builder stopped at {failure.get('error_type')}."
             if failure.get("error_type") else None
@@ -209,10 +218,12 @@ def _candidate_build_view(row) -> dict:
         "new_policy_retry_available": bool(
             item.get("status") in {"failed", "cancelled"}
             and admission["eligible"]
-            and (
-                item.get("model_policy_version") != MODEL_POLICY_VERSION
-                or item.get("tool_policy_version") != TOOL_POLICY_VERSION
-            )
+            and superseded_by_policy
+        ),
+        "superseded_by_policy": superseded_by_policy,
+        "lifecycle_label": (
+            "superseded_by_current_builder_policy"
+            if superseded_by_policy else str(item.get("status") or "unknown")
         ),
         "build_admission": (
             "eligible" if admission["eligible"] else "evidence_required"

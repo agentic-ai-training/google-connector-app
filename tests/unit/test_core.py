@@ -88,6 +88,7 @@ from app.improvements.builder import (
     choose_builder_mode,
     effective_builder_token_budget, is_tool_generation_failure,
     normalize_candidate_contract, reviewer_contract_errors, groq_bad_request_code,
+    process_one_candidate_build,
 )
 from app.improvements.retry import candidate_retry_decision
 from app.improvements.builder_tools import (
@@ -1533,6 +1534,9 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
     })
     assert terminal["retryable"] is False
     assert terminal["new_policy_retry_available"] is True
+    assert terminal["superseded_by_policy"] is True
+    assert terminal["raw_status"] == "failed"
+    assert terminal["status"] == "superseded_by_current_builder_policy"
 
     weak = _candidate_build_view({
         **{
@@ -1553,6 +1557,40 @@ def test_candidate_build_view_exposes_retry_progress_without_checkpoint_content(
     assert weak["build_admission"] == "evidence_required"
     assert weak["new_policy_retry_available"] is False
     assert "specific_failure_evidence_required" in weak["admission_reason_codes"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_worker_claims_only_current_policy_eligible_proposals():
+    observed = {}
+
+    class Context:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, *_):
+            return False
+
+    class Connection:
+        def transaction(self):
+            return Context(self)
+
+        async def fetchrow(self, query, *args):
+            observed["query"] = query
+            observed["args"] = args
+            return None
+
+    class Pool:
+        def acquire(self):
+            return Context(Connection())
+
+    assert await process_one_candidate_build(Pool()) is False
+    assert "p.status NOT IN ('rejected','expired','rolled_back')" in observed["query"]
+    assert "b.model_policy_version=$1" in observed["query"]
+    assert "b.tool_policy_version=$2" in observed["query"]
+    assert observed["args"] == (MODEL_POLICY_VERSION, TOOL_POLICY_VERSION)
 
 
 def test_due_candidate_retries_are_claimed_and_dispatched_once(monkeypatch):
