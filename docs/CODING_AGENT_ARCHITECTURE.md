@@ -76,6 +76,10 @@ cargo install --locked --path coding_runtime --bin gca-local
 gca-local doctor --workspace /absolute/path/to/private-project
 ```
 
+The repository helper `scripts/install_local_coding_runner.sh` installs and probes the
+binary even when Cargo's bin directory is not yet on `PATH`; it prints the exact directory
+to add for future terminal sessions.
+
 The execution input is a typed JSON plan, not shell text. A mutation plan must end with
 a fixed validation profile after its final patch:
 
