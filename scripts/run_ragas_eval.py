@@ -6,9 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from langchain_core.rate_limiters import InMemoryRateLimiter
-from langchain_groq import ChatGroq
-
-from app.config.settings import get_settings
+from app.agents.router import get_llm
 from app.db.connection import close_pool, get_pool
 from app.db.prompt_service import record_metric
 from app.mlops.ragas_eval import load_evaluation_examples
@@ -45,20 +43,16 @@ Return only JSON with keys faithfulness, answer_relevancy, context_recall.
 
 
 async def main():
-    settings = get_settings()
     pool = await get_pool()
     try:
         examples = await load_evaluation_examples(pool)
         if not examples:
             print("No positive or corrected-negative evaluation examples; evaluation skipped")
             return
-        evaluator_llm = ChatGroq(
-            # Evaluation is a high-volume offline workload. Keep the 70B
-            # quality-model allowance available for user-facing requests.
-            model=settings.groq_fallback_model,
-            api_key=settings.groq_api_key,
+        evaluator_llm = get_llm(
+            "runtime_fast",
+            fallback=True,
             temperature=0,
-            max_retries=5,
             rate_limiter=InMemoryRateLimiter(
                 requests_per_second=0.08,
                 check_every_n_seconds=0.1,

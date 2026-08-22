@@ -9,8 +9,10 @@ production OAuth credentials, database owner credentials, deployment credentials
 way to assert that validation passed.
 
 The isolated coding/candidate process reads `CODING_GROQ_API_KEY`; ordinary application
-services continue their provider-migration phase and must not inherit that credential.
-The Rust subprocess receives neither the coding key nor the legacy application key.
+services use a distinct Gemini `RUNTIME_API_KEY` and must not inherit the coding
+credential. The Rust subprocess receives neither provider key. Legacy persisted route
+labels may still be interpreted while old runs finish, but they never select a Groq
+runtime client.
 
 Repository ingress has two first-class modes. Hosted repositories use a least-privilege
 GitHub App and short-lived installation tokens. Private folders that are not hosted—or

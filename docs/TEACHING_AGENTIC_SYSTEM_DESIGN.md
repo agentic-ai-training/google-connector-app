@@ -461,7 +461,7 @@ flowchart TD
     N --> W[Railway durable worker]
     W --> AG[Planner and Workspace service agents]
     AG --> G[Google Workspace APIs]
-    AG --> GR[Groq model routing]
+    AG --> GM[Gemini runtime model routing]
     AG --> OL[Ollama embeddings]
     N --> RAG[Private source-aware RAG]
     N --> OKF[Version-pinned OKF knowledge]
@@ -471,6 +471,7 @@ flowchart TD
     N --> FI[Failure intelligence]
     FI --> IP[Improvement portal]
     IP --> CB[GitHub Actions candidate builder]
+    CB --> CG[Dedicated coding-only Groq planner]
     CB --> RB[Rust deterministic tool broker]
     CB --> CI[Trusted no-secret CI]
     CI --> CAN[Isolated Railway or Vercel candidate]
@@ -485,7 +486,10 @@ flowchart TD
 - Durable worker: PostgreSQL lease-based scheduling, dependency execution, heartbeat,
   retries, reconciliation, verification, and finalization.
 - Workspace agents: Gmail, Calendar, Drive, Docs, Sheets, Tasks, Chat, Contacts, Meet.
-- Model layer: Groq-hosted planning/execution models with bounded fallback policies.
+- Model layer: Gemini planning/execution models behind a provider boundary, with bounded
+  fallback policies and a credential distinct from the coding plane. Groq is available
+  only to the isolated coding/candidate planner; neither its key nor its client library is
+  present in ordinary application routing.
 - Data layer: local PostgreSQL for development and Neon PostgreSQL for production.
 - Retrieval: tenant-scoped source-aware Gmail/Drive/Docs/Sheets/Chat/Calendar/Meet
   chunking and hybrid retrieval, with Ollama embeddings.

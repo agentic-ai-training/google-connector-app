@@ -1,6 +1,14 @@
 # Google Workspace AI Agent — Complete Project Specification
 > For Codex: Execute every epic, story, and task in order. Do not skip steps. Do not assume anything is already done unless explicitly marked DONE. After every sprint, run verification commands and confirm output before proceeding.
 
+> **Current architecture amendment (2026-08-22):** This document preserves the original
+> build specification as historical acceptance context. The governed upgrade plan in
+> `project_progress_upgrade.md` is authoritative for the current model boundary: ordinary
+> Workspace/composition and RAG evaluation use a distinct Gemini `RUNTIME_API_KEY`; Groq
+> is restricted to the isolated coding/candidate plane through `CODING_GROQ_API_KEY`.
+> Ollama `nomic-embed-text` remains the embedding model, so this inference-provider change
+> does not alter pgvector dimensions or require re-indexing.
+
 ---
 
 ## Project Context

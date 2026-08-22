@@ -64,7 +64,7 @@ class ExternalPublicationDecision(BaseModel):
     proposal_hash: str
     confirmation: str
 class PromptIn(BaseModel):
-    name:str; content:str; model_target:str="groq/llama-3.3-70b"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
+    name:str; content:str; model_target:str="gemini/gemini-2.5-flash"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
 class FeatureFlagIn(BaseModel):
     enabled: bool
     config: dict = Field(default_factory=dict)

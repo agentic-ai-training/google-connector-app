@@ -357,8 +357,8 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                    FROM agent_model_calls WHERE created_at>=date_trunc('day',now())"""
             )
             estimated = plan.estimated_max_tokens
-            remaining_after = settings.groq_daily_token_budget - used_tokens - estimated
-            if policy["write"] and remaining_after < settings.groq_quality_reserve_tokens:
+            remaining_after = settings.runtime_daily_token_budget - used_tokens - estimated
+            if policy["write"] and remaining_after < settings.runtime_quality_reserve_tokens:
                 raise RunLimitExceeded(
                     "Quality-model token reserve is too low for a mutating workflow; "
                     "retry after quota resets or increase the configured budget"

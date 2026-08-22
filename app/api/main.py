@@ -137,6 +137,8 @@ async def health():
         "status": "ok", "deployment_version": settings.deployment_version,
         "executor_version": settings.executor_version,
         "executor_role": settings.executor_role,
+        "runtime_model_provider": settings.runtime_model_provider,
+        "runtime_model_configured": bool(settings.runtime_api_key),
     }
 
 

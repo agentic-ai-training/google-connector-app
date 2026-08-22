@@ -497,7 +497,7 @@ async def _dependency_context(conn, step):
         if recent_senders:
             envelope = project_tool_result(
                 "list_recent_gmail_senders", recent_senders.get("result") or {},
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             value["output_data"] = {
                 "output": output.get("output", ""),
@@ -515,7 +515,7 @@ async def _dependency_context(conn, step):
         elif gmail_message:
             envelope = project_tool_result(
                 "get_gmail_message", gmail_message.get("result") or {},
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             original_projection = gmail_message.get("projection") or {}
             value["output_data"] = {
@@ -539,7 +539,7 @@ async def _dependency_context(conn, step):
         else:
             envelope = project_tool_result(
                 "dependency_output", output,
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             value["output_data"] = envelope.compact_result
             value["projection"] = envelope.metadata()
@@ -1639,10 +1639,10 @@ async def _execute_step(app, pool, run, step, dependencies):
             int(
                 (input_data.get("content_contract") or {}).get(
                     "visible_output_budget",
-                    get_settings().groq_max_tokens,
+                    get_settings().runtime_max_tokens,
                 )
             ),
-            get_settings().groq_composition_max_tokens,
+            get_settings().runtime_composition_max_tokens,
         ),
         "risk_level": run["risk_level"],
         "allow_small_fallback": (

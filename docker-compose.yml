@@ -57,7 +57,6 @@ services:
       DATABASE_URL: postgresql://agent_user:agent_pass_2024@postgres:5432/agent_db
       ASYNC_DATABASE_URL: postgresql+asyncpg://agent_user:agent_pass_2024@postgres:5432/agent_db
       CODING_GROQ_API_KEY: ${CODING_GROQ_API_KEY:-}
-      GROQ_FAST_MODEL: ${GROQ_FAST_MODEL:-llama-3.3-70b-versatile}
       CANDIDATE_BUILDER_MODEL: ${CANDIDATE_BUILDER_MODEL:-llama-3.3-70b-versatile}
       CANDIDATE_BUILDER_FALLBACK_MODELS: ${CANDIDATE_BUILDER_FALLBACK_MODELS:-openai/gpt-oss-120b,qwen/qwen3.6-27b,openai/gpt-oss-20b}
       CANDIDATE_BUILDER_MAX_EFFECTIVE_TOKEN_BUDGET: ${CANDIDATE_BUILDER_MAX_EFFECTIVE_TOKEN_BUDGET:-48000}

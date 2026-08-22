@@ -2350,3 +2350,50 @@ A specialist broker owns one narrow authority domain—repository, process/log, 
 deployment. Its result is a typed observation with bounded size and provenance. A specialist
 is not necessarily another LLM; deterministic specialists are cheaper, more testable, and
 cannot hallucinate an operation that their enum does not contain.
+
+<a id="dictionary-provider-boundary"></a>
+## Model-provider boundary
+
+A model-provider boundary is an adapter plus a credential and policy boundary that keeps
+application reasoning independent from a particular hosted model. In this project,
+ordinary Workspace/composition calls pass through the Gemini runtime adapter, while the
+isolated coding/candidate planner alone may use Groq. A legacy route label is data, not
+authority: interpreting `groq_fast` from an old checkpoint maps it to the current fast
+runtime tier and never recreates a Groq client.
+
+From a DSA perspective, provider selection is a total function over a small enum rather
+than arbitrary string dispatch:
+
+```python
+def runtime_model(tier: str, fallback: bool) -> str:
+    table = {
+        ("fast", False): "gemini-2.5-flash",
+        ("reasoning", False): "gemini-2.5-pro",
+        ("fast", True): "gemini-2.5-flash-lite",
+        ("reasoning", True): "gemini-2.5-flash-lite",
+    }
+    return table[(tier, fallback)]
+```
+
+Lookup is average `O(1)`. More importantly, the finite key space makes an invalid provider
+state unrepresentable after validation and prevents a fallback from crossing into another
+credential plane.
+
+<a id="dictionary-credential-plane"></a>
+## Credential plane
+
+A credential plane is the set of processes and operations that can receive one secret.
+The runtime plane receives `RUNTIME_API_KEY`; the coding plane receives
+`CODING_GROQ_API_KEY`; the keyless sandbox receives neither. Equality is rejected because
+two differently named variables containing the same secret would still collapse the
+authority boundary. This is an object-capability invariant, not merely configuration
+tidiness.
+
+<a id="dictionary-generation-embedding-separation"></a>
+## Generation–embedding separation
+
+A generation model predicts response/tool-call tokens. An embedding model maps content to
+a fixed-dimensional vector used for similarity search. Replacing Gemini/Groq generation
+does not change the Ollama `nomic-embed-text` vectors because the two pipelines are
+independent. Re-indexing is required only when the embedding model, dimension, chunker, or
+relevant indexed representation changes—not whenever the response model changes.

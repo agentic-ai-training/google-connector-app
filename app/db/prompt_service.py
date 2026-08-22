@@ -28,7 +28,7 @@ async def _experiment_arm(conn, experiment) -> str:
 
 
 async def get_prompt(
-    name, session_id, model_target="groq/llama-3.3-70b", pool=None,
+    name, session_id, model_target="gemini/gemini-2.5-flash", pool=None,
     risk_level="low",
 ):
     from app.db.connection import get_pool

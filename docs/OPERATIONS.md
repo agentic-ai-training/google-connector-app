@@ -154,8 +154,10 @@ Without `--apply` the command performs no network request.
 
 ## Quota and OAuth
 
-For Groq 429 errors, safe simple reads may use the configured small model. Complex or
-mutating workflows remain resumable and wait for quality quota. For OAuth failures,
+For runtime-provider 429 errors, safe simple reads may use the configured Gemini
+Flash-Lite fallback. Complex or mutating workflows remain resumable and wait for quality
+quota. A coding-only Groq 429 pauses only coding/candidate planning and cannot trigger a
+fallback in ordinary Workspace execution. For OAuth failures,
 check `/auth/me` missing scopes, reconnect once, and verify the exact production
 callback URI in Google Cloud. Never log access/refresh tokens.
 
