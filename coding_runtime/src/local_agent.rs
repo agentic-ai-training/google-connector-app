@@ -395,6 +395,7 @@ fn invoke_readonly_broker(
         .args(["broker-read", "--workspace"])
         .arg(workspace)
         .env_clear()
+        .envs(crate::isolation_environment())
         .env(
             "PATH",
             std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string()),

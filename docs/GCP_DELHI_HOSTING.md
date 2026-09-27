@@ -166,6 +166,13 @@ read token cannot be reused as deployment authority. See the official
 
 ### Remaining operational verification
 
+On 27 September, gVisor release-20260921.0 was added and package-held on this same VM.
+Docker default runtime was preserved; all six Coolify containers remained healthy.
+Host isolation and synthetic valid/invalid Python validation probes passed without
+private source or provider keys. No new VM or port exposure was introduced. This does
+not activate production coding workers. See [isolated validation](ISOLATED_VALIDATION.md)
+for exact image/runtime hashes, the corrected source-copy defect and remaining gates.
+
 Read-back on 27 September 2026 confirmed instance ID `822115653245959101` remains
 RUNNING as e2-standard-4, with STOP at `2026-10-19T17:24:32Z`. No new instance or
 deadline extension was made during the deployment-admission work. This read-back

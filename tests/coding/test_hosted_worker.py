@@ -59,6 +59,7 @@ def test_hosted_planner_forwards_only_dedicated_key_to_local_runner(
 
     def fake_run(arguments, **kwargs):
         assert arguments[0] == str(binary)
+        assert kwargs["env"]["GCA_REQUIRE_ISOLATED_VALIDATION"] == "1"
         assert kwargs["env"]["CODING_GROQ_API_KEY"] == "dedicated"
         assert "GROQ_API_KEY" not in kwargs["env"]
         assert "DATABASE_URL" not in kwargs["env"]
@@ -79,6 +80,7 @@ def test_hosted_execution_child_receives_no_model_key(tmp_path, monkeypatch):
 
     def fake_run(arguments, **kwargs):
         assert "CODING_GROQ_API_KEY" not in kwargs["env"]
+        assert kwargs["env"]["GCA_REQUIRE_ISOLATED_VALIDATION"] == "1"
         return subprocess.CompletedProcess(
             arguments, 0, json.dumps({"ok": True, "status": "applied"}), ""
         )

@@ -2265,6 +2265,17 @@ changes become production evidence.
   This does not substitute for the unchecked persistent reservation/executor integration.
 - [ ] Build an approved Linux execution target with OS-level isolation, separate
   credentials, restricted network, no host/Docker socket mounts and resource deadlines.
+  2026-09-27: installed pinned gVisor release-20260921.0 on the existing Delhi VM;
+  preserved Docker's default runtime and all six healthy Coolify containers. The
+  14-check host probe passed. A keyless typed-profile launcher passed live valid/invalid
+  Python compilation with source copied into sandbox-internal tmpfs, no network or host
+  mounts, bounded resources/output and verified cleanup. Rust/hosted-worker fail-closed
+  integration is local; production activation, toolchains, crash reaping and capacity
+  integration remain open. See `docs/ISOLATED_VALIDATION.md`.
+  Validation evidence: 139 Python coding tests passed with the disposable local
+  PostgreSQL ledger fixture; 26 Rust tests passed. Targeted Flake8, Bandit, shell syntax
+  and `git diff --check` passed. These results do not replace production activation,
+  crash/restart reconciliation, all-language toolchain or generated-app deployment proof.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

@@ -2185,8 +2185,10 @@ not from algorithmic complexity.
 
 A non-Git workspace is a source directory without commit, branch or index metadata. Safety
 cannot rely on `git diff`, reset or commit history. The local runner therefore uses file
-hashes as identity, a copied sandbox as isolation, a declared changed-file set as the write
-manifest, and atomic replacement as the commit primitive.
+hashes as identity, a copied workspace to protect original files, a declared changed-file
+set as the write manifest, and atomic replacement as the commit primitive. A copied
+directory is not OS isolation: generated validation needs a separate execution boundary
+such as the [managed gVisor launcher](ISOLATED_VALIDATION.md).
 
 For `k` changed files, verification costs the sum of their byte lengths. The runner retains
 all preimages and, if replacement `i` fails, restores replacements `0..i-1` in reverse order.
@@ -2201,8 +2203,10 @@ guarantee where available.
 Authority separation assigns observation, proposal, validation and mutation to different
 capability boundaries. The Groq planner can select only read tools and submit a structured
 plan. An environment-cleared child owns read-only repository access. A different keyless
-child builds the sandbox, validates, and produces an approval token. Only an explicitly
-approved invocation may copy validated bytes into the authoritative workspace.
+child prepares the temporary copy, requests isolated validation, and produces an approval
+token. Only an explicitly approved invocation may copy validated bytes into the
+authoritative workspace. Local compatibility validation is labelled `host_not_isolated`;
+clearing environment variables alone does not contain hostile code.
 
 This is stronger than asking one agent to “be careful”: no prompt can manufacture a file
 descriptor, shell, provider credential or approval capability that the process does not
@@ -2434,3 +2438,54 @@ uses a practical evidence ladder: hash-bound source, explicit public contract, t
 compiler, differential fixtures, integration tests, and human review for unresolved
 language/runtime differences. The conversion broker always starts with
 `semantic_equivalence_proven: false`.
+
+<a id="dictionary-os-isolation"></a>
+## OS isolation versus a workspace copy
+
+A copied directory is a data structure containing independent file bytes. It does not
+change what system calls a process can make. A process running a generated test could
+still open another host path, connect to the network or start descendants. A keyless
+environment removes selected secrets; it does not remove those operating-system powers.
+
+The managed launcher uses gVisor to interpose on the workload's system calls, with
+separate filesystem/network views and resource controls. The trusted Docker controller
+stays outside; the workload receives no Docker socket. See the executable evidence and
+remaining limits in [ISOLATED_VALIDATION.md](ISOLATED_VALIDATION.md).
+
+<a id="dictionary-bounded-stream"></a>
+## Bounded stream and backpressure
+
+A compiler can print unbounded output. Reading everything into one Python string uses
+`O(N)` memory for `N` emitted bytes and can exhaust the controller. Keeping only the first
+`B` bytes uses `O(min(N, B))` retained memory. Both stdout and stderr must still be drained:
+otherwise a full pipe can block the child while its parent waits for termination.
+
+```python
+remaining = max(0, byte_budget - len(stdout) - len(stderr))
+selected_stream.extend(chunk[:remaining])
+truncated |= len(chunk) > remaining
+```
+
+The launcher uses `selectors` to drain both channels, a shared budget, and a monotonic
+deadline. Reading remains `O(N)` work until that deadline; a byte cap alone is not a CPU
+or execution-time cap. An output truncation flag is evidence, never a reason to invent
+the missing diagnostic.
+
+<a id="dictionary-tmpfs-budget"></a>
+## tmpfs and multidimensional resource budgets
+
+tmpfs is an ephemeral memory-backed filesystem. Its size bound limits that mount, while
+container memory accounting also includes its pages. A 256 MiB workspace and 64 MiB temp
+mount inside a 1 GiB memory-limited container do not provide 1 GiB plus 320 MiB of free
+capacity. Admission must account for memory, CPU, PIDs, storage and deadline separately.
+This is vector feasibility, not a one-dimensional token-budget calculation.
+
+<a id="dictionary-cleanup-uncertainty"></a>
+## Cleanup uncertainty and truthful success
+
+An API timeout does not prove that a container was never created. Allocate an exact job
+identity before creation, record intent, and reconcile that identity after a lost response.
+Validation success and resource cleanup are separate postconditions. A controller crash
+needs a durable reaper and retained capacity claim; an in-process `finally` block cannot
+run after the controller itself disappears. The current launcher supplies bounded lifetime
+and explicit cleanup failure, but durable reaping/ledger binding remain activation work.

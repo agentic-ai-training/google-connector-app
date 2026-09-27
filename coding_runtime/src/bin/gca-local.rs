@@ -55,6 +55,10 @@ fn run() -> Result<(), String> {
                     "model_has_shell": false,
                     "model_has_credentials": false,
                     "writes_require_approval_token": true,
+                    "validation_isolation_required": std::env::var("GCA_REQUIRE_ISOLATED_VALIDATION").as_deref() == Ok("1"),
+                    "validation_launcher_configured": std::env::var_os("GCA_VALIDATION_LAUNCHER").is_some(),
+                    "validation_isolation_verified": false,
+                    "validation_warning": "A copied workspace and cleared environment are not OS isolation; use the managed launcher for untrusted validation.",
                 })
             );
             Ok(())
@@ -165,6 +169,7 @@ fn preview_agent_outcome(
         .arg(&outcome.plan_path)
         .env_clear()
         .env("PATH", path)
+        .envs(google_connector_coding_runtime::isolation_environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

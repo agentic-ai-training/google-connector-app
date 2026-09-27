@@ -18,6 +18,22 @@ pub mod deployment;
 pub mod local_agent;
 pub mod ops;
 
+/// Operator-owned isolation settings only; never forward provider credentials.
+pub fn isolation_environment() -> Vec<(String, String)> {
+    [
+        "GCA_REQUIRE_ISOLATED_VALIDATION",
+        "GCA_VALIDATION_LAUNCHER",
+        "GCA_VALIDATION_CONFIG",
+    ]
+    .iter()
+    .filter_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| (key.to_string(), value))
+    })
+    .collect()
+}
+
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256_000;
 const MAX_READ_BYTES: usize = 512_000;
 const MAX_FILES: usize = 10_000;
@@ -1096,6 +1112,11 @@ impl Broker {
                 "timeout_seconds must be between 1 and 1800",
             ));
         }
+        if std::env::var_os("GCA_VALIDATION_LAUNCHER").is_some()
+            || std::env::var("GCA_REQUIRE_ISOLATED_VALIDATION").as_deref() == Ok("1")
+        {
+            return self.run_isolated_validation(profile, timeout_seconds);
+        }
         let (program, arguments, relative_cwd): (&str, Vec<&str>, &str) = match profile {
             ValidationProfile::PythonCompile => (
                 "python3",
@@ -1116,8 +1137,105 @@ impl Broker {
         let mut result = self.run_program(program, &arguments, &cwd, timeout_seconds)?;
         if let Value::Object(ref mut object) = result {
             object.insert("profile".to_string(), json!(profile));
+            object.insert("isolation".to_string(), json!("host_not_isolated"));
         }
         Ok(result)
+    }
+
+    fn run_isolated_validation(
+        &self,
+        profile: ValidationProfile,
+        timeout_seconds: u64,
+    ) -> Result<Value, BrokerError> {
+        let trusted_path = |key: &str| -> Result<PathBuf, BrokerError> {
+            let raw = std::env::var(key).map_err(|_| {
+                BrokerError::new(
+                    "isolation_unavailable",
+                    "isolated validation is not configured",
+                )
+            })?;
+            let path = Path::new(&raw).canonicalize().map_err(|_| {
+                BrokerError::new(
+                    "isolation_unavailable",
+                    "isolation installation is unavailable",
+                )
+            })?;
+            if !path.is_file() || path.starts_with(&self.root) {
+                return Err(BrokerError::new(
+                    "isolation_denied",
+                    "launcher and policy must be outside the workspace",
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let owner = fs::metadata(&self.root)
+                    .map_err(|_| {
+                        BrokerError::new("isolation_denied", "cannot verify workspace owner")
+                    })?
+                    .uid();
+                for component in path.ancestors() {
+                    let info = fs::metadata(component).map_err(|_| {
+                        BrokerError::new("isolation_denied", "cannot verify isolation installation")
+                    })?;
+                    if info.mode() & 0o022 != 0 || (info.uid() != 0 && info.uid() != owner) {
+                        return Err(BrokerError::new(
+                            "isolation_denied",
+                            "isolation installation is not operator protected",
+                        ));
+                    }
+                }
+            }
+            Ok(path)
+        };
+        let launcher = trusted_path("GCA_VALIDATION_LAUNCHER")?;
+        let config = trusted_path("GCA_VALIDATION_CONFIG")?;
+        let profile_name = serde_json::to_value(profile)
+            .map_err(|_| BrokerError::new("invalid_profile", "cannot encode validation profile"))?;
+        let mut child = Command::new(launcher)
+            .arg("--workspace")
+            .arg(&self.root)
+            .arg("--profile")
+            .arg(profile_name.as_str().unwrap_or(""))
+            .arg("--timeout")
+            .arg(timeout_seconds.to_string())
+            .env_clear()
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .env("GCA_VALIDATION_CONFIG", config)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                BrokerError::new("isolation_unavailable", "cannot start isolated validation")
+            })?;
+        let reader = spawn_bounded_reader(child.stdout.take(), 1_048_576);
+        let status = child
+            .wait_timeout(Duration::from_secs(timeout_seconds + 120))
+            .map_err(|_| {
+                BrokerError::new(
+                    "isolation_unavailable",
+                    "cannot wait for isolated validation",
+                )
+            })?;
+        let Some(status) = status else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(BrokerError::new(
+                "isolation_cleanup_uncertain",
+                "launcher deadline exceeded; reconcile sandbox before retry",
+            ));
+        };
+        let output = join_bounded_reader(reader)?;
+        let value: Value = serde_json::from_str(&output)
+            .map_err(|_| BrokerError::new("isolation_protocol", "invalid isolation evidence"))?;
+        if !status.success() || value["isolation"] != "gvisor" || !value["success"].is_boolean() {
+            return Err(BrokerError::new(
+                "isolation_failed",
+                "isolated validation failed or cleanup is uncertain; no host fallback",
+            ));
+        }
+        Ok(value)
     }
 
     fn run_program(

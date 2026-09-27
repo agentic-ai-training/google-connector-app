@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     coding_agent_admin_only: bool = True
     coding_allowed_repositories: str = ""
     coding_local_runner_binary: str = "/usr/local/bin/gca-local"
+    coding_validation_launcher: str = ""
+    coding_validation_config: str = ""
     coding_planner_model: str = "llama-3.3-70b-versatile"
     coding_model_policy_version: str = "groq-tool-planner-v1"
     coding_tool_policy_version: str = "rust-broker-v2"

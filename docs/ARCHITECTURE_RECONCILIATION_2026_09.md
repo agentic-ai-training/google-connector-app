@@ -4,6 +4,9 @@ Status: source review complete; expansion authorized. Latest allocation approved
 2026-09-19; Delhi VM and private Coolify bootstrap verified 2026-09-20. Full target
 architecture remains in progress, not deployed merely because hosting is ready.
 See `GCP_DELHI_HOSTING.md` and the resumed checkpoint in `project_progress_upgrade.md`.
+On 27 September, the existing host gained a verified gVisor validation boundary.
+Typed Rust-to-keyless-launcher integration is local, not production-activated;
+see `ISOLATED_VALIDATION.md`. Source copies alone are not OS sandboxes.
 
 ## Sources and precedence
 

@@ -165,7 +165,16 @@ def _run_local(arguments: list[str], *, coding_key: str | None = None) -> dict:
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": clean_home,
         "CI": "true",
+        # Hosted generated tests must never fall back to execution on the core host.
+        "GCA_REQUIRE_ISOLATED_VALIDATION": "1",
     }
+    for setting, variable in (
+        ("coding_validation_launcher", "GCA_VALIDATION_LAUNCHER"),
+        ("coding_validation_config", "GCA_VALIDATION_CONFIG"),
+    ):
+        value = getattr(settings, setting, "")
+        if value:
+            environment[variable] = value
     if coding_key:
         environment["CODING_GROQ_API_KEY"] = coding_key
     try:
