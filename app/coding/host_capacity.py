@@ -53,7 +53,8 @@ async def register_pool(pool, host: FundedHost, *, evidence_reference: str):
             raise cost_ledger.CostLedgerConflict("host identity/capacity is immutable or already allocated")
 
 
-async def admit(conn, request: CapacityRequest, *, project_id, server_uuid, planned_end_at, exclude=None):
+async def admit(conn, request: CapacityRequest, *, project_id, server_uuid, planned_end_at,
+                exclude=None, exclude_validation=None):
     if not conn.is_in_transaction():
         raise cost_ledger.CostLedgerConflict("capacity admission requires a transaction")
     account = await cost_ledger._account(conn, project_id)
@@ -86,7 +87,13 @@ async def admit(conn, request: CapacityRequest, *, project_id, server_uuid, plan
         FROM coding_deployments WHERE capacity_pool_id=$1 AND capacity_released_at IS NULL
           AND ($2::uuid IS NULL OR id<>$2)""", request.pool_id, exclude,
     )
+    validation_used = await conn.fetchrow(
+        """SELECT COALESCE(sum(cpu_millis),0) AS cpu_millis,
+        COALESCE(sum(memory_mib),0) AS memory_mib, COALESCE(sum(storage_mib),0) AS storage_mib
+        FROM coding_validation_claims WHERE pool_id=$1 AND released_at IS NULL
+          AND ($2::uuid IS NULL OR id<>$2)""", request.pool_id, exclude_validation,
+    )
     for key in ("cpu_millis", "memory_mib", "storage_mib"):
-        if used[key] + getattr(request, key) > host[key]:
+        if used[key] + validation_used[key] + getattr(request, key) > host[key]:
             raise cost_ledger.CostAdmissionDenied(f"host_{key}_capacity_exceeded")
     return dict(host)

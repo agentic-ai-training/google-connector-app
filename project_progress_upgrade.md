@@ -2286,6 +2286,12 @@ changes become production evidence.
   PostgreSQL fixtures; targeted Flake8/Bandit and diff checks passed. The final live
   crash probe and reaper service passed again after identity-check hardening. Automatic
   timer execution was observed at 2026-09-27 19:39:38 UTC; Coolify remained healthy.
+  Central validation-capacity implementation added in migration 019: tenant/run/step
+  binding, fixed launcher resources, shared deployment/validation admission, one dispatch,
+  retained uncertain claims and identity-bound cleanup. Local PostgreSQL race/revocation
+  tests and full Alembic upgrade/downgrade/upgrade passed. Authenticated host transport,
+  real host financial enrollment and production migration remain pending; see
+  `docs/VALIDATION_CAPACITY.md`. No production capacity claim has been dispatched.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

@@ -2519,3 +2519,24 @@ The invariant is `unreconciled job => slot unavailable`. It remains true across 
 controller crash, provider timeout and delayed container creation. The converse does
 not grant deployment authority: the cloud cost ledger and tenant authorization are
 separate requirements. Deleting a row to clear a blockage would break the invariant.
+
+<a id="dictionary-shared-resource-admission"></a>
+## Shared-resource admission and serializable decisions
+
+For a host with usable capacity vector `C = (CPU, RAM, storage)`, admit request `r`
+only if `sum(unreleased allocations) + r <= C` component by component. Deployments
+and validation containers must be in the same sum. Two independent counters can each
+be below their own limit while overbooking the physical machine together.
+
+The project serializes this decision with an account/host row lock, then inserts the
+claim and its audit event in the same transaction. With `D` deployment allocations
+and `V` validation claims, the straightforward aggregate costs `O(D + V)` over the
+selected pool; indexes bound which records are scanned. The lock, not that complexity
+bound, prevents two concurrent requests from both consuming the same remaining slot.
+
+Dispatch is another state transition, not just reading the reserved record. It rechecks
+the user/run/target/deadline and returns permission to exactly one caller. That is
+at-most-one local authorization, not exactly-once execution across a network. If the
+reply is lost, reconcile the host job instead of repeating an external operation.
+The local journal and central ledger therefore describe different facts and both are
+required. See [the central validation contract](VALIDATION_CAPACITY.md).

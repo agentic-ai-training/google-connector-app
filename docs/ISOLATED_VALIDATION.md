@@ -130,8 +130,10 @@ remove a blocked row merely to make another job start.
 1. Dependency-complete Python/Node/Rust/Flutter toolchains, immutable scan/build
    attestations and adversarial workload tests.
 2. Bind durable host validation jobs to authenticated core run/step IDs and the central
-   funded capacity ledger. The host journal/reaper now exists, but it does not grant
-   cloud spending or tenant access. Exercise host reboot and Docker outage recovery.
+   funded capacity ledger. The central claim model and shared-capacity admission are
+   now implemented/tested locally in migration 019; authenticated transport binding is
+   still pending. See [validation capacity](VALIDATION_CAPACITY.md). The host journal
+   does not grant cloud spending or tenant access. Exercise host reboot and Docker outage recovery.
 3. Linux hosted-worker deployment and full Rust-to-launcher live proof. The Railway
    worker does not gain remote Docker access merely because the VM has a launcher.
 4. Authorized source transport, tenant isolation and artifact export policy.

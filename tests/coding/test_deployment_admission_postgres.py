@@ -24,6 +24,13 @@ async def prepared(db):
         await conn.execute(schema.SCHEMA_SQL)
         capacity_schema = importlib.import_module("migrations.versions.018_host_capacity")
         await conn.execute(capacity_schema.SCHEMA_SQL)
+        # Minimal real relational fixture; the complete production schema is checked
+        # separately by verify_cloud_migrations_local.py's full Alembic round trip.
+        await conn.execute("""CREATE TABLE coding_runs(
+            id UUID PRIMARY KEY,user_id TEXT NOT NULL,status TEXT NOT NULL,
+            source_egress_consented_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ)""")
+        validation_schema = importlib.import_module("migrations.versions.019_validation_capacity")
+        await conn.execute(validation_schema.SCHEMA_SQL)
     target = deploy.RegisteredTarget(
         target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
@@ -238,6 +245,9 @@ async def test_migration_017_round_trip_preserves_cost_account(prepared, monkeyp
     monkeypatch.setattr(migration, "op", Capture)
     capacity_migration = importlib.import_module("migrations.versions.018_host_capacity")
     monkeypatch.setattr(capacity_migration, "op", Capture)
+    validation_migration = importlib.import_module("migrations.versions.019_validation_capacity")
+    monkeypatch.setattr(validation_migration, "op", Capture)
+    validation_migration.downgrade()
     capacity_migration.downgrade()
     migration.downgrade()
     async with prepared[0].acquire() as conn:
@@ -246,6 +256,7 @@ async def test_migration_017_round_trip_preserves_cost_account(prepared, monkeyp
         assert await conn.fetchval("SELECT count(*) FROM cloud_budget_accounts") == 1
         await conn.execute(migration.SCHEMA_SQL)
         await conn.execute(capacity_migration.SCHEMA_SQL)
+        await conn.execute(validation_migration.SCHEMA_SQL)
         assert await conn.fetchval("SELECT count(*) FROM coding_deployments") == 0
 
 

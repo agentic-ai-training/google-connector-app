@@ -75,6 +75,10 @@ The capacity path checks active coverage, expiry, envelope overruns and CPU/RAM/
 availability. It does not request new financial authority when verified incremental
 cost is zero. Additional costs still use the ordinary fresh-evidence reservation path.
 Runtime enforcement and the production adapter integration remain required before use.
+Migration 019 adds tenant/run-bound validation claims to that same resource pool, so
+validation cannot overbook resources already allocated to generated applications.
+No second monthly VM charge is reserved. See [validation capacity](VALIDATION_CAPACITY.md)
+for dispatch/reconciliation guarantees and the still-pending authenticated host transport.
 
 ## Activation requirements still outstanding
 
