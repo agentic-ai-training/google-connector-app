@@ -52,6 +52,7 @@ jobs:
           RUN_INTEGRATION_TESTS: '1'
           ALLOW_DEV_AUTH: 'true'
           JWT_SECRET_KEY: automated-test-only-secret-at-least-32-bytes
+          COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
       - name: Lint and security-audit Python
         run: |
           pip install flake8 pip-audit bandit
@@ -78,7 +79,7 @@ jobs:
         run: |
           alembic downgrade 002
           alembic upgrade head
-          test "$(alembic current | tail -1)" = "015 (head)"
+          test "$(alembic current)" = "$(alembic heads)"
       - name: Validate Docker Compose model
         run: |
           cp .env.example .env

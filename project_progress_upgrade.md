@@ -4,6 +4,67 @@ Status: APPROVED FOR IMPLEMENTATION
 Approved: 2026-07-19  
 Execution rule: implement in dependency order, preserve rollback paths, run each sprint's guardrails before promotion, and record deviations/blockers in this file.
 
+September 2026 expansion: Sprints 60–68 below retain the original goal and incorporate
+the complete two-document architecture review. The target and corrections are recorded
+in [the September reconciliation](docs/ARCHITECTURE_RECONCILIATION_2026_09.md).
+Do not treat those target components as already deployed or erase earlier unfinished work.
+
+## Resumed execution checkpoint — 2026-09-20
+
+The user resumed the whole original goal, not a separate VM-only project. This file
+is the execution source of truth: finish all unchecked original requirements and
+Sprints 60–68 using the reconciled architecture and latest budget/model decisions.
+Do not reset completed work, create duplicate infrastructure or claim the entire
+goal is complete because a VM is running. The user cleared the old blocked goal and
+explicitly requested its replacement. A new full-scope native goal was created and
+is active as of 2026-09-20, linked to this execution contract and current checkpoint.
+
+Current focus, in dependency order:
+
+1. Finish secure Delhi hosting: same existing VM, SSH over IAP, pinned host key,
+   protected Coolify setup, scoped deployment access, finite backups and restore proof.
+2. Finish durable target/cost reservations and isolated Rust-broker execution for
+   user coding and candidate builds; preserve local private/non-Git operation.
+3. Wire and test the typed deployment flow (React, Spring Boot, private PostgreSQL,
+   immutable release, functional verification, authorized Chat URL delivery).
+4. Complete staged orchestration/retrieval/knowledge/observability integrations:
+   Kafka/outbox, Temporal, bounded CrewAI/LangGraph, private Langflow, LlamaIndex,
+   RedisVL, versioned embeddings/pgvector and OKF, OTel/Alloy/Grafana, LangSmith/Langfuse.
+   Do not deploy extra paid persistent services before their placement/cost is approved.
+5. Complete free Gemini role routing/privacy/quota checks and supported Vertex
+   learning/evaluation/inference within INR 8,500. Preserve distinct SFT, preference/
+   AI-feedback and verifiable-reward objectives; do not substitute unsupported training.
+6. Complete original guardrails, recovery/security/load/restore tests, actual candidate
+   lifecycle proof, governed rollout, documentation/teaching, and report evidence blockers.
+
+Credit discipline: reuse tool results and versioned checkpoints; bounded log excerpts;
+targeted tests before full suites; no repeated model probes, automatic training, duplicate
+VMs, unnecessary agents or unconstrained repair loops. No paid model call was made in
+the VM provisioning work. Cloud running costs are separate from assistant usage.
+Record each real external resource and its stop/cleanup policy before moving on.
+
+Verified checkpoint: VM `gca-coolify-delhi-01`, ID `822115653245959101`, RUNNING;
+creation `2026-09-19T17:24:34.872Z`, fixed STOP `2026-10-19T17:24:32Z`.
+Delhi e2-standard-4 / 100 GiB balanced disk, no attached service account, Shielded VM,
+isolated VPC and IAP-only SSH. SSH host key verified against authenticated serial output;
+administrator login and sudo tested. Budget alert ID `449fc995-ee51-4a11-9755-42d9f4208999`.
+User reconfirmed unspent INR 28,694 trial balance before creation; this is user-console
+evidence, not an API-read balance. It is no longer a statement of zero usage after creation.
+Coolify installation completed successfully as durable `gca-coolify-install.service`;
+Coolify 4.3.23, PostgreSQL, Redis, realtime, proxy and sentinel containers are healthy.
+Private dashboard HTTP returns 302; admin was created using the normal registration
+flow and registration is now disabled. Bootstrap DB dump restored successfully into
+a disposable database (one user verified), then that probe DB was removed. An off-VM
+local backup and admin credentials are ignored, owner-readable files. Public SSH/admin/
+DB ports are unreachable; IAP/SSH works. On 2026-09-21 IST, scoped read-only API access
+was verified over IAP: team 0, server `frdwr0tdglbolht3kqtokzqa`, reported reachable
+and usable. Token 1 has only `read` and expires 2026-09-27T20:04:48Z; its value is in
+an ignored owner-only local credential file, never in source. The bounded inventory
+transport projects only nonsensitive fields and rejects redirects, wrong teams and
+oversized responses. All 72 coding tests pass, including real local PostgreSQL cost
+tests. Write/deploy controller integration, recurring backup policy, public app
+TLS/domain and live generated-app proof remain unfinished.
+
 ## 1. Target outcome
 
 Every user request becomes a durable, user-scoped run that can answer:
@@ -2140,3 +2201,197 @@ passes locally. A Docker image rebuild was attempted but Docker Desktop was not 
 the Dockerfile/Compose model remains validated and the trusted Railway/CI build is the
 release authority. Governed release and the real lifecycle exercise remain before these
 changes become production evidence.
+
+## Sprint 60 — September source reconciliation and provider boundaries
+
+- [x] Read both supplied conversations to EOF, record hashes and final decisions, and
+  separate core-platform improvements from explicitly requested user-app deployments.
+- [x] Record every requested framework/model/data/telemetry/deployment layer with one
+  authoritative owner per responsibility and corrections to unsupported provider claims.
+- [x] Add explicit Developer API versus Vertex runtime construction; prevent ambient
+  SDK settings from silently changing the billing backend; keep Groq coding-only.
+- [x] Add role selectors for coding-supervisor and failure-intelligence models, regional
+  endpoint checks, ADC support and an explicit paid-runtime activation gate. These are
+  provider primitives, not proof that either new agent role has been integrated.
+- [x] Resolve the requested free AI Studio SFT path: use the user's accepted free base
+  model alternative for those roles, not nonexistent free tuned endpoints. Separate
+  unbilled project `gca-free-models-454922895512` created with approval; restricted
+  key stored locally, and Gemini 3.5 Flash-Lite tool calling verified on 2026-09-19.
+  Full per-role routing, new-project quotas and private-data eligibility remain pending;
+  do not silently move those roles to paid Vertex or claim they are tuned.
+- [ ] Register verified tuned endpoints, provenance, evaluation results and per-role
+  providers; live-probe structured tool calling before production activation.
+- [ ] Reconcile this expansion with PR #139 and release only verified migrations,
+  preserving the existing production rollback path and user-owned architecture edits.
+
+## Sprint 61 — Credit authority, GCP target and isolated execution foundation
+
+- [x] Record the 2026-09-19 explicit approval: initial 30-day Delhi e2-standard-4
+  hosting planning ceiling INR 14,000 (up to INR 3,000 from the original cloud reserve),
+  INR 6,000 remaining reserve, INR 8,500 Vertex unchanged; total INR 28,500. Expected
+  reserve draw INR 2,850.56 including the variable allowance; reconcile actual usage
+  and return any unused earmark. These are not provider-enforced billing caps.
+- [x] Verify target/billing/region/service prerequisites; user reconfirmed trial balance
+  INR 28,694 before creation on 2026-09-19, expiry 21 November. Billing API independently
+  verified open INR account and link, not promotional balance or trial status.
+- [x] Receive target identifiers from the user: project
+  `project-ee0c1944-144c-4364-ad4`, organization `342585805923`, billing account
+  `01C9EC-FBE657-88466A`. CLI authentication, project number `454922895512`, parent
+  and billing linkage verified. Balance INR 28,694/expiry 21 November 2026 remain
+  user-console evidence, not a current API balance. E2 quota is zero in Mumbai and
+  24 in Delhi/Iowa; catalog-backed Delhi estimates are recorded in
+  `docs/GCP_PREFLIGHT_2026_09.md`. Standard pricing rechecked 2026-09-19 and the
+  shortfall is now explicitly funded only from the reserve as above. VM provisioned
+  with fixed STOP deadline and separate budget alert; see the execution checkpoint.
+- [ ] Add durable cost reservations/reconciliation across hosting, disk/IP/network,
+  training and inference. Never spend the future reserve or upgrade billing implicitly.
+  Local foundation added 2026-09-20: migration 016, project-wide transactional row
+  locking, owner/idempotency binding, single dispatch authorization, retained uncertain
+  liabilities, actual-cost reconciliation and fixed hosting deadline. Real local
+  PostgreSQL concurrency and transaction-failure tests pass: 55 coding tests passed
+  with the local ledger database enabled; targeted Flake8, Bandit and compilation
+  checks also passed. Production migration, audited import of the
+  existing VM obligation, and deployment/provider adapter integration remain pending;
+  see `docs/CLOUD_COST_LEDGER.md`. This item is intentionally not marked complete.
+  2026-09-27: added cumulative charge accrual without double-counting refreshed credit,
+  and migration 018 for apps sharing the existing host's funded CPU/RAM/storage pool.
+  Admission/dispatch, uncertainty and cleanup are tested in local PostgreSQL; 103
+  coding tests pass. Live host obligation import, actual runtime limit enforcement
+  and production controller activation remain open.
+- [x] Add a pure, no-network preflight for the three integer-paise envelopes with
+  project binding, fresh credit evidence, workload/credit expiry checks and locked reserve.
+  Revised to protect the other category's unspent funds and limit hosting to 30 days;
+  17 budget tests pass. Added `docs/GCP_DELHI_HOSTING.md` provisioning/security runbook.
+  This does not substitute for the unchecked persistent reservation/executor integration.
+- [ ] Build an approved Linux execution target with OS-level isolation, separate
+  credentials, restricted network, no host/Docker socket mounts and resource deadlines.
+- [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
+  models, and report when secure execution prerequisites are unavailable.
+- [ ] Provision Coolify on the approved GCP target with verified SSH host keys,
+  scoped access, protected admin UI, TLS/domain ownership and backup/restore procedure.
+- [ ] Verify generated workloads cannot read core secrets, core DB, another app's
+  storage, another user's logs or deployment credentials.
+
+## Sprint 62 — Durable orchestration and concurrency migration
+
+- [ ] Add tenant-scoped immutable event contracts and transactional outbox; Kafka uses
+  bounded partitions/retention/payloads, acknowledgements and deduplicating consumers.
+- [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
+  ledger projections, retries, timers, signals, cancellation and compensation.
+- [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
+  never both execute it. Prove replay, crash recovery and migration rollback.
+- [ ] Add per-user/app/global capacity admission, fair queuing, model quotas and
+  backpressure. Load-test rather than claim unlimited asynchronous users.
+- [ ] Integrate CrewAI bounded role collaboration and existing LangGraph domain behavior
+  through adapters, with no competing durable loops or shared tenant memory.
+- [ ] Keep Langflow private and design-time; validate/version its exported graphs through
+  a supported adapter before allowing any production policy change.
+
+## Sprint 63 — Shared coding and Gemini supervisor lifecycle
+
+- [ ] Localize source/tests, generate typed Groq patch operations, stage into isolated
+  workspaces and run real keyless compile/unit/integration/security checks.
+- [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
+  cannot fabricate test success, override tool policy or grant deployment access.
+- [ ] Bound corrective rounds by progress, tokens, time and distinct failure fingerprints;
+  carry resumable evidence and preserve all actual model-chain usage.
+- [ ] Extend verified tool profiles for generated Java/Spring Boot, React/TypeScript,
+  PostgreSQL migrations, Compose and cross-language repositories without arbitrary host shell.
+- [ ] Support repository creation through scoped GitHub App authority and private local
+  source bundles. Publish only requested content, without secrets or raw user data.
+- [ ] Preserve two release origins: authorized user-service operations and separately
+  governed core-platform candidates with trusted CI/canary/promotion gates.
+
+## Sprint 64 — Single-request generated application deployment
+
+- [ ] Plan the full example as a dependency DAG: requirements -> source -> tests ->
+  immutable release -> deployment -> behavior verification -> Google Chat URL delivery.
+- [ ] Add typed Coolify adapter with target registry, secret references, safe SSH/SFTP
+  bootstrap where needed, bounded polling, error taxonomy and stable resource identities.
+  2026-09-21 local progress: migration 017 and deployment-admission component bind
+  immutable tenant targets, exact release/Compose/validation hashes, expiring grants,
+  atomic cost reservations and single dispatch claims. Ambiguous provider results
+  remain reserved and can reconcile after revocation; submission never means verified.
+  Local PostgreSQL tests cover concurrency, ownership constraints and migration
+  round-trip. Live read-only inventory access is verified. Provider writes, actual
+  validation-attestation/approval integration and live capacity enforcement are still
+  pending. Capacity admission was added locally on 2026-09-27; see
+  `docs/DEPLOYMENT_ADMISSION.md`. Keep this item unchecked.
+- [ ] Validate generated Compose/image policy; provision private per-app network,
+  persistent database, secrets and domain. Never reuse the core Neon owner connection.
+- [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,
+  internal PostgreSQL and explicitly requested isolated external Neon destinations.
+- [ ] Reconcile timeout-after-success before retry; do not duplicate repositories,
+  databases, apps, deployments, invitations or Chat messages.
+- [ ] Verify login success, invalid-login rejection, password/session security, database
+  persistence, frontend/backend connectivity, TLS, expected artifacts and target URL.
+- [ ] Deliver the exact verified URL to the authorized Google Chat recipient; display
+  deployed and shared evidence separately and preserve partial successes truthfully.
+
+## Sprint 65 — Retrieval, cache and operational knowledge integration
+
+- [ ] Integrate LlamaIndex adapters with existing source-aware chunks/parents, typed
+  live-data lookup, hybrid retrieval, selective agentic retrieval and graph traversal.
+- [ ] Enforce tenant/ACL checks on graph nodes AND edges, exact source lineage,
+  deletion/tombstones, embedding version/dimension validation and incremental indexing.
+- [ ] Introduce RedisVL acceleration behind entity-specific policies; never cache writes
+  as completion evidence or use semantic similarity as mutation idempotency.
+- [ ] Keep exact recent conversational references separate from knowledge RAG, with
+  per-step evidence of why retrieval/context was selected and what was actually used.
+- [ ] Extend human-published OKF for deployment recipes, model/training contracts,
+  recovery and source policies; pin versions without making documents executable authority.
+- [ ] Replay baseline versus proposed retrieval/cache/OKF strategies and retain original
+  evaluation obligations; no permanent winner without measured evidence.
+
+## Sprint 66 — Unified core and generated-app MELT
+
+- [ ] Correlate tenant/session/run/app/release/tool/model/policy/OKF identities without
+  unbounded Prometheus labels; isolate user/admin access to logs and traces.
+- [ ] Instrument core and generated services with supported OTel/OpenInference adapters;
+  Alloy routes metrics to Prometheus/Mimir, logs to Loki, traces to configured backends.
+- [ ] Preserve LangSmith and existing Grafana dashboards; add requested Langfuse with its
+  real storage dependencies and budget. Phoenix is optional, not an implicit duplicate.
+- [ ] Show deployment/build logs, current app health, database health, functional probes,
+  tokens, latency, costs, failure cause, created artifacts and actionable recovery.
+- [ ] Sign/deduplicate failure notifications; bound observability exports, redact secrets,
+  enforce retention/consent and test telemetry outage independently of task execution.
+
+## Sprint 67 — Training, inference evaluation and safe improvement
+
+- [ ] Build consented sanitized SFT and preference/critique datasets from verified
+  corrections with train/validation/test separation and dataset/model version lineage.
+- [ ] Use supported Vertex tuning methods for the selected roles; separate SFT, RLAIF
+  preference creation/evaluation and actual weight updates. Groq base weights remain unchanged.
+- [ ] Estimate token/epoch tuning charges and evaluation/inference spend before each job;
+  admit only within the dedicated INR 8,500 envelope and remaining trial period.
+- [ ] Do not launch RL/GRPO from unverified tutorial snippets or equate compilation with
+  task correctness. No raw private logs exported to Kaggle or other unapproved training hosts.
+- [ ] Record actual tuned endpoint, base model, dataset, job, region, metrics, costs and
+  rollback model. Apply offline regression/security gates before a governed rollout.
+- [ ] Complete the outstanding fresh candidate lifecycle proof with source-grounded code,
+  trusted CI remediation, isolated deployment, measurements and promotion/rollback.
+
+## Sprint 68 — Recovery, rollout, documentation and final proof
+
+- [ ] Add scoped generated-app failure intelligence with bounded fix/retest/redeploy;
+  honor separately authorized maintenance scope and never modify the core from app incidents.
+- [ ] Roll back to verified immutable releases where available; for first-deploy failures
+  preserve required data and compensate safe resources instead of inventing a prior release.
+- [ ] Fault-inject at every activity boundary: provider 429/403, queue duplicate/replay,
+  worker death, SSH/certificate failure, image failure, migration failure, partial write,
+  proxy disconnect, unhealthy app, credit expiry and revoked permissions.
+- [ ] Update architecture, operations/security/deployment guides, API/CLI usage, diagrams,
+  the teaching guide and DSA/agentic dictionary after each real integration.
+- [ ] Run original guardrails plus new adapter/contract/replay/load/restore/security tests;
+  record commands and distinguish mocked, local integration and live production evidence.
+- [ ] Complete the single-request login-app demonstration and verified Chat delivery on
+  authorized infrastructure; report every incomplete capability and external dependency.
+
+Progress 2026-09-13: source reconciliation written; optional explicit Vertex provider
+boundary, role selection and no-network credit preflight implemented. All 201 coding
+and core unit tests pass; changed Python files pass Flake8, Compileall and Bandit;
+`git diff --check` passes. See `docs/SEPTEMBER_CLOUD_ACCESS_CHECKLIST.md` for the exact
+account information needed. No Vertex model has been trained or live-probed,
+no GCP resource has been provisioned and no new framework has been deployed. The free
+AI Studio SFT claim remains contradicted by official documentation and needs a feasible
+replacement decision. The user's existing `docs/ARCHITECTURE.md` edits are preserved.
