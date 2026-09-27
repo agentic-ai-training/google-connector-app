@@ -1,5 +1,7 @@
 import asyncio
 import importlib
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -59,6 +61,54 @@ async def test_replay_has_one_claim_and_one_dispatch(covered):
         validation.claim_dispatch(covered[0], rows[0]["id"], user_id="alice") for _ in range(8)
     ])
     assert sum(claim is not None for claim in claims) == 1
+    issued = next(claim for claim in claims if claim is not None)["host_envelope"]
+    assert issued["claim_id"] == str(rows[0]["id"])
+    assert issued["run_id"] == str(req.run_id)
+    assert issued["source_hash"] == req.source_hash
+    assert issued["request_hash"] == deployment.fingerprint(req)
+    assert issued["server_uuid"] == covered[1].server_uuid
+    assert issued["deadline"] == int(req.planned_end_at.timestamp())
+
+
+@pytest.mark.asyncio
+async def test_bound_host_reconciliation_rejects_wrong_claim_or_binding(covered):
+    row = await reserve(covered)
+    issued = await validation.claim_dispatch(covered[0], row["id"], user_id="alice")
+    binding_hash = hashlib.sha256(json.dumps(
+        issued["host_envelope"], sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    observed = {"claim_id": str(row["id"]), "state": "cleaned", "cleanup_verified": True,
+                "validation_job_id": "e" * 32, "request_hash": row["request_hash"],
+                "binding_hash": binding_hash, "validation_success": None}
+    for field, value in [("claim_id", str(uuid4())), ("binding_hash", "a" * 64),
+                         ("request_hash", "b" * 64), ("validation_success", True),
+                         ("cleanup_verified", "true"), ("state", "running")]:
+        with pytest.raises(validation.ValidationConflict):
+            await validation.reconcile_host_observation(
+                covered[0], row["id"], user_id="alice", observation={**observed, field: value},
+            )
+    result = await validation.reconcile_host_observation(
+        covered[0], row["id"], user_id="alice", observation=observed,
+    )
+    assert result["status"] == "released"
+    assert result["host_job_id"] == "e" * 32
+
+
+@pytest.mark.asyncio
+async def test_unknown_host_claim_retains_central_allocation(covered):
+    row = await reserve(covered)
+    await validation.claim_dispatch(covered[0], row["id"], user_id="alice")
+    observation = {"claim_id": str(row["id"]), "state": "unknown", "cleanup_verified": False}
+    result = await validation.reconcile_host_observation(
+        covered[0], row["id"], user_id="alice", observation=observation,
+    )
+    assert result["status"] == "uncertain"
+    assert result["released_at"] is None
+    with pytest.raises(validation.ValidationConflict):
+        await validation.reconcile_host_observation(
+            covered[0], row["id"], user_id="alice",
+            observation={**observation, "cleanup_verified": True},
+        )
 
 
 @pytest.mark.asyncio

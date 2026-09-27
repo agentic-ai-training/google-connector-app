@@ -2292,6 +2292,13 @@ changes become production evidence.
   tests and full Alembic upgrade/downgrade/upgrade passed. Authenticated host transport,
   real host financial enrollment and production migration remain pending; see
   `docs/VALIDATION_CAPACITY.md`. No production capacity claim has been dispatched.
+  Policy-v3 host dispatch now binds the exact claim/source/image/profile/host/deadline;
+  durable claim consumption prevents reruns after cleanup. Central reconciliation
+  verifies claim/envelope hashes and retains unknown outcomes. A synthetic live gVisor
+  proof passed on the existing VM; production enrollment/worker transport remain open.
+  Final local regression evidence: 195 coding tests passed, including disposable local
+  PostgreSQL admission/reconciliation tests; targeted Flake8, Bandit and diff checks
+  passed. No paid provider call, new VM, production model switch or migration occurred.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

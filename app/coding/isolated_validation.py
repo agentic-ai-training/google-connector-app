@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -68,12 +69,17 @@ def load_policy(path: Path, workspace: Path | None) -> dict:
     if not path.is_file() or path.stat().st_size > 32768:
         raise IsolationError("Invalid operator policy file")
     policy = json.loads(path.read_text())
-    if not isinstance(policy, dict) or set(policy) != {
-        "version", "runtime", "images", "state_directory",
-    }:
+    fields = {"version", "runtime", "images", "state_directory"}
+    if isinstance(policy, dict) and policy.get("version") == 3:
+        fields.add("server_uuid")
+    if not isinstance(policy, dict) or set(policy) != fields:
         raise IsolationError("Unexpected operator policy fields")
-    if policy["version"] != 2 or policy["runtime"] != "runsc":
+    if policy["version"] not in {2, 3} or policy["runtime"] != "runsc":
         raise IsolationError("Managed execution requires the runsc policy")
+    if policy["version"] == 3 and not re.fullmatch(
+        r"[a-zA-Z0-9-]{1,128}", str(policy["server_uuid"]),
+    ):
+        raise IsolationError("Invalid bound host identity")
     if not isinstance(policy["images"], dict):
         raise IsolationError("Invalid image registry")
     for profile, image in policy["images"].items():
@@ -95,6 +101,63 @@ def load_policy(path: Path, workspace: Path | None) -> dict:
         raise IsolationError("Journal directory must have mode 0700")
     policy["state_directory"] = str(state)
     return policy
+
+
+def load_dispatch(claim_id: str, policy: dict) -> dict:
+    """Read trusted transport's private spool, never a file in generated source.
+
+    This is an OS trust boundary, not a signature verifier: only the authenticated
+    controller may populate the operator-owned spool after central admission.
+    """
+    if str(uuid.UUID(claim_id)) != claim_id or policy["version"] != 3:
+        raise IsolationError("Dispatch requires a canonical claim and bound host policy")
+    directory = Path(policy["state_directory"]) / "dispatch"
+    path = directory / (claim_id + ".json")
+    for item in (directory, path):
+        info = item.lstat()
+        if (stat.S_ISLNK(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077):
+            raise IsolationError("Dispatch spool must be private and operator owned")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_size > 8192 or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077):
+            raise IsolationError("Invalid dispatch spool record")
+        binding = json.loads(stream.read(8193))
+    if not isinstance(binding, dict) or binding.get("claim_id") != claim_id:
+        raise IsolationError("Dispatch spool claim mismatch")
+    return binding
+
+
+def verify_dispatch(binding: dict, policy: dict, source: bytes, profile: str, timeout: int):
+    fields = {"version", "claim_id", "run_id", "sequence_no", "request_hash", "target_hash",
+              "server_uuid", "source_hash", "image_id", "profile", "timeout_seconds",
+              "deadline"}
+    if (not isinstance(binding, dict) or set(binding) != fields
+            or type(binding["version"]) is not int or binding["version"] != 1):
+        raise IsolationError("Invalid dispatch envelope")
+    for field in ("claim_id", "run_id"):
+        try:
+            if str(uuid.UUID(binding[field])) != binding[field]:
+                raise ValueError("Noncanonical UUID")
+        except (ValueError, TypeError, AttributeError) as error:
+            raise IsolationError("Invalid dispatch identity") from error
+    for field in ("request_hash", "target_hash", "source_hash"):
+        if not isinstance(binding[field], str) or not re.fullmatch(r"[a-f0-9]{64}", binding[field]):
+            raise IsolationError("Invalid dispatch fingerprint")
+    now = int(time.time())
+    if (type(binding["sequence_no"]) is not int or binding["sequence_no"] < 0
+            or type(binding["deadline"]) is not int
+            or not now + timeout + 90 <= binding["deadline"] <= now + 1920
+            or type(binding["timeout_seconds"]) is not int
+            or binding["timeout_seconds"] != timeout
+            or binding["profile"] != profile
+            or binding["server_uuid"] != policy.get("server_uuid")
+            or binding["image_id"] != policy["images"].get(profile)
+            or binding["source_hash"] != hashlib.sha256(source).hexdigest()):
+        raise IsolationError("Dispatch source, host, toolchain or deadline mismatch")
 
 
 class Journal:
@@ -130,6 +193,9 @@ class Journal:
                 CREATE TABLE IF NOT EXISTS events(
                     sequence INTEGER PRIMARY KEY,job_id TEXT NOT NULL,
                     state TEXT NOT NULL,observed_at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS dispatch_claims(
+                    claim_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,
+                    binding_hash TEXT NOT NULL,job_id TEXT NOT NULL UNIQUE);
                 CREATE INDEX IF NOT EXISTS jobs_deadline ON jobs(state,deadline);
             """)
             with self.db:
@@ -149,7 +215,10 @@ class Journal:
             os.close(self.lock)
         self.db = self.lock = None
 
-    def begin(self, profile: str, image: str, timeout: int) -> dict:
+    def begin(self, profile: str, image: str, timeout: int, binding: dict | None = None) -> dict:
+        if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
+                                       (binding["claim_id"],)).fetchone():
+            raise IsolationError("Dispatch claim already consumed; reconcile instead of replaying")
         if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
             raise IsolationError("Validation slot held by an unreconciled job")
         job_id = uuid.uuid4().hex
@@ -157,7 +226,12 @@ class Journal:
         with self.db:
             self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,'creating',NULL,?)",
                             (job_id, "gca-validation-" + job_id, image, profile,
-                             now + timeout + 90, now))
+                             binding["deadline"] if binding else now + timeout + 90, now))
+            if binding:
+                digest = hashlib.sha256(json.dumps(binding, sort_keys=True,
+                                                    separators=(",", ":")).encode()).hexdigest()
+                self.db.execute("INSERT INTO dispatch_claims VALUES(?,?,?,?)",
+                                (binding["claim_id"], binding["request_hash"], digest, job_id))
             self.db.execute("INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)",
                             (job_id, "creating", now))
         return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
@@ -174,6 +248,30 @@ class Journal:
         job["state"] = state
         if container_id:
             job["container_id"] = container_id
+
+    def observe_claim(self, claim_id: str) -> dict:
+        """Cleanup evidence only. Losing the result never proves validation success."""
+        if str(uuid.UUID(claim_id)) != claim_id:
+            raise IsolationError("Invalid observation claim")
+        row = self.db.execute(
+            "SELECT c.*,j.state,j.name,j.image,j.profile,j.deadline,j.container_id "
+            "FROM dispatch_claims c JOIN jobs j ON j.id=c.job_id WHERE c.claim_id=?",
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            # Not found is not permission for the central controller to release or retry.
+            return {"claim_id": claim_id, "state": "unknown", "cleanup_verified": False}
+        job = {**dict(row), "id": row["job_id"]}
+        if job["state"] == "cleaned":
+            ids = docker("ps", "-a", "--no-trunc", "--filter", f"label=gca.scope={self.scope}",
+                         "--filter", f"label=gca.job={job['id']}",
+                         "--format", "{{.ID}}").decode().split()
+            if ids:
+                self.record(job, "cleanup_uncertain")
+        return {"claim_id": claim_id, "validation_job_id": job["id"],
+                "request_hash": job["request_hash"], "binding_hash": job["binding_hash"],
+                "state": job["state"], "cleanup_verified": job["state"] == "cleaned",
+                "validation_success": None}
 
     def cleanup(self, job: dict, *, create_confirmed: bool = False):
         ids = docker("ps", "-a", "--no-trunc", "--filter", f"name=^/{job['name']}$",
@@ -345,21 +443,29 @@ def execute_bounded(args: list[str], timeout: int) -> dict:
             stream.close()
 
 
-def validate(workspace: Path, profile: str, timeout: int, policy: dict) -> dict:
+def validate(workspace: Path, profile: str, timeout: int, policy: dict,
+             binding: dict | None = None) -> dict:
     with Journal(Path(policy["state_directory"])) as journal:
-        return _validate(workspace, profile, timeout, policy, journal)
+        return _validate(workspace, profile, timeout, policy, journal, binding)
 
 
-def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal: Journal) -> dict:
+def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal: Journal,
+              binding: dict | None = None) -> dict:
+    if policy["version"] == 3 and binding is None:
+        raise IsolationError("Centrally admitted dispatch is required on this host")
+    if binding is not None and policy["version"] != 3:
+        raise IsolationError("Dispatch requires a bound host policy")
     if profile not in PROFILES or profile not in policy["images"]:
         raise IsolationError("No approved offline toolchain for this validation profile")
-    if not 1 <= timeout <= 1800:
+    if type(timeout) is not int or not 1 <= timeout <= 1800:
         raise IsolationError("Validation timeout must be within 1..1800 seconds")
     root = workspace.resolve(strict=True)
     relative_cwd, command = PROFILES[profile]
     if not (root / relative_cwd).is_dir():
         raise IsolationError("Validation working directory is missing")
     source = source_archive(root)
+    if binding is not None:
+        verify_dispatch(binding, policy, source, profile, timeout)
     if profile == "python_compile":
         with tarfile.open(fileobj=io.BytesIO(source)) as archive:
             if not any(
@@ -367,7 +473,7 @@ def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal
                 for name in archive.getnames()
             ):
                 raise IsolationError("No Python source exists for the compile profile")
-    job = journal.begin(profile, policy["images"][profile], timeout)
+    job = journal.begin(profile, policy["images"][profile], timeout, binding)
     name = job["name"]
     create_confirmed = False
     # Set intent before create: a lost response still requires cleanup of this exact ID.
@@ -411,6 +517,8 @@ def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal
             "image_id": policy["images"][profile], "network": "none",
             "workspace_mutations_discarded": True,
             "validation_job_id": job["id"], "cleanup_verified": True,
+            **({"claim_id": binding["claim_id"], "request_hash": binding["request_hash"],
+                "source_hash": binding["source_hash"]} if binding else {}),
         }
     finally:
         # Failure here overrides success. The caller must record cleanup uncertainty.
@@ -427,11 +535,21 @@ def main() -> int:
     parser.add_argument("--profile", choices=tuple(PROFILES))
     parser.add_argument("--timeout", type=int)
     parser.add_argument("--reap", action="store_true")
+    parser.add_argument("--claim-id")
+    parser.add_argument("--observe-claim")
     args = parser.parse_args()
     try:
         config = Path(os.environ["GCA_VALIDATION_CONFIG"])
+        if args.observe_claim:
+            if args.workspace or args.profile or args.timeout or args.claim_id or args.reap:
+                raise IsolationError("Observation cannot execute a workload")
+            policy = load_policy(config, None)
+            with Journal(Path(policy["state_directory"])) as journal:
+                result = journal.observe_claim(args.observe_claim)
+            print(json.dumps(result))
+            return 0
         if args.reap:
-            if args.workspace or args.profile or args.timeout:
+            if args.workspace or args.profile or args.timeout or args.claim_id:
                 raise IsolationError("Reaper cannot accept a validation request")
             policy = load_policy(config, None)
             try:
@@ -445,7 +563,9 @@ def main() -> int:
         if args.workspace is None or args.profile is None or args.timeout is None:
             raise IsolationError("Validation requires workspace, profile and timeout")
         workspace = args.workspace.resolve(strict=True)
-        result = validate(workspace, args.profile, args.timeout, load_policy(config, workspace))
+        policy = load_policy(config, workspace)
+        binding = load_dispatch(args.claim_id, policy) if args.claim_id else None
+        result = validate(workspace, args.profile, args.timeout, policy, binding)
         print(json.dumps(result))
         return 0
     except (IsolationError, OSError, ValueError, KeyError, sqlite3.Error,

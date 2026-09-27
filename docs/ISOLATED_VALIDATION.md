@@ -23,13 +23,18 @@ Destroy container; uncertain cleanup overrides success
 
 `app/coding/isolated_validation.py` is a standalone standard-library launcher. Install
 it outside model-editable workspaces. Operator policy and parent directories must not
-be group/world writable. Configuration is a JSON object with exactly `version: 2`,
+be group/world writable. The legacy operator-probe configuration has `version: 2`,
 `runtime: "runsc"`, `state_directory`, and `images`, a map from supported profile name to local
 `sha256:<64 lowercase hex digits>` image ID. Images are never pulled automatically.
 Only reviewed, secret-free, dependency-complete toolchains may be registered.
 The state directory must already exist with mode 0700, outside the source tree, under
 operator-protected parents. All jobs on this validation host must use the same policy
 and journal; a second journal is not an extra capacity grant.
+Policy v3 adds an immutable `server_uuid` and requires a private central-claim envelope
+for every execution. The host binds source/image/profile/deadline and journals consumed
+claims; the existing deployed policy remains v2 until central admission is connected.
+See [host dispatch contract](VALIDATION_CAPACITY.md#host-dispatch-contract) for the
+authenticated spool and reconciliation boundary. A hash alone is not authentication.
 
 Hosted settings `CODING_VALIDATION_LAUNCHER` and `CODING_VALIDATION_CONFIG` become
 `GCA_VALIDATION_LAUNCHER` and `GCA_VALIDATION_CONFIG`. Hosted execution always sets
@@ -131,8 +136,10 @@ remove a blocked row merely to make another job start.
    attestations and adversarial workload tests.
 2. Bind durable host validation jobs to authenticated core run/step IDs and the central
    funded capacity ledger. The central claim model and shared-capacity admission are
-   now implemented/tested locally in migration 019; authenticated transport binding is
-   still pending. See [validation capacity](VALIDATION_CAPACITY.md). The host journal
+   now implemented/tested locally in migration 019. Host claim verification/replay
+   prevention and central observation matching are implemented with a synthetic live
+   proof; actual worker transport and enrollment remain pending.
+   See [validation capacity](VALIDATION_CAPACITY.md). The host journal
    does not grant cloud spending or tenant access. Exercise host reboot and Docker outage recovery.
 3. Linux hosted-worker deployment and full Rust-to-launcher live proof. The Railway
    worker does not gain remote Docker access merely because the VM has a launcher.

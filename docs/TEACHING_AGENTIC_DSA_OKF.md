@@ -2540,3 +2540,23 @@ at-most-one local authorization, not exactly-once execution across a network. If
 reply is lost, reconcile the host job instead of repeating an external operation.
 The local journal and central ledger therefore describe different facts and both are
 required. See [the central validation contract](VALIDATION_CAPACITY.md).
+
+<a id="dictionary-dispatch-binding"></a>
+## Dispatch binding: integrity, identity and replay
+
+A content hash answers “are these the same bytes?”, not “who authorized them?”. An
+attacker can calculate SHA-256 too. Authorization requires a trusted identity boundary
+(here, a protected operator spool delivered through authenticated host transport).
+The envelope then binds claim ID, run/step, host, source archive, image and deadline.
+
+The host's SQLite primary key acts like a durable set of consumed claim IDs. Membership
+checks cost approximately `O(log N)` for `N` retained claims. Insert the claim and job
+intent in one transaction **before** creating the container; retain membership after
+cleanup so a replay cannot create another job. A Python `set` alone would lose this
+property after process restart. The source archive hash costs `O(B)` for `B` source
+bytes and uses a deterministic filtered representation, not an arbitrary Git hash.
+
+Cleanup and correctness are distinct predicates. `container absent` can release a
+resource allocation only with identity-bound evidence; it does not prove tests passed.
+A lost result stays unknown. This distinction prevents a recovery mechanism from
+silently becoming a false-success mechanism.

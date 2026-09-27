@@ -2,7 +2,9 @@
 
 Status, 28 September 2026 IST: implementation and local PostgreSQL proof. Migration
 019 is **not** applied to production. The deployed host launcher/reaper works, but
-central claim dispatch is not yet wired into the hosted-worker transport.
+central claim dispatch is not yet wired into the hosted-worker transport. Policy-v3
+host binding and authenticated-transport reconciliation contracts are now implemented;
+a synthetic live host proof passed without activating production admission.
 
 ## One funded resource pool
 
@@ -92,6 +94,35 @@ downgraded to 002, and upgraded to 019 again in a disposable local database.
 4. Wire worker rescheduling, lease recovery, tenant-visible status and alerts. Preserve
    uncertainty through network partitions and controller/host restart drills.
 5. Install/attest the required language toolchains and complete live end-to-end proof.
+
+## Host dispatch contract
+
+After `claim_dispatch` commits, its trusted caller receives `host_envelope`. Only that
+caller may transmit it to the private operator spool `<state_directory>/dispatch/<claim
+UUID>.json`, mode 0600 in a mode-0700 directory. This spool is an **OS authority boundary**,
+not a cryptographic signature: its writer must be the authenticated trusted controller,
+never a model, repository process or public upload endpoint. The host policy v3 binds
+`server_uuid` and rejects validation without `--claim-id`. Policy v2 remains for the
+existing operator-only probe deployment, not centrally admitted production work.
+
+The host verifies profile, timeout, pinned image, audience, short deadline, and SHA-256
+of the canonical filtered tar produced by `source_archive`. This hash is **not** a Git
+commit or an unrelated file-manifest digest. Both sides must hash that exact source
+representation. A private journal atomically binds claim ID, request/envelope hashes and
+host job before container creation. A consumed claim cannot execute again, even after
+cleanup. Claim failure cannot silently fall back to the unbound path under v3.
+
+`--observe-claim <UUID>` reports cleanup, not task success. Unknown claims retain central
+capacity. For known claims, the controller's `reconcile_host_observation` checks exact
+claim, request and envelope hashes and immutable host job identity before accounting
+release. Hash comparison does not authenticate the sender; output must come from the
+pinned SSH/other approved host transport. No public endpoint accepts these observations.
+A lost validation result remains unknown even when cleanup is proved.
+
+The synthetic `scripts/probe_bound_validation.py` proof on the existing gVisor host
+checked successful compilation, rejection of changed source/unbound/replayed authority,
+and clean observation without inferring a lost test result. It did not enroll the VM,
+apply a production migration, mint production claims or activate hosted coding.
 
 See [host isolation](ISOLATED_VALIDATION.md), [cost authority](CLOUD_COST_LEDGER.md), and
 [deployment admission](DEPLOYMENT_ADMISSION.md).

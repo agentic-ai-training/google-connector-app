@@ -123,6 +123,17 @@ async def _owned(conn, claim_id, user_id, *, reconcile=False):
     return row, target
 
 
+def _host_envelope(claim_id, request, target, request_hash):
+    return {
+        "version": 1, "claim_id": str(claim_id), "run_id": str(request.run_id),
+        "sequence_no": request.sequence_no, "request_hash": request_hash,
+        "target_hash": request.target_hash, "server_uuid": target.server_uuid,
+        "source_hash": request.source_hash, "image_id": request.image_id,
+        "profile": request.profile, "timeout_seconds": request.timeout_seconds,
+        "deadline": int(request.planned_end_at.timestamp()),
+    }
+
+
 async def claim_dispatch(pool, claim_id: UUID, *, user_id: str):
     async with pool.acquire() as conn, conn.transaction():
         row, target_row = await _owned(conn, claim_id, user_id)
@@ -143,7 +154,53 @@ async def claim_dispatch(pool, claim_id: UUID, *, user_id: str):
         await conn.execute("UPDATE coding_validation_claims SET status='dispatched',updated_at=now() "
                            "WHERE id=$1", claim_id)
         await _event(conn, claim_id, "dispatch_intent")
-        return {"claim_id": claim_id, "request": request, "target": target}
+        # Transport must spool this ONLY after the transaction commits. Do not send
+        # target credentials to the sandbox or let a model reconstruct the envelope.
+        envelope = _host_envelope(claim_id, request, target, row["request_hash"])
+        return {"claim_id": claim_id, "request": request, "target": target,
+                "host_envelope": envelope}
+
+
+async def reconcile_host_observation(pool, claim_id: UUID, *, user_id: str, observation: dict):
+    """Only call with output obtained from the pinned authenticated host transport.
+
+    Hashes bind evidence, not its sender. An unauthenticated client can compute hashes;
+    neither this function nor observe() is a public API or model tool.
+    """
+    if not isinstance(observation, dict) or observation.get("claim_id") != str(claim_id):
+        raise ValidationConflict("host observation claim mismatch")
+    unknown = {"claim_id", "state", "cleanup_verified"}
+    known = unknown | {"validation_job_id", "request_hash", "binding_hash", "validation_success"}
+    if observation.get("state") == "unknown":
+        if set(observation) != unknown or observation["cleanup_verified"] is not False:
+            raise ValidationConflict("unknown host outcome cannot release capacity")
+    else:
+        if (set(observation) != known or observation["validation_success"] is not None
+                or observation["state"] not in {"creating", "running", "cleanup_uncertain", "cleaned"}
+                or type(observation["cleanup_verified"]) is not bool
+                or observation["cleanup_verified"] != (observation["state"] == "cleaned")):
+            raise ValidationConflict("invalid host cleanup observation")
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT c.*,t.config FROM coding_validation_claims c "
+                "JOIN coding_deployment_targets t ON t.target_id=c.target_id "
+                "WHERE c.id=$1 AND c.user_id=$2", claim_id, user_id,
+            )
+        if not row:
+            raise ValidationConflict("validation unavailable for this user")
+        request = ValidationRequest.model_validate(deployment._json(row["request"]))
+        target = deployment.RegisteredTarget.model_validate(deployment._json(row["config"]))
+        expected = _host_envelope(claim_id, request, target, row["request_hash"])
+        digest = hashlib.sha256(json.dumps(expected, sort_keys=True,
+                                           separators=(",", ":")).encode()).hexdigest()
+        if (observation["binding_hash"] != digest
+                or observation["request_hash"] != deployment.fingerprint(request)):
+            raise ValidationConflict("host observation binding mismatch")
+    evidence = hashlib.sha256(json.dumps(observation, sort_keys=True,
+                                         separators=(",", ":")).encode()).hexdigest()
+    return await observe(pool, claim_id, user_id=user_id, evidence_hash=evidence,
+                         host_job_id=observation.get("validation_job_id"),
+                         cleanup_verified=observation["cleanup_verified"])
 
 
 async def observe(pool, claim_id: UUID, *, user_id: str, evidence_hash: str,
