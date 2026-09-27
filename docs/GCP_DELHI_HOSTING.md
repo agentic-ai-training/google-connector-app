@@ -172,6 +172,10 @@ Host isolation and synthetic valid/invalid Python validation probes passed witho
 private source or provider keys. No new VM or port exposure was introduced. This does
 not activate production coding workers. See [isolated validation](ISOLATED_VALIDATION.md)
 for exact image/runtime hashes, the corrected source-copy defect and remaining gates.
+On 28 September IST, an abrupt-controller-crash probe passed and the scoped validation
+reaper timer was enabled. Its root-owned policy is `/etc/gca-validation/policy.json`;
+its durable private state is `/var/lib/gca-validation`. Do not delete that journal during
+rollback or interpret an expired process as released capacity without reconciliation.
 
 Read-back on 27 September 2026 confirmed instance ID `822115653245959101` remains
 RUNNING as e2-standard-4, with STOP at `2026-10-19T17:24:32Z`. No new instance or

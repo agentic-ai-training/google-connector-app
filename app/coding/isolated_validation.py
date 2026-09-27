@@ -8,6 +8,7 @@ Toolchain images must be prebuilt, reviewed, and pinned by the operator.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import io
 import json
 import os
@@ -15,6 +16,7 @@ from pathlib import Path
 import re
 import selectors
 import signal
+import sqlite3
 import stat
 import subprocess  # nosec B404
 import tarfile
@@ -55,9 +57,9 @@ def sensitive_name(name: str) -> bool:
     )
 
 
-def load_policy(path: Path, workspace: Path) -> dict:
+def load_policy(path: Path, workspace: Path | None) -> dict:
     path = path.resolve(strict=True)
-    if path.is_relative_to(workspace):
+    if workspace is not None and path.is_relative_to(workspace):
         raise IsolationError("Operator policy must be outside the workspace")
     for item in (path, *path.parents):
         info = item.stat()
@@ -66,9 +68,11 @@ def load_policy(path: Path, workspace: Path) -> dict:
     if not path.is_file() or path.stat().st_size > 32768:
         raise IsolationError("Invalid operator policy file")
     policy = json.loads(path.read_text())
-    if set(policy) != {"version", "runtime", "images"}:
+    if not isinstance(policy, dict) or set(policy) != {
+        "version", "runtime", "images", "state_directory",
+    }:
         raise IsolationError("Unexpected operator policy fields")
-    if policy["version"] != 1 or policy["runtime"] != "runsc":
+    if policy["version"] != 2 or policy["runtime"] != "runsc":
         raise IsolationError("Managed execution requires the runsc policy")
     if not isinstance(policy["images"], dict):
         raise IsolationError("Invalid image registry")
@@ -77,7 +81,165 @@ def load_policy(path: Path, workspace: Path) -> dict:
             r"sha256:[a-f0-9]{64}", image,
         ):
             raise IsolationError("Profiles require immutable, local image IDs")
+    if not isinstance(policy["state_directory"], str):
+        raise IsolationError("Invalid journal directory")
+    state = Path(policy["state_directory"]).resolve(strict=True)
+    if workspace is not None and (state.is_relative_to(workspace)
+                                  or workspace.is_relative_to(state)):
+        raise IsolationError("Journal and workspace must have separate directory trees")
+    for item in (state, *state.parents):
+        info = item.stat()
+        if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise IsolationError("Journal directory is not operator protected")
+    if not state.is_dir() or state.stat().st_mode & 0o077:
+        raise IsolationError("Journal directory must have mode 0700")
+    policy["state_directory"] = str(state)
     return policy
+
+
+class Journal:
+    """Single host slot with crash-persistent intent, separate from financial authority.
+
+    A live process holds flock. A dead process releases flock but not its SQLite row.
+    A row with uncertain cleanup still occupies the slot until reconciled.
+    """
+
+    def __init__(self, directory: Path):
+        self.directory = directory
+        self.lock = None
+        self.db = None
+
+    def __enter__(self):
+        self.lock = os.open(self.directory / "slot.lock", os.O_CREAT | os.O_RDWR
+                            | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            database = self.directory / "jobs.sqlite3"
+            fd = os.open(database, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            os.close(fd)
+            self.db = sqlite3.connect(database, timeout=5)
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("PRAGMA synchronous=FULL")
+            self.db.executescript("""
+                CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS jobs(
+                    id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,image TEXT NOT NULL,
+                    profile TEXT NOT NULL,deadline INTEGER NOT NULL,state TEXT NOT NULL,
+                    container_id TEXT,updated_at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS events(
+                    sequence INTEGER PRIMARY KEY,job_id TEXT NOT NULL,
+                    state TEXT NOT NULL,observed_at INTEGER NOT NULL);
+                CREATE INDEX IF NOT EXISTS jobs_deadline ON jobs(state,deadline);
+            """)
+            with self.db:
+                self.db.execute("INSERT OR IGNORE INTO metadata VALUES('scope',?)", (uuid.uuid4().hex,))
+            self.scope = self.db.execute("SELECT value FROM metadata WHERE key='scope'").fetchone()[0]
+            if not re.fullmatch(r"[a-f0-9]{32}", self.scope):
+                raise IsolationError("Journal host identity is invalid")
+            return self
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def __exit__(self, *_):
+        if self.db:
+            self.db.close()
+        if self.lock is not None:
+            os.close(self.lock)
+        self.db = self.lock = None
+
+    def begin(self, profile: str, image: str, timeout: int) -> dict:
+        if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
+            raise IsolationError("Validation slot held by an unreconciled job")
+        job_id = uuid.uuid4().hex
+        now = int(time.time())
+        with self.db:
+            self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,'creating',NULL,?)",
+                            (job_id, "gca-validation-" + job_id, image, profile,
+                             now + timeout + 90, now))
+            self.db.execute("INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)",
+                            (job_id, "creating", now))
+        return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+
+    def record(self, job: dict, state: str, container_id: str | None = None):
+        if state not in {"running", "cleanup_uncertain", "cleaned"}:
+            raise IsolationError("Invalid journal transition")
+        now = int(time.time())
+        with self.db:
+            self.db.execute("UPDATE jobs SET state=?,container_id=COALESCE(?,container_id),"
+                            "updated_at=? WHERE id=?", (state, container_id, now, job["id"]))
+            self.db.execute("INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)",
+                            (job["id"], state, now))
+        job["state"] = state
+        if container_id:
+            job["container_id"] = container_id
+
+    def cleanup(self, job: dict, *, create_confirmed: bool = False):
+        ids = docker("ps", "-a", "--no-trunc", "--filter", f"name=^/{job['name']}$",
+                     "--format", "{{.ID}}").decode().split()
+        if not ids:
+            if not create_confirmed and int(time.time()) < job["deadline"]:
+                raise IsolationError("Create outcome remains uncertain until the job deadline")
+        else:
+            if len(ids) != 1 or not re.fullmatch(r"[a-f0-9]{64}", ids[0]):
+                raise IsolationError("Ambiguous sandbox identity")
+            self.verify_identity(job, ids[0])
+            docker("rm", "--force", "--volumes", ids[0])
+        self.record(job, "cleaned")
+
+    def verify_identity(self, job: dict, container_id: str):
+        if job.get("container_id") and job["container_id"] != container_id:
+            raise IsolationError("Container ID changed; refusing cleanup")
+        spec = json.loads(docker("inspect", container_id))[0]
+        labels = spec["Config"].get("Labels") or {}
+        if (spec["Name"] != "/" + job["name"] or spec["Image"] != job["image"]
+                or labels.get("gca.scope") != self.scope
+                or labels.get("gca.job") != job["id"]
+                or labels.get("gca.purpose") != "validation"):
+            raise IsolationError("Sandbox identity mismatch; refusing cleanup")
+
+    def reap(self) -> dict:
+        # Include late-created containers even if an earlier absence was reconciled.
+        observed = docker("ps", "-a", "--no-trunc", "--filter", f"label=gca.scope={self.scope}",
+                          "--format", '{{.ID}} {{.Label "gca.job"}}').decode().splitlines()
+        if len(observed) > 128:
+            raise IsolationError("Reaper inventory exceeds bounded batch")
+        jobs = {row["id"]: dict(row) for row in self.db.execute(
+            "SELECT * FROM jobs WHERE state<>'cleaned' AND deadline<=? LIMIT 128",
+            (int(time.time()),),
+        )}
+        untracked = 0
+        uncertain = set()
+        for observation in observed:
+            parts = observation.split()
+            if len(parts) != 2 or not re.fullmatch(r"[a-f0-9]{64}", parts[0]):
+                untracked += 1
+                continue
+            container_id, job_id = parts
+            row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                untracked += 1
+            if row and row["deadline"] <= int(time.time()):
+                job = dict(row)
+                try:
+                    self.verify_identity(job, container_id)
+                    if job_id not in uncertain:
+                        jobs[job_id] = job
+                except (IsolationError, subprocess.TimeoutExpired, ValueError, KeyError):
+                    self.record(job, "cleanup_uncertain")
+                    uncertain.add(job_id)
+                    jobs.pop(job_id, None)
+        cleaned = []
+        for job in jobs.values():
+            try:
+                self.cleanup(job)
+                cleaned.append(job["id"])
+            except (IsolationError, subprocess.TimeoutExpired, ValueError, KeyError):
+                self.record(job, "cleanup_uncertain")
+                uncertain.add(job["id"])
+        return {"cleaned_job_ids": cleaned, "uncertain_job_ids": sorted(uncertain),
+                "untracked_container_count": untracked}
 
 
 def source_archive(root: Path) -> bytes:
@@ -184,6 +346,11 @@ def execute_bounded(args: list[str], timeout: int) -> dict:
 
 
 def validate(workspace: Path, profile: str, timeout: int, policy: dict) -> dict:
+    with Journal(Path(policy["state_directory"])) as journal:
+        return _validate(workspace, profile, timeout, policy, journal)
+
+
+def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal: Journal) -> dict:
     if profile not in PROFILES or profile not in policy["images"]:
         raise IsolationError("No approved offline toolchain for this validation profile")
     if not 1 <= timeout <= 1800:
@@ -200,12 +367,15 @@ def validate(workspace: Path, profile: str, timeout: int, policy: dict) -> dict:
                 for name in archive.getnames()
             ):
                 raise IsolationError("No Python source exists for the compile profile")
-    name = "gca-validation-" + uuid.uuid4().hex
+    job = journal.begin(profile, policy["images"][profile], timeout)
+    name = job["name"]
+    create_confirmed = False
     # Set intent before create: a lost response still requires cleanup of this exact ID.
     try:
-        docker(
+        container_id = docker(
             "create", "--name", name, "--pull=never", "--runtime=runsc",
             "--label=gca.purpose=validation", "--network=none", "--read-only",
+            f"--label=gca.scope={journal.scope}", f"--label=gca.job={job['id']}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             "--user=65532:65532", "--memory=1g", "--memory-swap=1g",
             "--cpus=1", "--pids-limit=128", "--ulimit=nofile=256:256",
@@ -213,12 +383,17 @@ def validate(workspace: Path, profile: str, timeout: int, policy: dict) -> dict:
             "--tmpfs=/tmp:rw,nosuid,nodev,size=64m,mode=1777",
             "--env=HOME=/tmp", "--env=CI=true", "--log-driver=none",
             "--entrypoint=/bin/sh", policy["images"][profile], "-ec",
-            f"exec sleep {timeout + 60}",
-        )
+            f'remaining=$(({job["deadline"]} - $(date +%s))); '
+            'test "$remaining" -gt 0; exec sleep "$remaining"',
+        ).decode().strip()
+        if not re.fullmatch(r"[a-f0-9]{64}", container_id):
+            raise IsolationError("Invalid container creation evidence")
+        create_confirmed = True
         spec = json.loads(docker("inspect", name))[0]
         if any(mount.get("Type") in {"bind", "volume"} for mount in spec["Mounts"]):
             raise IsolationError("Toolchain image requested a forbidden persistent mount")
         docker("start", name)
+        journal.record(job, "running", container_id)
         # Docker cp cannot resolve runsc's sandbox-internal tmpfs directory. Extract
         # our link-free bounded archive *inside* the sandbox, as the unprivileged UID.
         docker(
@@ -235,28 +410,46 @@ def validate(workspace: Path, profile: str, timeout: int, policy: dict) -> dict:
             **result, "profile": profile, "isolation": "gvisor",
             "image_id": policy["images"][profile], "network": "none",
             "workspace_mutations_discarded": True,
+            "validation_job_id": job["id"], "cleanup_verified": True,
         }
     finally:
         # Failure here overrides success. The caller must record cleanup uncertainty.
         try:
-            docker("rm", "--force", "--volumes", name)
-        except (IsolationError, subprocess.TimeoutExpired) as error:
+            journal.cleanup(job, create_confirmed=create_confirmed)
+        except (IsolationError, subprocess.TimeoutExpired, ValueError, KeyError) as error:
+            journal.record(job, "cleanup_uncertain")
             raise IsolationError(f"Sandbox cleanup uncertain for {name}") from error
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace", type=Path, required=True)
-    parser.add_argument("--profile", choices=tuple(PROFILES), required=True)
-    parser.add_argument("--timeout", type=int, required=True)
+    parser.add_argument("--workspace", type=Path)
+    parser.add_argument("--profile", choices=tuple(PROFILES))
+    parser.add_argument("--timeout", type=int)
+    parser.add_argument("--reap", action="store_true")
     args = parser.parse_args()
     try:
         config = Path(os.environ["GCA_VALIDATION_CONFIG"])
+        if args.reap:
+            if args.workspace or args.profile or args.timeout:
+                raise IsolationError("Reaper cannot accept a validation request")
+            policy = load_policy(config, None)
+            try:
+                with Journal(Path(policy["state_directory"])) as journal:
+                    result = journal.reap()
+            except BlockingIOError:
+                print(json.dumps({"deferred": "active_validation"}))
+                return 0
+            print(json.dumps(result))
+            return 2 if result["uncertain_job_ids"] or result["untracked_container_count"] else 0
+        if args.workspace is None or args.profile is None or args.timeout is None:
+            raise IsolationError("Validation requires workspace, profile and timeout")
         workspace = args.workspace.resolve(strict=True)
         result = validate(workspace, args.profile, args.timeout, load_policy(config, workspace))
         print(json.dumps(result))
         return 0
-    except (IsolationError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+    except (IsolationError, OSError, ValueError, KeyError, sqlite3.Error,
+            subprocess.TimeoutExpired) as error:
         # Do not expose input paths, provider secrets, or subprocess output.
         message = str(error) if isinstance(error, IsolationError) else "Isolation setup failed"
         print(json.dumps({"success": False, "error": message, "isolation": "unavailable"}))

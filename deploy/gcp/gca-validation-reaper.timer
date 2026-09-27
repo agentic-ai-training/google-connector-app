@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic expiry reconciliation for validation jobs
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=gca-validation-reaper.service
+
+[Install]
+WantedBy=timers.target

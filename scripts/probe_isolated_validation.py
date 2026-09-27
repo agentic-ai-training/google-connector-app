@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 
 
@@ -31,16 +32,19 @@ def main():
     root = Path("/var/lib/gca-validation-probes")
     root.mkdir(mode=0o700, exist_ok=True)
     os.chmod(root, 0o700)
-    with tempfile.TemporaryDirectory(dir=root) as directory:
-        base = Path(directory)
+    base = Path(tempfile.mkdtemp(dir=root))
+    try:
         workspace = base / "workspace"
         (workspace / "app").mkdir(parents=True)
         (workspace / "scripts").mkdir()
         source = workspace / "app/main.py"
         source.write_text("answer = 42\n")
         config = base / "operator-policy.json"
+        state = base / "journal"
+        state.mkdir(mode=0o700)
         config.write_text(json.dumps({
-            "version": 1, "runtime": "runsc", "images": {"python_compile": args.image},
+            "version": 2, "runtime": "runsc", "images": {"python_compile": args.image},
+            "state_directory": str(state),
         }))
         config.chmod(0o600)
         policy = module.load_policy(config, workspace)
@@ -58,6 +62,12 @@ def main():
             "isolation": valid["isolation"], "image_id": args.image,
             "private_source_used": False, "production_worker_activated": False,
         }, sort_keys=True))
+    except BaseException:
+        # A failed cleanup must not erase the durable record needed by a reaper.
+        print(f"Retained failed probe recovery evidence at {base}")
+        raise
+    else:
+        shutil.rmtree(base)
 
 
 if __name__ == "__main__":

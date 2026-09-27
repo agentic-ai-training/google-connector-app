@@ -13,7 +13,14 @@ from app.coding import isolated_validation as runner
 
 
 IMAGE = "sha256:" + "a" * 64
-POLICY = {"version": 1, "runtime": "runsc", "images": {"python_compile": IMAGE}}
+POLICY = {"version": 2, "runtime": "runsc", "images": {"python_compile": IMAGE}}
+
+
+@pytest.fixture(autouse=True)
+def journal_directory(tmp_path_factory, monkeypatch):
+    directory = tmp_path_factory.mktemp("validation-journal")
+    directory.chmod(0o700)
+    monkeypatch.setitem(POLICY, "state_directory", str(directory))
 
 
 @pytest.fixture
@@ -67,9 +74,12 @@ def test_policy_requires_operator_path_and_immutable_images(tmp_path):
     # An operator-owned path under HOME, not world-writable /tmp.
     with tempfile.TemporaryDirectory(prefix=".gca-policy-test-", dir=Path.home()) as directory:
         config = Path(directory) / "policy.json"
-        config.write_text(json.dumps(POLICY))
+        state = Path(directory) / "journal"
+        state.mkdir(mode=0o700)
+        policy = {**POLICY, "state_directory": str(state)}
+        config.write_text(json.dumps(policy))
         config.chmod(0o600)
-        assert runner.load_policy(config, tmp_path) == POLICY
+        assert runner.load_policy(config, tmp_path) == policy
         config.chmod(0o666)
         with pytest.raises(runner.IsolationError, match="untrusted identity"):
             runner.load_policy(config, tmp_path)
@@ -88,13 +98,28 @@ def test_policy_inside_repository_is_not_authority(tmp_path):
 
 def fake_transport(monkeypatch, *, fail=None, mounts=None):
     calls = []
+    container = {}
 
     def call(*args, **kwargs):
         calls.append((args, kwargs))
+        if args[0] == "create":
+            container.update({
+                "Name": "/" + args[args.index("--name") + 1], "Image": IMAGE,
+                "Config": {"Labels": dict(
+                    item.removeprefix("--label=").split("=", 1)
+                    for item in args if item.startswith("--label=")
+                )}, "Mounts": mounts or [],
+            })
         if args[0] == fail:
             raise subprocess.TimeoutExpired(args, 30)
+        if args[0] == "create":
+            return b"c" * 64
         if args[0] == "inspect":
-            return json.dumps([{"Mounts": mounts or []}]).encode()
+            return json.dumps([container]).encode()
+        if args[0] == "ps":
+            return b"c" * 64 if container else b""
+        if args[0] == "rm":
+            container.clear()
         return b""
 
     monkeypatch.setattr(runner, "docker", call)
@@ -126,9 +151,10 @@ def test_validator_copies_snapshot_without_host_mount_or_credentials(tmp_path, m
 @pytest.mark.parametrize("phase", ["create", "start", "inspect", "exec"])
 def test_cleanup_after_control_failure(workspace, monkeypatch, phase):
     calls = fake_transport(monkeypatch, fail=phase)
-    with pytest.raises(subprocess.TimeoutExpired):
+    expected = runner.IsolationError if phase == "inspect" else subprocess.TimeoutExpired
+    with pytest.raises(expected):
         runner.validate(workspace, "python_compile", 10, POLICY)
-    assert calls[-1][0][0] == "rm"
+    assert calls[-1][0][0] == ("inspect" if phase == "inspect" else "rm")
 
 
 def test_cleanup_uncertainty_overrides_validation_success(workspace, monkeypatch):

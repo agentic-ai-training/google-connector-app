@@ -2276,6 +2276,16 @@ changes become production evidence.
   PostgreSQL ledger fixture; 26 Rust tests passed. Targeted Flake8, Bandit, shell syntax
   and `git diff --check` passed. These results do not replace production activation,
   crash/restart reconciliation, all-language toolchain or generated-app deployment proof.
+  2026-09-28 IST: durable host validation journal and scoped reaper implemented. Live
+  abrupt-controller-exit proof passed: intent survived, unresolved work retained the
+  slot, exact expired container was removed, and subsequent compilation succeeded.
+  The scheduled reaper is installed/enabled and its initial service run passed.
+  Central funded-capacity/run identity binding, host reboot recovery and broader
+  toolchains remain open; this does not activate hosted production coding.
+  Final evidence for this checkpoint: 153 coding tests passed, including real local
+  PostgreSQL fixtures; targeted Flake8/Bandit and diff checks passed. The final live
+  crash probe and reaper service passed again after identity-check hardening. Automatic
+  timer execution was observed at 2026-09-27 19:39:38 UTC; Coolify remained healthy.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

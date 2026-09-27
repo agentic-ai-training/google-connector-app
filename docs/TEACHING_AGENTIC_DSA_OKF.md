@@ -2488,4 +2488,34 @@ identity before creation, record intent, and reconcile that identity after a los
 Validation success and resource cleanup are separate postconditions. A controller crash
 needs a durable reaper and retained capacity claim; an in-process `finally` block cannot
 run after the controller itself disappears. The current launcher supplies bounded lifetime
-and explicit cleanup failure, but durable reaping/ledger binding remain activation work.
+and explicit cleanup failure. A durable host journal and scoped reaper were added on
+28 September 2026 IST; central capacity-ledger binding remains activation work.
+
+<a id="dictionary-process-lock-durable-intent"></a>
+## Process lock versus durable intent
+
+An operating-system file lock is released automatically when its owning process dies.
+That makes it useful for mutual exclusion, but insufficient as proof that a remote
+side effect stopped. A SQLite job row persists after process death. The validation
+launcher therefore requires both an available lock and no unreconciled job row.
+
+```text
+Acquire host lock -> commit creating(job_id) -> create exact container
+                                             |
+                                           running
+                                             |
+                                      verify cleanup -> cleaned
+
+Controller dies -> lock released, row remains -> block new admission
+                 -> scoped reaper -> verified absence/removal -> cleaned
+```
+
+The journal uses a primary-key lookup for job identity and an index on state/deadline.
+Lookup is approximately `O(log J)` for `J` retained jobs; a bounded reaper batch costs
+`O(B log J)` local lookups plus at most `O(B)` provider interactions. An index improves
+lookup cost, not authority: a matching row still requires matching container identity.
+
+The invariant is `unreconciled job => slot unavailable`. It remains true across a
+controller crash, provider timeout and delayed container creation. The converse does
+not grant deployment authority: the cloud cost ledger and tenant authorization are
+separate requirements. Deleting a row to clear a blockage would break the invariant.
