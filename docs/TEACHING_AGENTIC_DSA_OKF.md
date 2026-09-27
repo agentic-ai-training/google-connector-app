@@ -2560,3 +2560,23 @@ Cleanup and correctness are distinct predicates. `container absent` can release 
 resource allocation only with identity-bound evidence; it does not prove tests passed.
 A lost result stays unknown. This distinction prevents a recovery mechanism from
 silently becoming a false-success mechanism.
+
+<a id="dictionary-framing-and-backpressure"></a>
+## Framing, backpressure and trusted transport
+
+A byte stream has no inherent message boundaries. The validation transport uses one
+bounded newline-terminated header containing the archive length, followed by exactly
+that many bytes. Bounds are checked before allocation/execution; short reads are errors.
+Only typed `validate` and `observe` operations exist. There is no model-selected command.
+
+The sender drains its stream while reading stdout/stderr concurrently. Without that
+concurrency, a full pipe in one direction can deadlock a writer waiting in the other.
+Bounded readers stop runaway output and timeouts terminate the local transport process
+group. That does **not** prove the remote process stopped: the durable host journal and
+reaper own remote reconciliation. One host lock during upload also prevents concurrent
+large transfers from multiplying staging memory outside the sandbox's limit.
+
+TLS/SSH authentication and content hashes have different roles. SSH pins the remote
+identity; the source hash pins bytes; the claim pins authority. All three are needed.
+The control path holds SSH/IAP credentials, while the data-plane sandbox receives only
+the filtered source and fixed toolchain. See [transport details](VALIDATION_CAPACITY.md#fixed-command-iapssh-transport).

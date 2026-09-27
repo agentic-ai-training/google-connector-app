@@ -2,9 +2,9 @@
 
 Status, 28 September 2026 IST: implementation and local PostgreSQL proof. Migration
 019 is **not** applied to production. The deployed host launcher/reaper works, but
-central claim dispatch is not yet wired into the hosted-worker transport. Policy-v3
-host binding and authenticated-transport reconciliation contracts are now implemented;
-a synthetic live host proof passed without activating production admission.
+central claim dispatch is not yet wired into the hosted worker. Policy-v3 host binding,
+IAP/SSH transport and reconciliation contracts are now implemented; a synthetic live
+transport proof passed without activating production admission.
 
 ## One funded resource pool
 
@@ -25,11 +25,11 @@ Authenticated coding run + registered tenant target + immutable source/toolchain
                             |
                  one committed dispatch claim
                             |
-             trusted transport to keyless host [pending]
+             pinned SSH/IAP transport to keyless host
                             |
               host journal + isolated validation
                             |
-           authenticated, identity-bound host evidence [pending]
+           authenticated, identity-bound host evidence
                   /                              \
         uncertain, retain allocation       cleanup verified, release
 ```
@@ -86,11 +86,13 @@ downgraded to 002, and upgraded to 019 again in a disposable local database.
 
 1. Enroll/import the existing VM's real financial obligation and usable host capacity,
    with fresh credit/cost evidence; do not pretend the already-running host is unused.
-2. Authenticate the worker-to-host transport, bind the central claim ID to the host job,
-   and verify the exact source/image/profile/deadline before executing. Do not accept
-   the model as the authority for these values.
-3. Bind actual host cleanup evidence back to the central claim through authenticated
-   transport. The SQLite reaper alone cannot release a PostgreSQL claim.
+2. Connect the authenticated worker's committed claim to the tested IAP/SSH transport,
+   without exposing its credentials to the model or generated processes. The exact
+   source/image/profile/deadline are verified at the host, but production worker
+   integration/lease recovery remains pending.
+3. Invoke central observation reconciliation from that worker's trusted transport path.
+   Both sides are tested; the complete production loop is not active. The SQLite
+   reaper alone cannot release a PostgreSQL claim.
 4. Wire worker rescheduling, lease recovery, tenant-visible status and alerts. Preserve
    uncertainty through network partitions and controller/host restart drills.
 5. Install/attest the required language toolchains and complete live end-to-end proof.
@@ -103,7 +105,9 @@ UUID>.json`, mode 0600 in a mode-0700 directory. This spool is an **OS authority
 not a cryptographic signature: its writer must be the authenticated trusted controller,
 never a model, repository process or public upload endpoint. The host policy v3 binds
 `server_uuid` and rejects validation without `--claim-id`. Policy v2 remains for the
-existing operator-only probe deployment, not centrally admitted production work.
+legacy standalone test fixtures, not centrally admitted production work. The actual
+host is now on v3. Its fixed `--gateway` entry point accepts the same bound envelope
+over the authenticated SSH stream without creating a source staging file.
 
 The host verifies profile, timeout, pinned image, audience, short deadline, and SHA-256
 of the canonical filtered tar produced by `source_archive`. This hash is **not** a Git
@@ -123,6 +127,36 @@ The synthetic `scripts/probe_bound_validation.py` proof on the existing gVisor h
 checked successful compilation, rejection of changed source/unbound/replayed authority,
 and clean observation without inferring a lost test result. It did not enroll the VM,
 apply a production migration, mint production claims or activate hosted coding.
+
+## Fixed-command IAP/SSH transport
+
+`app/coding/validation_transport.py` accepts an operator-registered host configuration,
+not model arguments. It checks protected credential/config/program paths and a dedicated
+known-hosts file containing exactly the expected Ed25519 key for the numeric GCE instance
+ID. SSH ignores user configuration, disables agent/port forwarding, fixes the remote
+command and sends no inherited provider/DB environment. IAP supplies the network route;
+OS Login/SSH supplies host access. No public SSH port or validation HTTP listener is added.
+
+The protocol is one bounded JSON header followed by a bounded plain tar. The gateway
+holds its single host slot during transfer, checks paths/types/counts/sizes, and never
+extracts source on the host. The source is passed directly into the networkless sandbox.
+Receive time, total output and execution time are bounded. SSH failure is uncertainty,
+not permission to retransmit the same work. Observation is a separate read-only command.
+Cleanup observations are not validation attestations: a lost test result stays unknown.
+
+Live proof `scripts/probe_validation_transport.py` used synthetic source and the existing
+host. Unknown-claim lookup, successful compile, exact cleanup observation and rejected
+replay passed through the actual encrypted transport. The first attempt was correctly
+blocked by group-writable Homebrew ancestry. A private operator-owned APFS clone of the
+existing SDK was used instead; shared Homebrew permissions were not changed. Google CLI
+credentials stay local in the protected SDK config, never in source or the sandbox.
+The SDK/dependency installation remains part of the operator trust base.
+
+This operator proof intentionally uses a synthetic claim; it does not pretend the
+unapplied production PostgreSQL admission chain ran. Financial import, worker identity,
+production migrations and run/result/lease integration remain required before activation.
+Local coding regression evidence at this checkpoint: 219 tests passed, including real
+loopback PostgreSQL fixtures, plus targeted lint/security/diff checks.
 
 See [host isolation](ISOLATED_VALIDATION.md), [cost authority](CLOUD_COST_LEDGER.md), and
 [deployment admission](DEPLOYMENT_ADMISSION.md).

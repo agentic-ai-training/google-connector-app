@@ -1,5 +1,6 @@
 {
-  "version": 2,
+  "version": 3,
+  "server_uuid": "frdwr0tdglbolht3kqtokzqa",
   "runtime": "runsc",
   "state_directory": "/var/lib/gca-validation",
   "images": {

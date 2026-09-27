@@ -20,6 +20,7 @@ import signal
 import sqlite3
 import stat
 import subprocess  # nosec B404
+import sys
 import tarfile
 import time
 import uuid
@@ -43,6 +44,7 @@ EXCLUDED_DIRS = {
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_ENTRIES = 5000
 MAX_OUTPUT_BYTES = 256_000
+MAX_ARCHIVE_BYTES = MAX_SOURCE_BYTES + MAX_SOURCE_ENTRIES * 1024 + 10240
 DOCKER = "/usr/bin/docker"
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
 
@@ -451,6 +453,44 @@ def validate(workspace: Path, profile: str, timeout: int, policy: dict,
 
 def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal: Journal,
               binding: dict | None = None) -> dict:
+    root = workspace.resolve(strict=True)
+    return validate_archive(source_archive(root), profile, timeout, policy, journal, binding)
+
+
+def check_archive(source: bytes, profile: str):
+    """Validate a bounded plain tar without ever extracting it on the trusted host."""
+    if len(source) > MAX_ARCHIVE_BYTES:
+        raise IsolationError("Source archive limit exceeded")
+    names = set()
+    source_files = set()
+    total = 0
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as archive:
+        for item in archive:
+            path = Path(item.name)
+            if (path.is_absolute() or ".." in path.parts or not path.parts
+                    or path.as_posix() != item.name.rstrip("/") or item.name in names
+                    or any(part in EXCLUDED_DIRS or sensitive_name(part) for part in path.parts)
+                    or not (item.isfile() or item.isdir()) or item.sparse is not None
+                    or item.size < 0 or item.mode & 0o7000
+                    or item.offset_data + item.size > len(source)):
+                raise IsolationError("Forbidden source archive member")
+            names.add(item.name)
+            if item.isfile():
+                source_files.add(item.name)
+            total += item.size
+            if len(names) > MAX_SOURCE_ENTRIES or total > MAX_SOURCE_BYTES:
+                raise IsolationError("Source archive content limit exceeded")
+    relative_cwd, _ = PROFILES[profile]
+    if relative_cwd != "." and not any(name.startswith(relative_cwd + "/") for name in names):
+        raise IsolationError("Validation working directory is missing")
+    if profile == "python_compile" and not any(
+        name.startswith(("app/", "scripts/")) and name.endswith(".py") for name in source_files
+    ):
+        raise IsolationError("No Python source exists for the compile profile")
+
+
+def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, journal: Journal,
+                     binding: dict | None = None) -> dict:
     if policy["version"] == 3 and binding is None:
         raise IsolationError("Centrally admitted dispatch is required on this host")
     if binding is not None and policy["version"] != 3:
@@ -459,20 +499,10 @@ def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal
         raise IsolationError("No approved offline toolchain for this validation profile")
     if type(timeout) is not int or not 1 <= timeout <= 1800:
         raise IsolationError("Validation timeout must be within 1..1800 seconds")
-    root = workspace.resolve(strict=True)
     relative_cwd, command = PROFILES[profile]
-    if not (root / relative_cwd).is_dir():
-        raise IsolationError("Validation working directory is missing")
-    source = source_archive(root)
+    check_archive(source, profile)
     if binding is not None:
         verify_dispatch(binding, policy, source, profile, timeout)
-    if profile == "python_compile":
-        with tarfile.open(fileobj=io.BytesIO(source)) as archive:
-            if not any(
-                name.startswith(("app/", "scripts/")) and name.endswith(".py")
-                for name in archive.getnames()
-            ):
-                raise IsolationError("No Python source exists for the compile profile")
     job = journal.begin(profile, policy["images"][profile], timeout, binding)
     name = job["name"]
     create_confirmed = False
@@ -529,6 +559,44 @@ def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal
             raise IsolationError(f"Sandbox cleanup uncertain for {name}") from error
 
 
+def gateway(stream, policy: dict) -> dict:
+    """Fixed SSH command; authenticated controller input, never a public listener.
+
+    Hold the one host slot while accepting source: concurrent uploads cannot multiply
+    staging memory. Source is never extracted to the host or retained in the journal.
+    """
+    if policy["version"] != 3:
+        raise IsolationError("Gateway requires centrally bound host policy v3")
+    with Journal(Path(policy["state_directory"])) as journal:
+        header = stream.readline(8193)
+        if len(header) > 8192 or not header.endswith(b"\n"):
+            raise IsolationError("Invalid gateway framing")
+        request = json.loads(header)
+        if not isinstance(request, dict):
+            raise IsolationError("Invalid gateway request")
+        if set(request) == {"operation", "claim_id"} and request["operation"] == "observe":
+            if not isinstance(request["claim_id"], str):
+                raise IsolationError("Invalid observation claim")
+            return journal.observe_claim(request["claim_id"])
+        if (set(request) != {"operation", "binding", "archive_bytes"}
+                or request["operation"] != "validate"
+                or type(request["archive_bytes"]) is not int
+                or not 0 < request["archive_bytes"] <= MAX_ARCHIVE_BYTES
+                or not isinstance(request["binding"], dict)):
+            raise IsolationError("Invalid gateway dispatch")
+        source = stream.read(request["archive_bytes"])
+        if len(source) != request["archive_bytes"]:
+            raise IsolationError("Truncated source transfer")
+        binding = request["binding"]
+        profile, timeout = binding.get("profile"), binding.get("timeout_seconds")
+        if not isinstance(profile, str) or profile not in PROFILES or type(timeout) is not int:
+            raise IsolationError("Invalid gateway profile")
+        # The SSH controller is the authority. The exact same verifier is used for
+        # spooled operator invocations; no shell or arbitrary target path is accepted.
+        signal.alarm(0)
+        return validate_archive(source, profile, timeout, policy, journal, binding)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=Path)
@@ -537,9 +605,20 @@ def main() -> int:
     parser.add_argument("--reap", action="store_true")
     parser.add_argument("--claim-id")
     parser.add_argument("--observe-claim")
+    parser.add_argument("--gateway", action="store_true")
     args = parser.parse_args()
     try:
         config = Path(os.environ["GCA_VALIDATION_CONFIG"])
+        if args.gateway:
+            if any((args.workspace, args.profile, args.timeout, args.claim_id,
+                    args.reap, args.observe_claim)):
+                raise IsolationError("Gateway cannot accept another operation")
+            # Abrupt upload timeout creates no container; flock is released on exit.
+            signal.alarm(45)
+            result = gateway(sys.stdin.buffer, load_policy(config, None))
+            signal.alarm(0)
+            print(json.dumps(result))
+            return 0
         if args.observe_claim:
             if args.workspace or args.profile or args.timeout or args.claim_id or args.reap:
                 raise IsolationError("Observation cannot execute a workload")
@@ -568,7 +647,7 @@ def main() -> int:
         result = validate(workspace, args.profile, args.timeout, policy, binding)
         print(json.dumps(result))
         return 0
-    except (IsolationError, OSError, ValueError, KeyError, sqlite3.Error,
+    except (IsolationError, OSError, ValueError, KeyError, sqlite3.Error, tarfile.TarError,
             subprocess.TimeoutExpired) as error:
         # Do not expose input paths, provider secrets, or subprocess output.
         message = str(error) if isinstance(error, IsolationError) else "Isolation setup failed"

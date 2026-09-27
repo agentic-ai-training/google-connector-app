@@ -32,7 +32,7 @@ operator-protected parents. All jobs on this validation host must use the same p
 and journal; a second journal is not an extra capacity grant.
 Policy v3 adds an immutable `server_uuid` and requires a private central-claim envelope
 for every execution. The host binds source/image/profile/deadline and journals consumed
-claims; the existing deployed policy remains v2 until central admission is connected.
+claims; the deployed host now uses v3. Legacy v2 is retained for standalone test fixtures.
 See [host dispatch contract](VALIDATION_CAPACITY.md#host-dispatch-contract) for the
 authenticated spool and reconciliation boundary. A hash alone is not authentication.
 
@@ -138,7 +138,8 @@ remove a blocked row merely to make another job start.
    funded capacity ledger. The central claim model and shared-capacity admission are
    now implemented/tested locally in migration 019. Host claim verification/replay
    prevention and central observation matching are implemented with a synthetic live
-   proof; actual worker transport and enrollment remain pending.
+   proof. Fixed-command IAP/SSH transport also passed its synthetic live proof;
+   actual worker integration and financial enrollment remain pending.
    See [validation capacity](VALIDATION_CAPACITY.md). The host journal
    does not grant cloud spending or tenant access. Exercise host reboot and Docker outage recovery.
 3. Linux hosted-worker deployment and full Rust-to-launcher live proof. The Railway

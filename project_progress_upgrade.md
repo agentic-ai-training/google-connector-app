@@ -2299,6 +2299,11 @@ changes become production evidence.
   Final local regression evidence: 195 coding tests passed, including disposable local
   PostgreSQL admission/reconciliation tests; targeted Flake8, Bandit and diff checks
   passed. No paid provider call, new VM, production model switch or migration occurred.
+  Fixed-command IAP/SSH validation transport is implemented with exact host-key pinning,
+  bounded framing, no source extraction on the host and read-only cleanup observation.
+  The host now enforces policy v3. Synthetic end-to-end transport and replay-denial
+  proof passed; 219 local coding tests passed. Worker/ledger production integration,
+  fresh financial enrollment and durable result/lease recovery remain incomplete.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,
