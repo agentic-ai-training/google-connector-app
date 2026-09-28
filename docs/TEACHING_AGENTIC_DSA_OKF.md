@@ -2580,3 +2580,23 @@ TLS/SSH authentication and content hashes have different roles. SSH pins the rem
 identity; the source hash pins bytes; the claim pins authority. All three are needed.
 The control path holds SSH/IAP credentials, while the data-plane sandbox receives only
 the filtered source and fixed toolchain. See [transport details](VALIDATION_CAPACITY.md#fixed-command-iapssh-transport).
+
+<a id="dictionary-observation-versus-outcome"></a>
+## Observation, outcome and idempotent recovery
+
+An observation describes a remote resource; an outcome describes the task it ran.
+Verified cleanup does not reveal whether tests passed. The controller keeps separate
+states: `capacity_status` for resource accounting and `validation_outcome` for test
+results. `(released, unknown)` is valid after a lost result. It must never be recast as
+`(released, passed)` just because the sandbox is gone.
+
+A unique key and transaction lock make one reservation. The host's durable consumed-
+claim set prevents a second dispatch after restart. A worker lease is a fencing check:
+only its current owner may cross the dispatch gate. A late real result can still be
+recorded as evidence, but cannot authorize another execution. Indexed membership costs
+roughly `O(log N)` for `N` claims; exactly-once effects over a network remain unproven
+until the remote outcome is independently checked.
+
+Deletion and compensation are also distinct. A deleted user's private result is
+scrubbed, while a minimal orphan claim remains until the host job is reconciled. A
+simple cascade-delete would lose the only evidence needed for safe cleanup.

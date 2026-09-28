@@ -1,7 +1,7 @@
 # Central validation capacity and host reconciliation
 
-Status, 28 September 2026 IST: implementation and local PostgreSQL proof. Migration
-019 is **not** applied to production. The deployed host launcher/reaper works, but
+Status, 28 September 2026 IST: implementation and local PostgreSQL proof. Migrations
+019–020 are **not** applied to production. The deployed host launcher/reaper works, but
 central claim dispatch is not yet wired into the hosted worker. Policy-v3 host binding,
 IAP/SSH transport and reconciliation contracts are now implemented; a synthetic live
 transport proof passed without activating production admission.
@@ -45,8 +45,9 @@ memory, including its memory-backed working filesystems. An additional 64 MiB of
 transient host storage is reserved for source staging/accounting. Persistent toolchain
 images and controller overhead must already be excluded from the host's usable pool;
 they are not made free by releasing an individual validation claim.
-The 64 MiB staging allowance covers only the bounded 32 MiB source payload and archive
-on the execution host. It does not authorize a full repository checkout, dependency
+The 64 MiB allowance is a conservative bound for transient source transfer/accounting;
+the current gateway holds the bounded archive in controller memory and does not write a
+host checkout. It does not authorize a full repository checkout, dependency
 download or image build there; those phases require their own admitted resources.
 
 ## Replay, revocation and cleanup
@@ -68,9 +69,30 @@ download or image build there; those phases require their own admitted resources
 - The original VM funding obligation remains active; these claims do not reserve its
   monthly cost twice or take money from Vertex/the protected future reserve.
 
+## Durable result and worker-lease controller
+
+Migration 020 and `app/coding/validation_controller.py` distinguish the active worker
+lease, a verified test result, and sandbox cleanup. The controller verifies the frozen
+archive, registered host/project and protected local SSH configuration before reserving
+capacity. It rechecks the lease at both reservation and dispatch. Exactly one caller gets
+a committed dispatch envelope; others reconcile rather than send a duplicate. A lost
+connection or cancelled controller leaves outcome `unknown`, never `passed`.
+
+Cleanup-only observation may release capacity but cannot assert test success. An actual
+result is encrypted, hashed and stored with an expiry atomically with its audit event
+and capacity release. Transaction failure leaves the claim dispatched/unknown. The
+existing privacy loop clears expired payloads. Hard deletion of a coding run clears its
+private result immediately, while an orphan claim retains the minimal job identity
+needed to verify cleanup. Deleted users cannot retrieve the old result. These are local
+PostgreSQL proofs, not proof of full multi-service deletion or production activation.
+
+The controller is **not yet called by the hosted worker/Rust broker**. Connecting it
+requires a protected IPC bridge so the broker sees no database/IAP credentials. Do not
+label a generated PR production-validated on the strength of this module alone.
+
 ## Schema rollout and rollback
 
-Apply migration 019 before deploying the new shared-capacity reader. Otherwise admission
+Apply migrations 019–020 before deploying the new shared-capacity reader/controller. Otherwise admission
 fails closed because it cannot count validation allocations. The migration adds a
 composite run/owner foreign key and indexed validation claims/events. It has no provider
 calls. A downgrade refuses to erase unreleased claims; never bypass that check with
@@ -79,8 +101,8 @@ calls. A downgrade refuses to erase unreleased claims; never bypass that check w
 Local tests use disposable loopback PostgreSQL schemas. They cover deployment/validation
 competition, concurrent replay/dispatch, foreign owners, revoked authority, deadline
 bounds, uncertain results, immutable host identity, duplicate cleanup, transactional audit
-failure and downgrade refusal. The separate full Alembic proof upgraded to 019,
-downgraded to 002, and upgraded to 019 again in a disposable local database.
+failure and downgrade refusal. The separate full Alembic proof upgraded to 020,
+downgraded to 002, and upgraded to 020 again in a disposable local database.
 
 ## Remaining integration, not completed by this module
 
@@ -155,8 +177,8 @@ The SDK/dependency installation remains part of the operator trust base.
 This operator proof intentionally uses a synthetic claim; it does not pretend the
 unapplied production PostgreSQL admission chain ran. Financial import, worker identity,
 production migrations and run/result/lease integration remain required before activation.
-Local coding regression evidence at this checkpoint: 219 tests passed, including real
-loopback PostgreSQL fixtures, plus targeted lint/security/diff checks.
+Local coding regression evidence after migration 020/controller work: 232 tests passed,
+including real loopback PostgreSQL fixtures, plus targeted lint/security/diff checks.
 
 See [host isolation](ISOLATED_VALIDATION.md), [cost authority](CLOUD_COST_LEDGER.md), and
 [deployment admission](DEPLOYMENT_ADMISSION.md).

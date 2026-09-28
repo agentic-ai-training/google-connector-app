@@ -31,6 +31,8 @@ async def prepared(db):
             source_egress_consented_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ)""")
         validation_schema = importlib.import_module("migrations.versions.019_validation_capacity")
         await conn.execute(validation_schema.SCHEMA_SQL)
+        results_schema = importlib.import_module("migrations.versions.020_validation_results")
+        await conn.execute(results_schema.SCHEMA_SQL)
     target = deploy.RegisteredTarget(
         target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
@@ -247,6 +249,9 @@ async def test_migration_017_round_trip_preserves_cost_account(prepared, monkeyp
     monkeypatch.setattr(capacity_migration, "op", Capture)
     validation_migration = importlib.import_module("migrations.versions.019_validation_capacity")
     monkeypatch.setattr(validation_migration, "op", Capture)
+    result_migration = importlib.import_module("migrations.versions.020_validation_results")
+    monkeypatch.setattr(result_migration, "op", Capture)
+    result_migration.downgrade()
     validation_migration.downgrade()
     capacity_migration.downgrade()
     migration.downgrade()
@@ -257,6 +262,7 @@ async def test_migration_017_round_trip_preserves_cost_account(prepared, monkeyp
         await conn.execute(migration.SCHEMA_SQL)
         await conn.execute(capacity_migration.SCHEMA_SQL)
         await conn.execute(validation_migration.SCHEMA_SQL)
+        await conn.execute(result_migration.SCHEMA_SQL)
         assert await conn.fetchval("SELECT count(*) FROM coding_deployments") == 0
 
 

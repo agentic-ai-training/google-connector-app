@@ -15,6 +15,7 @@ async def apply_retention(pool) -> dict[str, int]:
         ("expired_run_events", "agent_run_events", "DELETE FROM agent_run_events WHERE created_at < now()-($1 * interval '1 day')", settings.workflow_retention_days),
         ("raw_embedding_payloads", "embedding_jobs", "DELETE FROM embedding_jobs WHERE completed_at IS NOT NULL AND completed_at < now()-($1 * interval '1 day')", settings.raw_telemetry_retention_days),
         ("expired_private_tool_results", "private_tool_results", "DELETE FROM private_tool_results WHERE expires_at < now()", 0),
+        ("expired_validation_results", "coding_validation_claims", "UPDATE coding_validation_claims c SET encrypted_result=NULL WHERE encrypted_result IS NOT NULL AND (run_id IS NULL OR result_expires_at<=now() OR EXISTS(SELECT 1 FROM coding_runs r WHERE r.id=c.run_id AND r.user_id=c.user_id AND r.deleted_at IS NOT NULL))", 0),
         ("expired_rag", "rag_chunks", "UPDATE rag_chunks SET deleted_at=now() WHERE deleted_at IS NULL AND indexed_at < now()-($1 * interval '1 day')", settings.workflow_retention_days),
         ("expired_runs", "agent_runs", "UPDATE agent_runs SET deleted_at=now() WHERE deleted_at IS NULL AND retention_until < now() AND status NOT IN ('queued','running','awaiting_approval')", 0),
         ("expired_coding_approvals", "coding_runs", "UPDATE coding_runs SET status='blocked',current_phase='approval_expired',approval_status='expired',updated_at=now() WHERE status='awaiting_approval' AND approval_expires_at < now()", 0),

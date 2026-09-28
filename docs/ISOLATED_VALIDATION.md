@@ -139,7 +139,8 @@ remove a blocked row merely to make another job start.
    now implemented/tested locally in migration 019. Host claim verification/replay
    prevention and central observation matching are implemented with a synthetic live
    proof. Fixed-command IAP/SSH transport also passed its synthetic live proof;
-   actual worker integration and financial enrollment remain pending.
+   the durable controller is implemented locally, but its protected IPC connection to
+   the Rust broker and financial enrollment remain pending.
    See [validation capacity](VALIDATION_CAPACITY.md). The host journal
    does not grant cloud spending or tenant access. Exercise host reboot and Docker outage recovery.
 3. Linux hosted-worker deployment and full Rust-to-launcher live proof. The Railway

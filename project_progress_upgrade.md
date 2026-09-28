@@ -2304,6 +2304,14 @@ changes become production evidence.
   The host now enforces policy v3. Synthetic end-to-end transport and replay-denial
   proof passed; 219 local coding tests passed. Worker/ledger production integration,
   fresh financial enrollment and durable result/lease recovery remain incomplete.
+  Local migration 020 and the trusted controller now separate worker lease, test result
+  and cleanup. Encrypted result retention, immediate scrubbing on hard user deletion,
+  immutable evidence, single dispatch, unknown-outcome recovery and rollback guards
+  are covered by disposable PostgreSQL tests. The controller is not yet connected to
+  the actual Rust broker/hosted worker; no production claim has been issued.
+  Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
+  downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
+  passed. No production migration, private-source remote run or paid model call occurred.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

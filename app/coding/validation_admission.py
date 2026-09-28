@@ -41,7 +41,7 @@ class ValidationConflict(RuntimeError):
     pass
 
 
-async def _run(conn, request, user_id):
+async def _run(conn, request, user_id, expected_lease_owner=None):
     row = await conn.fetchrow(
         "SELECT status,source_egress_consented_at,deleted_at FROM coding_runs "
         "WHERE id=$1 AND user_id=$2 FOR SHARE", request.run_id, user_id,
@@ -49,6 +49,14 @@ async def _run(conn, request, user_id):
     if (not row or row["deleted_at"] is not None or not row["source_egress_consented_at"]
             or row["status"] not in {"planning", "approved", "executing"}):
         raise ValidationConflict("active consented coding run required for this user")
+    if expected_lease_owner is not None:
+        cost_ledger._text(expected_lease_owner)
+        owned = await conn.fetchval(
+            "SELECT 1 FROM coding_runs WHERE id=$1 AND user_id=$2 AND lease_owner=$3 "
+            "AND lease_expires_at>now()", request.run_id, user_id, expected_lease_owner,
+        )
+        if not owned:
+            raise ValidationConflict("coding worker lease is no longer authoritative")
 
 
 def _capacity(target):
@@ -76,7 +84,8 @@ async def _event(conn, claim_id, kind):
                        claim_id, kind)
 
 
-async def reserve(pool, request: ValidationRequest, *, user_id: str, idempotency_key: str):
+async def reserve(pool, request: ValidationRequest, *, user_id: str, idempotency_key: str,
+                  expected_lease_owner=None):
     cost_ledger._text(user_id)
     cost_ledger._text(idempotency_key)
     digest = deployment.fingerprint(request)
@@ -96,7 +105,7 @@ async def reserve(pool, request: ValidationRequest, *, user_id: str, idempotency
             if old["request_hash"] != digest:
                 raise ValidationConflict("idempotency key belongs to a different validation")
             return dict(old)
-        await _run(conn, request, user_id)
+        await _run(conn, request, user_id, expected_lease_owner)
         target = deployment.RegisteredTarget.model_validate(deployment._json(target_row["config"]))
         await _admit(conn, request, target)
         cap = _capacity(target)
@@ -134,7 +143,7 @@ def _host_envelope(claim_id, request, target, request_hash):
     }
 
 
-async def claim_dispatch(pool, claim_id: UUID, *, user_id: str):
+async def claim_dispatch(pool, claim_id: UUID, *, user_id: str, expected_lease_owner=None):
     async with pool.acquire() as conn, conn.transaction():
         row, target_row = await _owned(conn, claim_id, user_id)
         if row["status"] != "reserved":
@@ -143,7 +152,7 @@ async def claim_dispatch(pool, claim_id: UUID, *, user_id: str):
         if (deployment.fingerprint(request) != row["request_hash"]
                 or request.target_hash != target_row["config_hash"]):
             raise ValidationConflict("immutable validation evidence changed")
-        await _run(conn, request, user_id)
+        await _run(conn, request, user_id, expected_lease_owner)
         target = deployment.RegisteredTarget.model_validate(deployment._json(target_row["config"]))
         if (row["run_id"] != request.run_id or row["sequence_no"] != request.sequence_no
                 or row["target_id"] != request.target_id or row["project_id"] != target.project_id
@@ -151,7 +160,8 @@ async def claim_dispatch(pool, claim_id: UUID, *, user_id: str):
                 or row["planned_end_at"] != request.planned_end_at):
             raise ValidationConflict("validation claim binding changed")
         await _admit(conn, request, target, exclude=claim_id)
-        await conn.execute("UPDATE coding_validation_claims SET status='dispatched',updated_at=now() "
+        await conn.execute("UPDATE coding_validation_claims SET status='dispatched',"
+                           "validation_outcome='unknown',updated_at=now() "
                            "WHERE id=$1", claim_id)
         await _event(conn, claim_id, "dispatch_intent")
         # Transport must spool this ONLY after the transaction commits. Do not send
