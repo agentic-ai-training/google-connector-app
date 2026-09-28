@@ -2320,6 +2320,11 @@ changes become production evidence.
   promotional-balance and attributable charge evidence is obtained. Production
   migration and worker/provider integration are still open; this checkbox remains
   intentionally unchecked.
+  A subsequent local PostgreSQL integration proof now connects that imported VM
+  obligation to funded host capacity and an approved deployment without a second
+  financial reservation. An underfunded import cannot back a pool; replay cannot
+  dispatch a second write. The coding suite passed 245 tests. No real Coolify
+  deployment or production account import was performed.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 
 from app.coding import cost_ledger as ledger
+from app.coding import deployment_admission as deploy, host_capacity
 from app.coding.gce_identity import GCEIdentityError, VerifiedExistingVM
 from app.coding.cloud_budget import CloudCostRequest
 
@@ -199,3 +200,72 @@ async def test_exact_replay_does_not_requery_provider(virgin, monkeypatch):
     monkeypatch.setattr(ledger.gce_identity, "read_existing_delhi_vm", unavailable)
     replay = await imported(virgin, item)
     assert replay["id"] == first["id"]
+
+
+async def _deployment_schema(pool):
+    async with pool.acquire() as conn:
+        for name in ("017_deployment_admission", "018_host_capacity"):
+            await conn.execute(importlib.import_module("migrations.versions." + name).SCHEMA_SQL)
+        await conn.execute("""CREATE TABLE coding_runs(
+            id UUID PRIMARY KEY,user_id TEXT NOT NULL,status TEXT NOT NULL,
+            source_egress_consented_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ)""")
+        for name in ("019_validation_capacity", "020_validation_results"):
+            await conn.execute(importlib.import_module("migrations.versions." + name).SCHEMA_SQL)
+
+
+@pytest.mark.asyncio
+async def test_imported_host_funds_capacity_and_not_second_vm_charge(virgin):
+    item = evidence()
+    parent = await imported(virgin, item)
+    await _deployment_schema(virgin)
+    host = host_capacity.FundedHost(
+        pool_id="existing-delhi-host", project_id=item.project_id,
+        server_uuid="test-existing-delhi-server", funding_reservation_id=parent["id"],
+        funding_owner_user_id="operator", cpu_millis=2000, memory_mib=8192,
+        storage_mib=20480, enforcement_hash="f" * 64,
+    )
+    await host_capacity.register_pool(virgin, host, evidence_reference="test:host-limit-proof")
+    target = deploy.RegisteredTarget(
+        target_id="existing-delhi-target", base_url="http://127.0.0.1:18000", team_id=0,
+        inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
+        deployment_secret_ref="test/deploy", project_id=item.project_id,
+        server_uuid=host.server_uuid, coolify_project_uuid="test-project",
+        environment_uuid="test-environment", owner_user_id="alice", capacity_pool_id=host.pool_id,
+    )
+    await deploy.register_target(virgin, target, evidence_reference="test:target-proof")
+    manifest = deploy.DeploymentManifest(
+        request_id=uuid4(), target_id=target.target_id, target_hash=deploy.fingerprint(target),
+        release_hash="a" * 64, compose_hash="b" * 64, validation_attestation_hash="c" * 64,
+        estimated_upper_bound_paise=0,
+        capacity=host_capacity.CapacityRequest(pool_id=host.pool_id, cpu_millis=1000,
+                                              memory_mib=2048, storage_mib=4096),
+        planned_end_at=item.stop_at,
+    )
+    await deploy.record_user_grant(
+        virgin, manifest, user_id="alice", authority_reference="test:authenticated-approval",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+    )
+    deployment = await deploy.enqueue(virgin, manifest, user_id="alice",
+                                      idempotency_key="approved-existing-host-app")
+    assert deployment["reservation_id"] is None
+    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice")
+    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice") is None
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 1
+        assert await conn.fetchval("SELECT estimated_paise FROM cloud_cost_reservations") == item.estimated_total_hosting_paise
+
+
+@pytest.mark.asyncio
+async def test_underfunded_import_cannot_back_host_capacity(virgin):
+    item = evidence(remaining=1_000_000)
+    parent = await imported(virgin, item)
+    await _deployment_schema(virgin)
+    host = host_capacity.FundedHost(
+        pool_id="underfunded-host", project_id=item.project_id, server_uuid="test-server",
+        funding_reservation_id=parent["id"], funding_owner_user_id="operator",
+        cpu_millis=2000, memory_mib=8192, storage_mib=20480, enforcement_hash="f" * 64,
+    )
+    with pytest.raises(ledger.CostAdmissionDenied, match="active hosting obligation"):
+        await host_capacity.register_pool(virgin, host, evidence_reference="test:not-funded")
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM coding_host_capacity") == 0

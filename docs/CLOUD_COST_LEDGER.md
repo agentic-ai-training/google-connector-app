@@ -94,6 +94,11 @@ for dispatch/reconciliation guarantees and the still-pending authenticated host 
    so admission uses a conservative 20 November 2026 UTC cutoff, not a fabricated
    exact expiry hour. This path was validated locally and against a live **read-only**
    GCE identity probe; no real cost import or production migration has occurred.
+   A disposable PostgreSQL integration test additionally proves that an imported
+   funded VM can back a host-capacity pool and one approved zero-incremental-cost
+   deployment without reserving a second VM charge. It proves an underfunded import
+   cannot back the pool, and a deployment claim cannot be dispatched twice. This
+   does not constitute a Coolify API write or a real application deployment.
    Current post-creation promotional balance and attributable VM/disk charges still
    require fresh operator evidence before any production import. Enrollment for a
    *new* account still rejects snapshots with historical obligations.
