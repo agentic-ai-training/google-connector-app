@@ -1,17 +1,24 @@
 """Trusted-controller cost ledger. Not a public API or a provider billing cap.
 
 One account row lock serializes admission across ALL users of a funded project.
-Network calls must happen outside transactions, after start_dispatch returns True.
+Provider reads must happen outside transactions. New provider writes may occur only
+after start_dispatch returns True; existing-resource import makes no provider write.
 If delivery is ambiguous, never repeat it: retain funds until provider reconciliation.
 Only a trusted operator/provider adapter may register evidence or settle costs.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 from app.coding.cloud_budget import CloudCostRequest, CloudCreditSnapshot, evaluate_cloud_cost
+from app.coding import gce_identity
+from app.coding.validation_transport import IAPValidationHost
 
 POLICY = "cloud-credit-envelopes-2026-09-19-hosting-reserve-only"
 
@@ -22,6 +29,156 @@ class CostLedgerConflict(RuntimeError):
 
 class CostAdmissionDenied(RuntimeError):
     pass
+
+
+class ExistingDelhiVM(BaseModel):
+    """Operator/provider-attested identity and bill for the one already-running VM."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    project_id: Literal["project-ee0c1944-144c-4364-ad4"]
+    instance_id: Literal["822115653245959101"]
+    instance_name: Literal["gca-coolify-delhi-01"]
+    zone: Literal["asia-south2-a"]
+    machine_type: Literal["e2-standard-4"]
+    disk_type: Literal["pd-balanced"]
+    disk_gib: Literal[100]
+    status: Literal["RUNNING"]
+    created_at: datetime
+    observed_at: datetime
+    stop_at: datetime
+    initial_trial_credit_paise: Literal[2_869_400]
+    remaining_trial_credit_paise: int = Field(ge=0, le=2_869_400, strict=True)
+    credit_observed_at: datetime
+    # The portal gives a date but not an exact hour. Use a deliberately earlier
+    # admission cutoff, never an invented precise provider expiration timestamp.
+    credit_admission_cutoff: datetime
+    accrued_hosting_paise: int = Field(gt=0, strict=True)
+    charge_observed_at: datetime
+    estimated_total_hosting_paise: int = Field(gt=0, strict=True)
+    identity_evidence_reference: str = Field(min_length=1, max_length=512)
+    credit_evidence_reference: str = Field(min_length=1, max_length=512)
+    charge_evidence_reference: str = Field(min_length=1, max_length=512)
+
+    @field_validator("created_at", "observed_at", "stop_at", "credit_observed_at",
+                     "credit_admission_cutoff", "charge_observed_at")
+    @classmethod
+    def utc_dates(cls, value):
+        if value.utcoffset() is None:
+            raise ValueError("audited VM dates must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+
+def _import_preflight(evidence: ExistingDelhiVM):
+    now = _now()
+    created = datetime(2026, 9, 19, 17, 24, 34, 872000, timezone.utc)
+    stop = datetime(2026, 10, 19, 17, 24, 32, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 11, 20, 0, 0, tzinfo=timezone.utc)
+    if (evidence.created_at != created or evidence.stop_at != stop
+            or evidence.credit_admission_cutoff != cutoff
+            or not evidence.created_at < now < stop
+            or evidence.estimated_total_hosting_paise > 1_400_000
+            or evidence.observed_at < now - timedelta(hours=1)
+            or evidence.credit_observed_at < now - timedelta(hours=1)
+            or evidence.charge_observed_at < now - timedelta(hours=1)
+            or max(evidence.observed_at, evidence.credit_observed_at,
+                   evidence.charge_observed_at) > now):
+        raise CostAdmissionDenied("VM identity, budget, or current evidence is not valid")
+    for reference in (evidence.identity_evidence_reference, evidence.credit_evidence_reference,
+                      evidence.charge_evidence_reference):
+        _text(reference)
+    remainder = max(1, evidence.estimated_total_hosting_paise - evidence.accrued_hosting_paise)
+    snapshot = CloudCreditSnapshot(
+        project_id=evidence.project_id, remaining_credit_paise=evidence.remaining_trial_credit_paise,
+        observed_at=evidence.credit_observed_at, expires_at=cutoff,
+        hosting_spent_paise=evidence.accrued_hosting_paise,
+    )
+    request = CloudCostRequest(project_id=evidence.project_id, category="hosting",
+                               estimated_upper_bound_paise=remainder, planned_end_at=stop)
+    # The import records a pre-existing liability even if underfunded. A failing
+    # preflight marks it uncertain and refuses new generated workloads.
+    return evaluate_cloud_cost(snapshot, request, now=now)["preflight_passed"]
+
+
+async def import_existing_delhi_vm(pool, evidence: ExistingDelhiVM, *, owner_user_id: str,
+                                   operator_host: IAPValidationHost):
+    """Atomic operator-only import; makes no cloud write and never creates a new VM.
+
+    The local ledger must be virgin for this GCP project. Evidence must come from a
+    current provider identity read, fresh trial balance and attributable cost record.
+    The supplied references are audit handles, not substitutes for those checks.
+    """
+    _text(owner_user_id)
+    digest = hashlib.sha256(json.dumps(evidence.model_dump(mode="json"), sort_keys=True,
+                                       separators=(",", ":")).encode()).hexdigest()
+    key = "existing-gce-vm-" + evidence.instance_id
+    # Idempotent replay needs neither a new provider call nor fresh billing data.
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT project_id FROM cloud_budget_accounts WHERE project_id=$1", evidence.project_id,
+        )
+        if existing:
+            row = await conn.fetchrow(
+                "SELECT * FROM cloud_cost_reservations WHERE project_id=$1 "
+                "AND user_id=$2 AND idempotency_key=$3", evidence.project_id,
+                owner_user_id, key,
+            )
+            if row and row["request_hash"] == digest:
+                return dict(row)
+            raise CostLedgerConflict("account already enrolled; import cannot reset its ledger")
+    funded = _import_preflight(evidence)
+    # Provider I/O must never hold a database lock or transaction open.
+    observed = await gce_identity.read_existing_delhi_vm(operator_host)
+    for field in ("project_id", "instance_id", "instance_name", "zone", "machine_type",
+                  "disk_type", "disk_gib", "status", "created_at", "stop_at"):
+        if getattr(observed, field) != getattr(evidence, field):
+            raise CostAdmissionDenied("GCE identity does not match the import evidence")
+    async with pool.acquire() as conn, conn.transaction():
+        lock = int.from_bytes(hashlib.sha256(evidence.project_id.encode()).digest()[:8],
+                              byteorder="big", signed=True)
+        await conn.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock)
+        existing = await conn.fetchrow(
+            "SELECT * FROM cloud_budget_accounts WHERE project_id=$1 FOR UPDATE",
+            evidence.project_id,
+        )
+        if existing:
+            row = await conn.fetchrow(
+                "SELECT * FROM cloud_cost_reservations WHERE project_id=$1 "
+                "AND user_id=$2 AND idempotency_key=$3", evidence.project_id,
+                owner_user_id, key,
+            )
+            if row and row["request_hash"] == digest:
+                return dict(row)
+            raise CostLedgerConflict("account already enrolled; import cannot reset its ledger")
+        funded = _import_preflight(evidence)
+        account = await conn.fetchval(
+            """INSERT INTO cloud_budget_accounts
+            (project_id,policy_version,opening_credit_paise,observed_credit_paise,observed_at,
+             credit_expires_at,hosting_ends_at,evidence_reference)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING project_id""",
+            evidence.project_id, POLICY, evidence.initial_trial_credit_paise,
+            evidence.remaining_trial_credit_paise, evidence.credit_observed_at,
+            evidence.credit_admission_cutoff, evidence.stop_at,
+            evidence.credit_evidence_reference,
+        )
+        if account != evidence.project_id:
+            raise CostLedgerConflict("VM import account mismatch")
+        await _event(conn, account, "existing_account_imported",
+                     evidence=evidence.credit_evidence_reference)
+        status = "dispatched" if funded else "uncertain"
+        row = await conn.fetchrow(
+            """INSERT INTO cloud_cost_reservations
+            (id,project_id,user_id,idempotency_key,request_hash,category,estimated_paise,
+             planned_end_at,status,accrued_paise,accrual_observed_at,accrual_evidence_reference,
+             evidence_reference)
+            VALUES($1,$2,$3,$4,$5,'hosting',$6,$7,$8,$9,$10,$11,$12) RETURNING *""",
+            uuid4(), account, owner_user_id, key, digest,
+            evidence.estimated_total_hosting_paise, evidence.stop_at, status,
+            evidence.accrued_hosting_paise, evidence.charge_observed_at,
+            evidence.charge_evidence_reference, evidence.identity_evidence_reference,
+        )
+        await _event(conn, account,
+                     "existing_vm_imported" if funded else "existing_vm_imported_underfunded",
+                     row["id"], evidence.identity_evidence_reference)
+        return dict(row)
 
 
 def _text(value: str) -> str:

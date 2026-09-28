@@ -1,0 +1,201 @@
+"""Audited import proof; disposable loopback PostgreSQL only."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+import importlib
+import os
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+import asyncpg
+import pytest
+import pytest_asyncio
+
+from app.coding import cost_ledger as ledger
+from app.coding.gce_identity import GCEIdentityError, VerifiedExistingVM
+from app.coding.cloud_budget import CloudCostRequest
+
+
+@pytest_asyncio.fixture
+async def virgin():
+    dsn = os.getenv("COST_LEDGER_TEST_DSN")
+    if not dsn:
+        pytest.skip("set COST_LEDGER_TEST_DSN to local PostgreSQL")
+    parsed = urlsplit(dsn)
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or parsed.query:
+        pytest.fail("VM import tests refuse non-loopback databases")
+    schema = "cost_ledger_test_" + uuid4().hex
+    conn = await asyncpg.connect(dsn)
+    pool = None
+    try:
+        await conn.execute(f'CREATE SCHEMA "{schema}"')
+        migration = importlib.import_module("migrations.versions.016_cloud_cost_ledger")
+        await conn.execute(f'SET search_path TO "{schema}"')
+        await conn.execute(migration.SCHEMA_SQL)
+        pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10,
+                                         server_settings={"search_path": schema})
+        yield pool
+    finally:
+        if pool:
+            await pool.close()
+        await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await conn.close()
+
+
+def evidence(*, remaining=2_769_400, accrued=100_000, estimate=1_385_056):
+    now = datetime.now(timezone.utc)
+    return ledger.ExistingDelhiVM(
+        project_id="project-ee0c1944-144c-4364-ad4", instance_id="822115653245959101",
+        instance_name="gca-coolify-delhi-01", zone="asia-south2-a",
+        machine_type="e2-standard-4", disk_type="pd-balanced", disk_gib=100,
+        status="RUNNING", created_at=datetime(2026, 9, 19, 17, 24, 34, 872000, timezone.utc),
+        observed_at=now, stop_at=datetime(2026, 10, 19, 17, 24, 32, tzinfo=timezone.utc),
+        initial_trial_credit_paise=2_869_400, remaining_trial_credit_paise=remaining,
+        credit_observed_at=now,
+        credit_admission_cutoff=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        accrued_hosting_paise=accrued, charge_observed_at=now,
+        estimated_total_hosting_paise=estimate,
+        identity_evidence_reference="test:gce-instance-identity",
+        credit_evidence_reference="test:fresh-promo-credit",
+        charge_evidence_reference="test:attributable-compute-and-disk-charge",
+    )
+
+
+@pytest.fixture(autouse=True)
+def verified_provider_identity(monkeypatch):
+    async def read(_host):
+        item = evidence()
+        return VerifiedExistingVM(**{
+            key: getattr(item, key) for key in (
+                "project_id", "instance_id", "instance_name", "zone", "machine_type",
+                "disk_type", "disk_gib", "status", "created_at", "stop_at",
+            )
+        })
+
+    monkeypatch.setattr(ledger.gce_identity, "read_existing_delhi_vm", read)
+
+
+async def imported(pool, item=None, user="operator"):
+    return await ledger.import_existing_delhi_vm(
+        pool, item or evidence(), owner_user_id=user, operator_host=object(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_existing_liability_is_imported_once_without_provider_write(virgin):
+    item = evidence()
+    rows = await asyncio.gather(*[imported(virgin, item) for _ in range(8)])
+    assert len({row["id"] for row in rows}) == 1
+    row = rows[0]
+    assert row["status"] == "dispatched"
+    assert row["accrued_paise"] == 100_000
+    assert row["estimated_paise"] == 1_385_056
+    assert row["planned_end_at"] == item.stop_at
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM cloud_budget_accounts") == 1
+        assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 1
+        assert await conn.fetchval("SELECT count(*) FROM cloud_cost_events") == 2
+    # Reserve/dispatch is specifically for a NEW provider write; import never grants it.
+    assert await ledger.start_dispatch(
+        virgin, project_id=item.project_id, reservation_id=row["id"], user_id="operator",
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_import_protects_vertex_and_future_reserve(virgin):
+    item = evidence()
+    await imported(virgin, item)
+    vertex = CloudCostRequest(project_id=item.project_id, category="vertex",
+                              estimated_upper_bound_paise=850_000,
+                              planned_end_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    assert (await ledger.reserve(virgin, vertex, user_id="operator",
+                                 idempotency_key="vertex"))["status"] == "reserved"
+    with pytest.raises(ledger.CostAdmissionDenied):
+        await ledger.reserve(virgin, vertex.model_copy(update={
+            "estimated_upper_bound_paise": 1,
+        }), user_id="operator", idempotency_key="more-vertex")
+
+
+@pytest.mark.asyncio
+async def test_import_underfunded_truthfully_and_denies_new_host_capacity(virgin):
+    item = evidence(remaining=1_000_000)
+    row = await imported(virgin, item)
+    assert row["status"] == "uncertain"
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT event_type FROM cloud_cost_events "
+                                   "ORDER BY id DESC LIMIT 1") == "existing_vm_imported_underfunded"
+
+
+@pytest.mark.asyncio
+async def test_stale_or_mismatched_identity_cannot_first_enroll(virgin):
+    item = evidence()
+    for changes in ({"credit_observed_at": datetime.now(timezone.utc)-timedelta(hours=2)},
+                    {"stop_at": item.stop_at+timedelta(seconds=1)},
+                    {"created_at": item.created_at+timedelta(seconds=1)},
+                    {"estimated_total_hosting_paise": 1_400_001}):
+        with pytest.raises(ledger.CostAdmissionDenied):
+            await imported(virgin, item.model_copy(update=changes))
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM cloud_budget_accounts") == 0
+
+
+@pytest.mark.asyncio
+async def test_import_cannot_replace_owner_cost_identity_or_account(virgin):
+    item = evidence()
+    await imported(virgin, item)
+    for changed, user in ((item.model_copy(update={"accrued_hosting_paise": 100_001}), "operator"),
+                          (item, "different-user")):
+        with pytest.raises(ledger.CostLedgerConflict, match="cannot reset"):
+            await imported(virgin, changed, user=user)
+
+
+@pytest.mark.asyncio
+async def test_import_audit_failure_rolls_back_account_and_obligation(virgin, monkeypatch):
+    async def fail(*args, **kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(ledger, "_event", fail)
+    with pytest.raises(RuntimeError, match="audit"):
+        await imported(virgin)
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM cloud_budget_accounts") == 0
+        assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 0
+
+
+@pytest.mark.asyncio
+async def test_live_provider_disagreement_or_unavailability_never_enrolls(virgin, monkeypatch):
+    async def mismatch(_host):
+        item = evidence()
+        return VerifiedExistingVM(**{
+            **{key: getattr(item, key) for key in (
+                "project_id", "instance_id", "instance_name", "zone", "machine_type",
+                "disk_type", "disk_gib", "status", "created_at", "stop_at",
+            )},
+            "disk_gib": 200,
+        })
+
+    monkeypatch.setattr(ledger.gce_identity, "read_existing_delhi_vm", mismatch)
+    with pytest.raises(ledger.CostAdmissionDenied, match="GCE identity"):
+        await imported(virgin)
+
+    async def unavailable(_host):
+        raise GCEIdentityError("gce_read_unavailable")
+
+    monkeypatch.setattr(ledger.gce_identity, "read_existing_delhi_vm", unavailable)
+    with pytest.raises(GCEIdentityError, match="gce_read_unavailable"):
+        await imported(virgin)
+    async with virgin.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM cloud_budget_accounts") == 0
+        assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 0
+
+
+@pytest.mark.asyncio
+async def test_exact_replay_does_not_requery_provider(virgin, monkeypatch):
+    item = evidence()
+    first = await imported(virgin, item)
+
+    async def unavailable(_host):
+        raise GCEIdentityError("should_not_probe_on_replay")
+
+    monkeypatch.setattr(ledger.gce_identity, "read_existing_delhi_vm", unavailable)
+    replay = await imported(virgin, item)
+    assert replay["id"] == first["id"]

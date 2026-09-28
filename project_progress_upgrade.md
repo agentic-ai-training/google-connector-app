@@ -2312,6 +2312,14 @@ changes become production evidence.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.
+  Existing-host audited enrollment is now implemented locally, with a fixed-target
+  read-only GCE instance/disk/STOP identity probe performed outside database locks,
+  historical accrued liability, immutable idempotent replay and underfunded fail-closed
+  state. A live read-only GCE identity probe passed. The full coding suite passed
+  243 tests on 2026-09-28; production import remains unperformed until fresh
+  promotional-balance and attributable charge evidence is obtained. Production
+  migration and worker/provider integration are still open; this checkbox remains
+  intentionally unchecked.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,

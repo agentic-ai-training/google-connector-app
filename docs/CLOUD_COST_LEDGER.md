@@ -1,6 +1,6 @@
 # Cloud cost authority and reservation ledger
 
-Status (27 September 2026): local implementation and PostgreSQL tests. Migration
+Status (28 September 2026): local implementation and PostgreSQL tests. Migration
 016 has **not** been applied to production. The deployment controller is not yet
 wired to this ledger; do not present it as a live billing cap.
 
@@ -82,9 +82,21 @@ for dispatch/reconciliation guarantees and the still-pending authenticated host 
 
 ## Activation requirements still outstanding
 
-1. Audit and import the already-running VM's incurred and remaining obligations.
-   Enrollment deliberately rejects a snapshot with existing obligations; do not
-   bypass this by describing the active account as unused.
+1. Import the already-running VM's incurred and remaining obligations using the
+   operator-only `import_existing_delhi_vm` path. It reads the fixed GCE instance
+   and disk identity through protected local gcloud configuration before opening
+   a database transaction. The exact project, numeric VM ID, shape, 100-GiB disk,
+   creation time and STOP deadline must match. A missing/mismatched provider read
+   creates no ledger row. Exact import replay is idempotent; changed evidence or
+   owner cannot replace the account. Existing incurred cost is accrued, not hidden
+   as unused capacity; an underfunded import is marked uncertain and cannot back
+   new host-capacity allocations. The user-supplied credit expiry was date-only,
+   so admission uses a conservative 20 November 2026 UTC cutoff, not a fabricated
+   exact expiry hour. This path was validated locally and against a live **read-only**
+   GCE identity probe; no real cost import or production migration has occurred.
+   Current post-creation promotional balance and attributable VM/disk charges still
+   require fresh operator evidence before any production import. Enrollment for a
+   *new* account still rejects snapshots with historical obligations.
 2. Apply the reviewed migration through the established backup/migration workflow.
 3. Bind deployment and Vertex adapters to authenticated principals, approved immutable
    operation manifests, trusted upper-bound estimates and provider resource IDs.
@@ -106,7 +118,8 @@ Use the opt-in `COST_LEDGER_TEST_DSN` environment variable pointing to a loopbac
 PostgreSQL database, then run:
 
 ```sh
-python3 -m pytest tests/coding/test_cost_ledger_postgres.py tests/coding/test_cloud_budget.py -q
+python3 -m pytest tests/coding/test_cost_ledger_postgres.py tests/coding/test_cloud_budget.py \
+  tests/coding/test_existing_vm_import_postgres.py tests/coding/test_gce_identity.py -q
 ```
 
 Tests create and remove only random `cost_ledger_test_*` schemas. They refuse

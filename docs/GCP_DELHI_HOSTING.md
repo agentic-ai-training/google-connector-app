@@ -81,6 +81,14 @@ The tunnel is an operator process, not a permanent public URL or production cont
 The pinned public host key is also in the local gcloud known-hosts file; a new operator
 must verify identity rather than disable checking.
 
+On 28 September 2026, a fixed-target read-only GCE probe again confirmed this VM
+was `RUNNING`, with `e2-standard-4`, a ready 100-GiB `pd-balanced` boot disk and
+the same stored STOP deadline. The local cost-ledger import now requires this
+provider identity proof, fresh current promotional-credit evidence and attributable
+accrued compute/disk charges. It has **not** been run against production, because
+the latter two current billing observations are not yet established. A completed
+identity probe alone is not authority to assume the full original credit remains.
+
 ## Bootstrap backup and restore evidence — 2026-09-20
 
 - Created a custom-format dump of **only the new Coolify database**, not core Neon or
