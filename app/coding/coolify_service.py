@@ -47,7 +47,8 @@ class CoolifyServiceClient:
     async def __aexit__(self, *_):
         await self._client.aclose()
 
-    async def _json(self, method: str, path: str, *, payload=None, expected: int):
+    async def _json(self, method: str, path: str, *, payload=None, expected: int,
+                    result_type=dict, max_bytes=65_536):
         try:
             async with self._client.stream(method, path, json=payload) as response:
                 if response.status_code != expected:
@@ -60,14 +61,14 @@ class CoolifyServiceClient:
                     raise CoolifyServiceError("unexpected_compression")
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
-                    if len(body) + len(chunk) > 65_536:
+                    if len(body) + len(chunk) > max_bytes:
                         raise CoolifyServiceError("response_too_large")
                     body.extend(chunk)
                 try:
                     result = json.loads(body)
                 except (ValueError, UnicodeError, RecursionError):
                     raise CoolifyServiceError("invalid_response") from None
-                if not isinstance(result, dict):
+                if not isinstance(result, result_type):
                     raise CoolifyServiceError("invalid_response")
                 return result
         except httpx.TimeoutException:
@@ -98,6 +99,59 @@ class CoolifyServiceClient:
         if not isinstance(resource_id, str) or not RESOURCE_ID.fullmatch(resource_id):
             raise CoolifyServiceError("resource_identity_missing")
         return resource_id
+
+    async def matching_services(self, *, request_id: UUID, compose_hash: str):
+        """Read-only identity reconciliation; no raw provider payload escapes."""
+        server = await self._json(
+            "GET", "/api/v1/servers/" + self.target.server_uuid, expected=200,
+        )
+        project = await self._json(
+            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid, expected=200,
+        )
+        environment = await self._json(
+            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid + "/"
+            + self.target.environment_uuid, expected=200,
+        )
+        if (server.get("uuid") != self.target.server_uuid
+                or project.get("uuid") != self.target.coolify_project_uuid
+                or type(server.get("id")) is not int
+                or type(project.get("id")) is not int
+                or type(environment.get("id")) is not int
+                or type(environment.get("project_id")) is not int
+                or environment.get("project_id") != project["id"]):
+            raise CoolifyServiceError("target_identity_ambiguous")
+        values = await self._json(
+            "GET", "/api/v1/services", expected=200, result_type=list,
+            max_bytes=1_048_576,
+        )
+        if len(values) > 1000:
+            raise CoolifyServiceError("inventory_too_large")
+        name = "gca-" + request_id.hex
+        matches = []
+        for item in values:
+            if not isinstance(item, dict) or item.get("name") != name:
+                continue
+            resource_id = item.get("uuid")
+            raw = item.get("docker_compose_raw")
+            if (not isinstance(resource_id, str) or not RESOURCE_ID.fullmatch(resource_id)
+                    or not isinstance(raw, str) or item.get("deleted_at") is not None
+                    or type(item.get("server_id")) is not int
+                    or type(item.get("environment_id")) is not int
+                    or item.get("server_id") != server["id"]
+                    or item.get("environment_id") != environment["id"]):
+                raise CoolifyServiceError("identity_ambiguous")
+            possible = [raw.encode()]
+            try:
+                possible.append(base64.b64decode(raw, validate=True))
+            except (ValueError, UnicodeError):
+                pass
+            if not any(hashlib.sha256(candidate).hexdigest() == compose_hash
+                       for candidate in possible):
+                raise CoolifyServiceError("identity_ambiguous")
+            matches.append(resource_id)
+        if len(matches) > 1:
+            raise CoolifyServiceError("identity_ambiguous")
+        return matches[0] if matches else None
 
 
 async def submit_approved_service(pool, deployment_id: UUID, *, user_id: str,
@@ -162,3 +216,45 @@ async def submit_approved_service(pool, deployment_id: UUID, *, user_id: str,
         )
         return {"deployment_id": deployment_id, "status": row["status"],
                 "dispatched": True, "resource_id": resource_id}
+
+
+async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
+                                    resolve_token, transport=None):
+    """Resolve a lost create response by name + exact Compose, never by reposting."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT d.manifest,d.manifest_hash,d.status,d.provider_resource_id,"
+            "t.config,t.config_hash FROM coding_deployments d "
+            "JOIN coding_deployment_targets t ON t.target_id=d.target_id "
+            "AND t.user_id=d.user_id AND t.project_id=d.project_id "
+            "WHERE d.id=$1 AND d.user_id=$2", deployment_id, user_id,
+        )
+    if not row:
+        raise admission.DeploymentConflict("deployment unavailable for this user")
+    if row["status"] not in {"dispatching", "uncertain"}:
+        return {"deployment_id": deployment_id, "status": row["status"],
+                "resource_id": row["provider_resource_id"], "reconciled": False}
+    manifest = admission.DeploymentManifest.model_validate(admission._json(row["manifest"]))
+    target = admission.RegisteredTarget.model_validate(admission._json(row["config"]))
+    if (admission.fingerprint(manifest) != row["manifest_hash"]
+            or admission.fingerprint(target) != row["config_hash"]
+            or manifest.target_hash != row["config_hash"]):
+        raise admission.DeploymentConflict("immutable deployment identity changed")
+    token = resolve_token(target.configuration_secret_ref)
+    async with CoolifyServiceClient(target, token, transport=transport) as client:
+        await client.verify_team()
+        resource_id = await client.matching_services(
+            request_id=manifest.request_id, compose_hash=manifest.compose_hash,
+        )
+    if resource_id is None:
+        return {"deployment_id": deployment_id, "status": row["status"],
+                "resource_id": None, "reconciled": False}
+    evidence = hashlib.sha256(
+        f"{deployment_id}:reconciled:{resource_id}:{manifest.compose_hash}".encode(),
+    ).hexdigest()
+    updated = await admission.record_provider_observation(
+        pool, deployment_id, user_id=user_id,
+        evidence_hash=evidence, resource_id=resource_id,
+    )
+    return {"deployment_id": deployment_id, "status": updated["status"],
+            "resource_id": resource_id, "reconciled": True}

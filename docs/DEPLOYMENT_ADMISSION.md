@@ -27,6 +27,12 @@ target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
 The local PostgreSQL/provider-mock test exercises one concurrent POST and denies
 replay, false/expired validation, changed source, cross-tenant access and wrong team.
+Read-only recovery of an uncertain create now looks for the deterministic Service
+name and exact Compose hash and cross-checks Coolify's numeric server, project and
+environment IDs against the registered UUIDs. Missing, duplicate, wrong-host or
+different-content results never become submitted and never trigger a second POST.
+This recovery is only mock-tested; the pinned installed Coolify version must return
+the documented identity fields before it can be relied on operationally.
 
 The provider step follows the [Coolify Service creation API](https://coolify.io/docs/api/endpoints/services/create-service)
 using `POST /api/v1/services` with base64 Compose and `instant_deploy=false`.
@@ -115,9 +121,9 @@ Before deployment activation, complete:
    coverage must still be reserved separately.
 3. Authenticated approval/standing-authority integration and real attestation checks.
 4. Scoped Coolify configuration/deployment credentials and immutable artifact loading.
-5. Verify this API contract against the pinned installed Coolify version, create
-   least-privilege configuration/deployment credentials, reconcile ambiguous Service
-   creation by stable identity without retry, and add separate durable secret,
+5. Verify this API and inventory contract against the pinned installed Coolify
+   version, create least-privilege configuration/deployment credentials, connect
+   the mock-tested identity reconciliation to a trusted worker, and add durable secret,
    start, bounded-poll, health, backup and behavioral-verification steps. Do not
    equate a submitted Service UUID with a healthy deployment.
 6. Secure execution/network/storage limits, generated Compose policy, TLS/domain,
@@ -143,7 +149,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 267 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 270 tests with real PostgreSQL enabled as of
 29 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,

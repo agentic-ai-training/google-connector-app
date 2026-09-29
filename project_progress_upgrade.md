@@ -2382,11 +2382,16 @@ changes become production evidence.
   unexpired passing validation claim bound to the same user/run/target/source;
   provider create uses `instant_deploy=false` and records only submission or
   uncertainty. Concurrent replay, false validation, wrong team and provider error
-  tests use mocked HTTP with disposable PostgreSQL. Full coding suite: 267 passed.
+  tests use mocked HTTP with disposable PostgreSQL. Initial suite: 267 passed.
   No live Coolify write, image build, secret setup, Service start, URL verification,
   Chat delivery or production migration was performed. Installed-version API proof,
   source-to-image build attestation, scoped credentials, staged writes and recovery
   remain required; this item stays unchecked.
+  Local read-only recovery now checks the deterministic Service name, exact Compose
+  hash and provider server/project/environment identities before adopting an
+  uncertain create; absent or conflicting inventory stays uncertain and does not
+  repost. Provider-mock/loopback-PostgreSQL regression suite: 270 coding tests passed.
+  This is not installed-version or live recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

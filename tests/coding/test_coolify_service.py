@@ -10,7 +10,9 @@ import pytest
 from app.coding import deployment_admission as deploy
 from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
-from app.coding.coolify_service import submit_approved_service
+from app.coding.coolify_service import (
+    CoolifyServiceError, reconcile_created_service, submit_approved_service,
+)
 from tests.coding.test_compose_policy import safe_compose
 from tests.coding.test_cost_ledger_postgres import DSN
 from tests.coding.test_deployment_admission_postgres import prepared as prepared_fixture
@@ -211,3 +213,136 @@ async def test_other_tenant_cannot_preflight_or_create(covered, context, monkeyp
             covered[0], row["id"], user_id="mallory", compose=compose,
             resolve_token=lambda _: pytest.fail("credential was consulted"),
         )
+
+
+@pytest.mark.asyncio
+async def test_lost_response_reconciles_exact_service_without_repost(covered, context, monkeypatch):
+    row, compose = await approved_deployment(covered, context, monkeypatch)
+    manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
+    names = []
+
+    def provider(request):
+        if request.url.path.endswith("/teams/current"):
+            return httpx.Response(200, json={"id": 0})
+        if request.url.path == "/api/v1/servers/server":
+            return httpx.Response(200, json={"id": 1, "uuid": "server"})
+        if request.url.path == "/api/v1/projects/project":
+            return httpx.Response(200, json={"id": 3, "uuid": "project"})
+        if request.url.path == "/api/v1/projects/project/environment":
+            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        if request.method == "POST":
+            names.append(request.url.path)
+            raise httpx.ReadTimeout("response lost", request=request)
+        return httpx.Response(200, json=[{
+            "name": "gca-" + manifest.request_id.hex, "uuid": "created-service-1",
+            "docker_compose_raw": base64.b64encode(compose).decode(),
+            "server_id": 1, "environment_id": 2,
+            "deleted_at": None, "secrets": "never-return",
+        }])
+
+    transport = httpx.MockTransport(provider)
+    await submit_approved_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    recovered = await reconcile_created_service(
+        covered[0], row["id"], user_id="alice",
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    assert recovered == {"deployment_id": row["id"], "status": "submitted",
+                         "resource_id": "created-service-1", "reconciled": True}
+    assert "secrets" not in str(recovered)
+    assert names == ["/api/v1/services"]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
+        covered, context, monkeypatch):
+    row, compose = await approved_deployment(covered, context, monkeypatch)
+    manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
+
+    def creation(request):
+        if request.url.path.endswith("/teams/current"):
+            return httpx.Response(200, json={"id": 0})
+        return httpx.Response(503)
+
+    await submit_approved_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=httpx.MockTransport(creation),
+    )
+    name = "gca-" + manifest.request_id.hex
+    for services in (
+        [{"name": name, "uuid": "wrong-content", "docker_compose_raw": "secret",
+          "server_id": 1, "environment_id": 2}],
+        [{"name": name, "uuid": value, "docker_compose_raw": compose.decode(),
+          "server_id": 1, "environment_id": 2}
+         for value in ("duplicate-1", "duplicate-2")],
+    ):
+        def listing(request):
+            if request.url.path.endswith("/teams/current"):
+                return httpx.Response(200, json={"id": 0})
+            if request.url.path == "/api/v1/servers/server":
+                return httpx.Response(200, json={"id": 1, "uuid": "server"})
+            if request.url.path == "/api/v1/projects/project":
+                return httpx.Response(200, json={"id": 3, "uuid": "project"})
+            if request.url.path == "/api/v1/projects/project/environment":
+                return httpx.Response(200, json={"id": 2, "project_id": 3})
+            return httpx.Response(200, json=services)
+
+        with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
+            await reconcile_created_service(
+                covered[0], row["id"], user_id="alice",
+                resolve_token=lambda _: "scoped-test-token",
+                transport=httpx.MockTransport(listing),
+            )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval("SELECT status FROM coding_deployments") == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
+        covered, context, monkeypatch):
+    row, compose = await approved_deployment(covered, context, monkeypatch)
+    manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
+
+    def provider(request):
+        if request.url.path.endswith("/teams/current"):
+            return httpx.Response(200, json={"id": 0})
+        if request.url.path == "/api/v1/servers/server":
+            return httpx.Response(200, json={"id": 1, "uuid": "server"})
+        if request.url.path == "/api/v1/projects/project":
+            return httpx.Response(200, json={"id": 3, "uuid": "project"})
+        if request.url.path == "/api/v1/projects/project/environment":
+            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        if request.method == "POST":
+            return httpx.Response(503)
+        return httpx.Response(200, json=[])
+
+    transport = httpx.MockTransport(provider)
+    await submit_approved_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    missing = await reconcile_created_service(
+        covered[0], row["id"], user_id="alice",
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    assert missing["status"] == "uncertain" and missing["reconciled"] is False
+
+    def wrong_server(request):
+        if request.url.path == "/api/v1/services":
+            return httpx.Response(200, json=[{
+                "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-server-service",
+                "docker_compose_raw": compose.decode(), "server_id": 99,
+                "environment_id": 2, "deleted_at": None,
+            }])
+        return provider(request)
+
+    with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
+        await reconcile_created_service(
+            covered[0], row["id"], user_id="alice",
+            resolve_token=lambda _: "scoped-test-token",
+            transport=httpx.MockTransport(wrong_server),
+        )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval("SELECT status FROM coding_deployments") == "uncertain"
