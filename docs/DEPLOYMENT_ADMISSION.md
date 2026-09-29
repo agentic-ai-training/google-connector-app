@@ -35,11 +35,18 @@ Compose bytes to the approved SHA-256, checks a bounded generated-Compose policy
 requires a real unexpired `coding_validation_claims` pass for the same user, run,
 target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
-The current manifest admits one passing validation claim. That is insufficient to
-prove a generated React + Spring Boot release: an eventual start gate must require
-the complete profile matrix for the same frozen source and reject a release with
-only a Python compile or one passing component. The locally added React/Spring
-profiles are not yet enrolled in that matrix or activated on the host.
+The manifest now has two typed release profiles. A single-service release retains
+one passing claim. A `react_spring_postgres` release requires four distinct,
+profile-labelled passing claims (`react_test`, `react_build`, `spring_test`,
+`spring_package`) and a canonical hash of the complete proof set. Each claim must
+belong to the same tenant/run/target/frozen source and remain unexpired at provider
+admission and dispatch. A Python-only pass, missing profile, duplicate claim, altered
+source/profile, failed result or expired result cannot authorize the stack. Compose
+must match the declared profile: the generated stack contains `frontend`, `backend`
+and `database`, with an internal named database volume and bounded resources;
+a multi-service
+stack cannot be labelled `single_service`. This is a local admission gate, not live
+toolchain proof. The React/Spring profiles are not yet activated on the host.
 The Compose policy now recomputes `release_hash` from a domain-separated canonical
 statement containing that validated source hash, the exact Compose hash, and every
 service's digest-pinned image reference. A mismatched release, source or image is
@@ -207,11 +214,11 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 281 tests with real PostgreSQL enabled after
-the 30 September release-identity change. That run covered capacity races,
+The complete local coding suite passed 300 tests with real PostgreSQL enabled after
+the generated-stack validation-matrix change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and
-Coolify-Service suite passed 36 tests with real local PostgreSQL, including a
+Coolify-Service suite also covers the four-profile generated stack, including a
 provider-access denial for an approved manifest containing an unrelated release hash.
 The Coolify provider is mocked in these tests. Runtime isolation,
 image-to-source provenance, quota enforcement and a real generated-app deployment

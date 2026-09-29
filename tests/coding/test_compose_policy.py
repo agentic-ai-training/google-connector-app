@@ -5,7 +5,9 @@ from uuid import uuid4
 import pytest
 
 from app.coding.compose_policy import ComposePolicyError, release_identity, validate_compose
-from app.coding.deployment_admission import DeploymentManifest
+from app.coding.deployment_admission import (
+    DeploymentManifest, GENERATED_STACK_PROFILES, ValidationProof, validation_set_hash,
+)
 from app.coding.host_capacity import CapacityRequest
 from datetime import datetime, timedelta, timezone
 
@@ -43,6 +45,57 @@ def safe_compose():
             "  dbdata: {}\n")
 
 
+def safe_stack_compose():
+    return ("services:\n"
+            "  frontend:\n"
+            "    image: registry.example/frontend@sha256:" + "a" * 64 + "\n"
+            "    depends_on: [backend]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.4', memory: 512MiB}\n"
+            "  backend:\n"
+            "    image: registry.example/backend@sha256:" + "b" * 64 + "\n"
+            "    depends_on: [database]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.6', memory: 1GiB}\n"
+            "  database:\n"
+            "    image: registry.example/postgres@sha256:" + "c" * 64 + "\n"
+            "    volumes: [dbdata:/var/lib/postgresql/data]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.5', memory: 1GiB}\n"
+            "volumes:\n"
+            "  dbdata: {}\n")
+
+
+def approved_stack(*, proofs=None, text=None):
+    text = text or safe_stack_compose()
+    data = text.encode()
+    source_hash = "d" * 64
+    proofs = proofs or tuple(ValidationProof(
+        profile=profile, claim_id=uuid4(), result_hash=format(index + 1, "x") * 64,
+    ) for index, profile in enumerate(sorted(GENERATED_STACK_PROFILES)))
+    images = {
+        "frontend": "registry.example/frontend@sha256:" + "a" * 64,
+        "backend": "registry.example/backend@sha256:" + "b" * 64,
+        "database": "registry.example/postgres@sha256:" + "c" * 64,
+    }
+    compose_hash = sha256(data).hexdigest()
+    manifest = DeploymentManifest(
+        request_id=uuid4(), target_id="test-target", target_hash="a" * 64,
+        release_profile="react_spring_postgres", validation_proofs=proofs,
+        validation_attestation_hash=validation_set_hash(proofs),
+        validated_source_hash=source_hash, compose_hash=compose_hash,
+        release_hash=release_identity(source_hash, compose_hash, images),
+        estimated_upper_bound_paise=0,
+        capacity=CapacityRequest(pool_id="test-host", cpu_millis=1500,
+                                 memory_mib=3072, storage_mib=10240),
+        planned_end_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    return data, manifest
+
+
 def test_exact_digest_pinned_bounded_compose():
     data, manifest = approved(safe_compose())
     assert validate_compose(data, manifest) == safe_compose()
@@ -68,6 +121,31 @@ def test_release_identity_is_bound_to_source_compose_and_each_pinned_image():
         validate_compose(other.encode(), manifest.model_copy(update={
             "compose_hash": sha256(other.encode()).hexdigest(),
         }))
+
+
+def test_generated_stack_requires_all_four_profile_proofs_and_canonical_shape():
+    data, manifest = approved_stack()
+    assert validate_compose(data, manifest) == data.decode()
+    with pytest.raises(ValueError, match="four distinct"):
+        DeploymentManifest.model_validate({**manifest.model_dump(),
+                                           "validation_proofs": manifest.validation_proofs[:3]})
+    with pytest.raises(ValueError, match="four distinct"):
+        DeploymentManifest.model_validate({**manifest.model_dump(),
+                                           "validation_proofs": (
+                                               *manifest.validation_proofs[:3],
+                                               manifest.validation_proofs[0],
+                                           )})
+    single_data, single_manifest = approved(safe_compose())
+    with pytest.raises(ComposePolicyError, match="multi-service"):
+        validate_compose(data, single_manifest.model_copy(update={
+            "compose_hash": sha256(data).hexdigest(),
+        }))
+    wrong = data.decode().replace("depends_on: [database]", "depends_on: []")
+    with pytest.raises(ComposePolicyError, match="dependencies"):
+        validate_compose(wrong.encode(), manifest.model_copy(update={
+            "compose_hash": sha256(wrong.encode()).hexdigest(),
+        }))
+    assert validate_compose(single_data, single_manifest) == single_data.decode()
 
 
 @pytest.mark.parametrize("fragment", [

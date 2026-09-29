@@ -53,6 +53,27 @@ class RegisteredTarget(CoolifyTarget):
         return self
 
 
+GENERATED_STACK_PROFILES = frozenset({
+    "react_test", "react_build", "spring_test", "spring_package",
+})
+
+
+class ValidationProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    profile: Literal["react_test", "react_build", "spring_test", "spring_package"]
+    claim_id: UUID
+    result_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def validation_set_hash(proofs: tuple[ValidationProof, ...]) -> str:
+    """Fingerprint the complete, profile-labelled result set, not just one pass."""
+    statement = {"schema": "gca-validation-set-v1", "proofs": [
+        proof.model_dump(mode="json") for proof in sorted(proofs, key=lambda item: item.profile)
+    ]}
+    return hashlib.sha256(json.dumps(statement, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
 class DeploymentManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     request_id: UUID
@@ -63,6 +84,8 @@ class DeploymentManifest(BaseModel):
     compose_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_attestation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_claim_id: UUID | None = None
+    release_profile: Literal["single_service", "react_spring_postgres"] = "single_service"
+    validation_proofs: tuple[ValidationProof, ...] = ()
     validated_source_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     estimated_upper_bound_paise: int = Field(ge=0, strict=True)
     capacity: host_capacity.CapacityRequest | None = None
@@ -79,6 +102,17 @@ class DeploymentManifest(BaseModel):
     def funding_required(self):
         if self.estimated_upper_bound_paise == 0 and self.capacity is None:
             raise ValueError("zero incremental cost requires verified host capacity coverage")
+        if self.release_profile == "react_spring_postgres":
+            profiles = [proof.profile for proof in self.validation_proofs]
+            if (set(profiles) != GENERATED_STACK_PROFILES or len(profiles) != 4
+                    or len({proof.claim_id for proof in self.validation_proofs}) != 4
+                    or self.validation_claim_id is not None
+                    or self.validated_source_hash is None
+                    or self.validation_attestation_hash != validation_set_hash(
+                        self.validation_proofs)):
+                raise ValueError("generated stack requires four distinct bound validation proofs")
+        elif self.validation_proofs:
+            raise ValueError("single-service release cannot carry generated-stack proofs")
         return self
 
 
@@ -177,21 +211,35 @@ async def _grant(conn, manifest, user_id):
 
 
 async def _require_passing_validation(conn, manifest, user_id):
-    """Bind a provider write to the tenant's real immutable validation result."""
-    if manifest.validation_claim_id is None or manifest.validated_source_hash is None:
+    """Bind every required profile to this tenant's real immutable validation result."""
+    if manifest.validated_source_hash is None:
         raise DeploymentConflict("passing validation claim and source binding required")
+    if manifest.release_profile == "react_spring_postgres":
+        expected = [(proof.claim_id, proof.result_hash, proof.profile)
+                    for proof in manifest.validation_proofs]
+    else:
+        if manifest.validation_claim_id is None:
+            raise DeploymentConflict("passing validation claim and source binding required")
+        expected = [(manifest.validation_claim_id, manifest.validation_attestation_hash, None)]
+    for claim_id, result_hash, expected_profile in expected:
+        await _require_one_passing_validation(
+            conn, manifest, user_id, claim_id, result_hash, expected_profile,
+        )
+
+
+async def _require_one_passing_validation(conn, manifest, user_id, claim_id,
+                                          result_hash, expected_profile):
     row = await conn.fetchrow(
         "SELECT c.request,c.request_hash,c.result_hash,c.validation_outcome,c.status,"
         "c.result_expires_at,c.run_id,c.target_id,r.deleted_at "
         "FROM coding_validation_claims c JOIN coding_runs r ON r.id=c.run_id "
         "AND r.user_id=c.user_id WHERE c.id=$1 AND c.user_id=$2 "
         "AND c.run_id=$3 AND c.target_id=$4 FOR SHARE OF c,r",
-        manifest.validation_claim_id, user_id, manifest.request_id, manifest.target_id,
+        claim_id, user_id, manifest.request_id, manifest.target_id,
     )
     if (not row or row["deleted_at"] is not None or row["status"] != "released"
             or row["validation_outcome"] != "passed"
-            or row["result_hash"] != manifest.validation_attestation_hash
-            or not row["result_expires_at"]
+            or row["result_hash"] != result_hash or not row["result_expires_at"]
             or row["result_expires_at"] <= datetime.now(timezone.utc)):
         raise DeploymentConflict("passing validation claim is absent, expired or unbound")
     from app.coding.validation_admission import ValidationRequest
@@ -201,9 +249,9 @@ async def _require_passing_validation(conn, manifest, user_id):
             or request.run_id != manifest.request_id
             or request.target_id != manifest.target_id
             or request.target_hash != manifest.target_hash
-            or request.source_hash != manifest.validated_source_hash):
+            or request.source_hash != manifest.validated_source_hash
+            or (expected_profile is not None and request.profile != expected_profile)):
         raise DeploymentConflict("validation request does not match approved source and target")
-    return row
 
 
 async def enqueue(pool, manifest: DeploymentManifest, *, user_id: str, idempotency_key: str):

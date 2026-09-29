@@ -127,6 +127,12 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
     volumes = document.get("volumes", {})
     if not isinstance(services, dict) or not 1 <= len(services) <= 12:
         raise ComposePolicyError("Compose must define 1–12 services")
+    if manifest.release_profile == "single_service" and len(services) != 1:
+        raise ComposePolicyError("multi-service release requires a typed validation profile")
+    if manifest.release_profile == "react_spring_postgres" and set(services) != {
+        "frontend", "backend", "database",
+    }:
+        raise ComposePolicyError("generated stack must contain frontend, backend and database")
     if not isinstance(volumes, dict) or len(volumes) > 24 or any(
         not NAME.fullmatch(name) or definition not in ({}, None)
         for name, definition in volumes.items()
@@ -182,6 +188,12 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
             raise ComposePolicyError("service requires explicit CPU and memory limits")
         total_cpu += _cpu_millis(limits["cpus"])
         total_memory += _memory_mib(limits["memory"])
+    if manifest.release_profile == "react_spring_postgres":
+        if ("backend" not in services["frontend"].get("depends_on", [])
+                or "database" not in services["backend"].get("depends_on", [])
+                or services["database"].get("expose")
+                or not services["database"].get("volumes")):
+            raise ComposePolicyError("generated stack dependencies or private storage are absent")
     capacity = manifest.capacity
     if capacity is None or total_cpu > capacity.cpu_millis or total_memory > capacity.memory_mib:
         raise ComposePolicyError("Compose exceeds approved funded host capacity")

@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from app.coding import deployment_admission as deploy
+from app.coding import isolated_validation as isolation
 from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
 from app.coding.compose_policy import release_identity
@@ -16,13 +17,14 @@ from app.coding.coolify_service import (
     CoolifyServiceClient, CoolifyServiceError, reconcile_created_service,
     submit_approved_service,
 )
-from tests.coding.test_compose_policy import safe_compose
+from tests.coding.test_compose_policy import safe_compose, safe_stack_compose
 from tests.coding.test_cost_ledger_postgres import DSN
 from tests.coding.test_deployment_admission_postgres import prepared as prepared_fixture
 from tests.coding.test_host_capacity_postgres import covered as covered_fixture
 from tests.coding.test_validation_controller_postgres import (
     context as context_fixture, result as validation_result,
 )
+from tests.coding.test_isolated_validation import generated_stack
 
 pytestmark = pytest.mark.skipif(not DSN, reason="set COST_LEDGER_TEST_DSN to local PostgreSQL")
 covered = covered_fixture
@@ -160,6 +162,122 @@ async def approved_deployment(covered, context, monkeypatch, *, release_hash_ove
     )
     row = await deploy.enqueue(pool, manifest, user_id="alice", idempotency_key="service-one")
     return row, payload
+
+
+async def approved_generated_stack(covered, context, monkeypatch, tmp_path):
+    pool, request, host, _ = context
+    generated_stack(tmp_path)
+    source = isolation.source_archive(tmp_path)
+    source_hash = sha256(source).hexdigest()
+
+    async def validated(_host, envelope, _source):
+        return validation_result(
+            envelope, validation_job_id=envelope["claim_id"].replace("-", ""),
+        )
+
+    monkeypatch.setattr(transport, "dispatch", validated)
+    proofs = []
+    for index, profile in enumerate(sorted(deploy.GENERATED_STACK_PROFILES), start=1):
+        step = request.model_copy(update={
+            "sequence_no": index, "profile": profile, "source_hash": source_hash,
+        })
+        outcome = await controller.execute(
+            pool, step, user_id="alice", lease_owner="worker-one",
+            idempotency_key="generated-stack-" + profile, host=host, source=source,
+        )
+        assert outcome["outcome"] == "passed"
+        async with pool.acquire() as conn:
+            result_hash = await conn.fetchval(
+                "SELECT result_hash FROM coding_validation_claims WHERE id=$1",
+                UUID(outcome["claim_id"]),
+            )
+        proofs.append(deploy.ValidationProof(
+            profile=profile, claim_id=UUID(outcome["claim_id"]), result_hash=result_hash,
+        ))
+    proofs = tuple(proofs)
+    compose = safe_stack_compose().encode()
+    compose_hash = sha256(compose).hexdigest()
+    images = {
+        "frontend": "registry.example/frontend@sha256:" + "a" * 64,
+        "backend": "registry.example/backend@sha256:" + "b" * 64,
+        "database": "registry.example/postgres@sha256:" + "c" * 64,
+    }
+    from datetime import datetime, timedelta, timezone
+
+    base = covered[2]
+    manifest = deploy.DeploymentManifest.model_validate({
+        **base.model_dump(), "request_id": request.run_id,
+        "release_profile": "react_spring_postgres", "validation_proofs": proofs,
+        "validation_claim_id": None, "validated_source_hash": source_hash,
+        "validation_attestation_hash": deploy.validation_set_hash(proofs),
+        "compose_hash": compose_hash,
+        "release_hash": release_identity(source_hash, compose_hash, images),
+        "capacity": base.capacity.model_copy(update={
+            "cpu_millis": 1500, "memory_mib": 3072,
+        }),
+    })
+    await deploy.record_user_grant(
+        pool, manifest, user_id="alice", authority_reference="test:generated-stack-approved",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+    )
+    row = await deploy.enqueue(
+        pool, manifest, user_id="alice", idempotency_key="generated-stack-service",
+    )
+    return row, compose, proofs
+
+
+@pytest.mark.asyncio
+async def test_generated_stack_requires_all_four_real_profile_results_before_create(
+        covered, context, monkeypatch, tmp_path):
+    row, compose, proofs = await approved_generated_stack(
+        covered, context, monkeypatch, tmp_path,
+    )
+    posts = []
+
+    def provider(request):
+        known = target_response(request)
+        if known is not None:
+            return known
+        assert request.url.path == "/api/v1/services" and request.method == "POST"
+        posts.append(request.url.path)
+        return httpx.Response(201, json={"uuid": "generated-stack-service-1"})
+
+    outcome = await submit_approved_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=httpx.MockTransport(provider),
+    )
+    assert len(proofs) == 4 and len(posts) == 1
+    assert outcome["status"] == "submitted" and outcome["dispatched"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["failed", "expired", "wrong_profile", "wrong_source"])
+async def test_generated_stack_missing_passing_profile_never_contacts_provider(
+        covered, context, monkeypatch, tmp_path, failure):
+    row, compose, proofs = await approved_generated_stack(
+        covered, context, monkeypatch, tmp_path,
+    )
+    updates = {
+        "failed": "UPDATE coding_validation_claims SET validation_outcome='failed' WHERE id=$1",
+        "expired": "UPDATE coding_validation_claims SET "
+                   "result_recorded_at=now()-interval '2 days',"
+                   "result_expires_at=now()-interval '1 day' WHERE id=$1",
+        "wrong_profile": "UPDATE coding_validation_claims SET request=jsonb_set(request,'{profile}',"
+                         "'\"python_compile\"') WHERE id=$1",
+        "wrong_source": "UPDATE coding_validation_claims SET request=jsonb_set(request,'{source_hash}',"
+                        "'\"" + "f" * 64 + "\"') WHERE id=$1",
+    }
+    async with covered[0].acquire() as conn:
+        await conn.execute(updates[failure], proofs[-1].claim_id)
+    with pytest.raises(deploy.DeploymentConflict, match="validation"):
+        await submit_approved_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: pytest.fail("credential was consulted"),
+        )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
 
 
 @pytest.mark.asyncio
