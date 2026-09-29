@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.coding.compose_policy import ComposePolicyError, validate_compose
+from app.coding.compose_policy import ComposePolicyError, release_identity, validate_compose
 from app.coding.deployment_admission import DeploymentManifest
 from app.coding.host_capacity import CapacityRequest
 from datetime import datetime, timedelta, timezone
@@ -12,9 +12,15 @@ from datetime import datetime, timedelta, timezone
 
 def approved(text: str, *, cpu=1500, memory=3072):
     data = text.encode()
+    source_hash = "d" * 64
+    compose_hash = sha256(data).hexdigest()
+    # Invalid-policy fixtures can still have a valid release identity; their
+    # rejection must come from the specific Compose policy under test.
+    image = "registry.example/api@sha256:" + "a" * 64
     manifest = DeploymentManifest(
         request_id=uuid4(), target_id="test-target", target_hash="a" * 64,
-        release_hash="b" * 64, compose_hash=sha256(data).hexdigest(),
+        release_hash=release_identity(source_hash, compose_hash, {"api": image}),
+        compose_hash=compose_hash, validated_source_hash=source_hash,
         validation_attestation_hash="c" * 64, estimated_upper_bound_paise=0,
         capacity=CapacityRequest(pool_id="test-host", cpu_millis=cpu,
                                  memory_mib=memory, storage_mib=10240),
@@ -45,6 +51,22 @@ def test_exact_digest_pinned_bounded_compose():
     with pytest.raises(ComposePolicyError, match="capacity"):
         validate_compose(data, manifest.model_copy(update={
             "capacity": manifest.capacity.model_copy(update={"memory_mib": 1024}),
+        }))
+
+
+def test_release_identity_is_bound_to_source_compose_and_each_pinned_image():
+    data, manifest = approved(safe_compose())
+    for changed in (
+        {"release_hash": "f" * 64},
+        {"validated_source_hash": "e" * 64},
+        {"validated_source_hash": None},
+    ):
+        with pytest.raises(ComposePolicyError, match="release identity"):
+            validate_compose(data, manifest.model_copy(update=changed))
+    other = safe_compose().replace("@sha256:" + "a" * 64, "@sha256:" + "b" * 64)
+    with pytest.raises(ComposePolicyError, match="release identity"):
+        validate_compose(other.encode(), manifest.model_copy(update={
+            "compose_hash": sha256(other.encode()).hexdigest(),
         }))
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import hashlib
+import json
 import re
 
 import yaml
@@ -91,6 +92,28 @@ def _memory_mib(value) -> int:
     return mib
 
 
+def release_identity(source_hash: str, compose_hash: str, service_images: dict[str, str]) -> str:
+    """Bind approved source and exact Compose bytes to its pinned image references.
+
+    This is an identity fingerprint, not proof that a trusted builder produced the
+    images from the source. Build provenance remains a separate start gate.
+    """
+    if (not isinstance(source_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", source_hash)
+            or not isinstance(compose_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", compose_hash)
+            or not isinstance(service_images, dict) or not service_images
+            or any(not isinstance(name, str) or not NAME.fullmatch(name)
+                   or not isinstance(image, str) or not IMAGE.fullmatch(image)
+                   for name, image in service_images.items())):
+        raise ComposePolicyError("release identity inputs are invalid")
+    statement = {
+        "schema": "gca-release-identity-v1", "source_hash": source_hash,
+        "compose_hash": compose_hash, "service_images": service_images,
+    }
+    return hashlib.sha256(json.dumps(statement, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
 def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
     """Return exact approved UTF-8 Compose; reject host escape and unbounded service use."""
     if not isinstance(compose, bytes) or not 1 <= len(compose) <= MAX_COMPOSE_BYTES:
@@ -110,11 +133,13 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
     ):
         raise ComposePolicyError("only internal named volumes are permitted")
     total_cpu = total_memory = 0
+    service_images = {}
     for name, service in services.items():
         if not isinstance(name, str) or not NAME.fullmatch(name) or not isinstance(service, dict):
             raise ComposePolicyError("invalid service declaration")
         if set(service) - SERVICE_KEYS or not IMAGE.fullmatch(str(service.get("image", ""))):
             raise ComposePolicyError("service requires a digest-pinned image and approved fields")
+        service_images[name] = service["image"]
         dependencies = service.get("depends_on", [])
         if (not isinstance(dependencies, list) or len(dependencies) > len(services)
                 or any(not isinstance(item, str) or item == name or item not in services
@@ -160,4 +185,8 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
     capacity = manifest.capacity
     if capacity is None or total_cpu > capacity.cpu_millis or total_memory > capacity.memory_mib:
         raise ComposePolicyError("Compose exceeds approved funded host capacity")
+    if manifest.release_hash != release_identity(
+        manifest.validated_source_hash, manifest.compose_hash, service_images,
+    ):
+        raise ComposePolicyError("release identity does not match validated source and images")
     return compose.decode("utf-8")

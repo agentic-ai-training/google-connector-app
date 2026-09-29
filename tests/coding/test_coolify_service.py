@@ -11,6 +11,7 @@ import yaml
 from app.coding import deployment_admission as deploy
 from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
+from app.coding.compose_policy import release_identity
 from app.coding.coolify_service import (
     CoolifyServiceClient, CoolifyServiceError, reconcile_created_service,
     submit_approved_service,
@@ -120,7 +121,7 @@ async def test_inventory_rejects_sensitive_compose_list_response(prepared):
             )
 
 
-async def approved_deployment(covered, context, monkeypatch):
+async def approved_deployment(covered, context, monkeypatch, *, release_hash_override=None):
     pool, _, manifest, _, _ = covered
     _, request, host, source = context
 
@@ -139,12 +140,18 @@ async def approved_deployment(covered, context, monkeypatch):
             UUID(outcome["claim_id"]),
         )
     payload = safe_compose().encode()
+    compose_hash = sha256(payload).hexdigest()
     manifest = manifest.model_copy(update={
-        "request_id": request.run_id, "compose_hash": sha256(payload).hexdigest(),
+        "request_id": request.run_id, "compose_hash": compose_hash,
         "validation_claim_id": UUID(outcome["claim_id"]),
         "validated_source_hash": request.source_hash,
         "validation_attestation_hash": result_hash,
+        "release_hash": release_identity(request.source_hash, compose_hash, {
+            "api": "registry.example/api@sha256:" + "a" * 64,
+        }),
     })
+    if release_hash_override is not None:
+        manifest = manifest.model_copy(update={"release_hash": release_hash_override})
     from datetime import datetime, timedelta, timezone
 
     await deploy.record_user_grant(
@@ -275,6 +282,23 @@ async def test_bad_artifact_or_team_cannot_consume_claim(covered, context, monke
     assert calls == ["/api/v1/teams/current"]
     async with covered[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM coding_deployments") == "reserved"
+
+
+@pytest.mark.asyncio
+async def test_unbound_release_is_denied_before_credentials_or_provider_access(
+        covered, context, monkeypatch):
+    row, compose = await approved_deployment(
+        covered, context, monkeypatch, release_hash_override="f" * 64,
+    )
+    with pytest.raises(ValueError, match="release identity"):
+        await submit_approved_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: pytest.fail("credential was consulted"),
+        )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
 
 
 @pytest.mark.asyncio

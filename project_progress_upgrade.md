@@ -2413,6 +2413,13 @@ changes become production evidence.
   `coolify`; actual network creation and isolation tests remain incomplete.
   Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
   recovery proof.
+  On 2026-09-30, Compose admission began recomputing the immutable release identity
+  from the passing validation's source hash, exact Compose hash and every pinned
+  image reference. An unrelated approved `release_hash` is denied before credentials
+  or provider access; 36 targeted Compose/provider tests passed with local PostgreSQL.
+  This is identity binding only: it does not prove that those image digests were
+  built from the source. Trusted keyless build provenance and start admission remain
+  unchecked.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

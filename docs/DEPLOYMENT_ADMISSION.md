@@ -35,6 +35,13 @@ Compose bytes to the approved SHA-256, checks a bounded generated-Compose policy
 requires a real unexpired `coding_validation_claims` pass for the same user, run,
 target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
+The Compose policy now recomputes `release_hash` from a domain-separated canonical
+statement containing that validated source hash, the exact Compose hash, and every
+service's digest-pinned image reference. A mismatched release, source or image is
+rejected before credential resolution or a provider request. This closes an
+unused-manifest-field gap but **does not** establish source-to-image provenance:
+a trusted keyless build, image digest observation and independent build attestation
+are still required before any Service may be started.
 The create path now also reads the registered server, project, environment and
 destination from installed-version API routes before consuming the one-time claim.
 It checks UUID relationships, standalone/swarm type and an exact approved
@@ -89,7 +96,9 @@ is not a payload probe of this VM.
 `app/coding/compose_policy.py` currently rejects unpinned images, host binds,
 published host ports, privileged/network escapes, labels, replica multipliers,
 literal secret-like environment values, unbounded CPU/RAM and malformed or duplicate
-YAML. This is a baseline static gate, **not** build provenance, image scanning,
+YAML. It also binds the release fingerprint to the validated source, exact Compose
+bytes and each pinned image reference. This is a baseline static gate, **not**
+build provenance, image scanning,
 runtime CPU/storage enforcement, secret provisioning or a claim that arbitrary
 generated code is safe. Named volumes still need enforceable disk quotas and backup
 policy before any service is started.
@@ -193,10 +202,13 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 279 tests with real PostgreSQL enabled as of
-30 September 2026, including capacity races, imported-VM funding, single Service
-submission, false validation denial, uncertainty, revocation, accrual and database
-migration checks. The Coolify provider is mocked in these tests. Runtime isolation,
+The complete local coding suite passed 281 tests with real PostgreSQL enabled after
+the 30 September release-identity change. That run covered capacity races,
+imported-VM funding, single Service submission, false validation denial, uncertainty,
+revocation, accrual and database migration checks. The targeted Compose and
+Coolify-Service suite passed 36 tests with real local PostgreSQL, including a
+provider-access denial for an approved manifest containing an unrelated release hash.
+The Coolify provider is mocked in these tests. Runtime isolation,
 image-to-source provenance, quota enforcement and a real generated-app deployment
 still need their own live evidence.
 The complete Alembic chain was also exercised in a new disposable local database:
