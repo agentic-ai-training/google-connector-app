@@ -46,7 +46,10 @@ never becomes submitted and never triggers a second POST. The installed API hide
 `docker_compose_raw` from ordinary read tokens; recovery fails closed with
 `sensitive_read_required` unless a token with `read:sensitive` (or broader root)
 authority is supplied. The target now requires a distinct recovery credential
-reference and the adapter resolves that reference only for reconciliation. The
+reference. Recovery lists resource metadata with the ordinary inventory credential,
+rejects an overscoped inventory response that includes raw Compose, and reads only
+the one matching Service with the sensitive recovery credential. The adapter resolves
+that reference only after metadata identifies one candidate. The
 operator-owned secret store, token issuance/rotation and limited lifetime remain
 to be integrated and reviewed before activation; this scope exposes sensitive
 provider fields. The hash marker alone is not sufficient to adopt a resource.
@@ -177,7 +180,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 273 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 274 tests with real PostgreSQL enabled as of
 29 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,

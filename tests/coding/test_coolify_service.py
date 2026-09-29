@@ -77,6 +77,29 @@ async def test_explicit_registered_destination_is_sent_without_guessing(prepared
     assert result == "created-service-1"
 
 
+@pytest.mark.asyncio
+async def test_inventory_rejects_sensitive_compose_list_response(prepared):
+    def provider(request):
+        path = request.url.path
+        if path == "/api/v1/servers/server":
+            return httpx.Response(200, json={"id": 1, "uuid": "server"})
+        if path == "/api/v1/projects/project":
+            return httpx.Response(200, json={"id": 3, "uuid": "project"})
+        if path == "/api/v1/projects/project/environment":
+            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        assert path == "/api/v1/services"
+        return httpx.Response(200, json=[{"docker_compose_raw": "secret"}])
+
+    async with CoolifyServiceClient(
+        prepared[1], "inventory-token", transport=httpx.MockTransport(provider),
+    ) as client:
+        with pytest.raises(CoolifyServiceError, match="overscoped_inventory_token"):
+            await client.find_service_candidate(
+                request_id=prepared[2].request_id,
+                compose_hash=prepared[2].compose_hash,
+            )
+
+
 async def approved_deployment(covered, context, monkeypatch):
     pool, _, manifest, _, _ = covered
     _, request, host, source = context
@@ -293,20 +316,25 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
             "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
             "deleted_at": None, "secrets": "never-return",
         }
+        if request.url.path == "/api/v1/services":
+            assert request.headers["Authorization"] == "Bearer inventory-token"
+            return httpx.Response(200, json=[service])
+        assert request.url.path == "/api/v1/services/created-service-1"
+        assert request.headers["Authorization"] == "Bearer recovery-token"
         if expose_sensitive[0]:
             # Installed Coolify re-dumps YAML; byte equality is not valid.
             service["docker_compose_raw"] = yaml.safe_dump(
                 yaml.safe_load(compose), sort_keys=True,
             )
-        return httpx.Response(200, json=[service])
+        return httpx.Response(200, json=service)
 
     transport = httpx.MockTransport(provider)
     observed_refs = []
 
     def recovery_token(reference):
         observed_refs.append(reference)
-        assert reference == "test/recovery"
-        return "scoped-test-token"
+        assert reference in {"test/inventory", "test/recovery"}
+        return "inventory-token" if reference == "test/inventory" else "recovery-token"
 
     await submit_approved_service(
         covered[0], row["id"], user_id="alice", compose=compose,
@@ -322,7 +350,8 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
         covered[0], row["id"], user_id="alice", compose=compose,
         resolve_token=recovery_token, transport=transport,
     )
-    assert observed_refs == ["test/recovery", "test/recovery"]
+    assert observed_refs == ["test/inventory", "test/recovery",
+                             "test/inventory", "test/recovery"]
     assert recovered == {"deployment_id": row["id"], "status": "submitted",
                          "resource_id": "created-service-1", "reconciled": True}
     assert "secrets" not in str(recovered)
@@ -366,7 +395,14 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
                 return httpx.Response(200, json={"id": 3, "uuid": "project"})
             if request.url.path == "/api/v1/projects/project/environment":
                 return httpx.Response(200, json={"id": 2, "project_id": 3})
-            return httpx.Response(200, json=services)
+            if request.url.path == "/api/v1/services":
+                return httpx.Response(200, json=[
+                    {key: value for key, value in service.items()
+                     if key != "docker_compose_raw"}
+                    for service in services
+                ])
+            assert request.url.path == "/api/v1/services/wrong-content"
+            return httpx.Response(200, json=services[0])
 
         with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
             await reconcile_created_service(
@@ -413,7 +449,7 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
             return httpx.Response(200, json=[{
                 "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-server-service",
                 "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
-                "docker_compose_raw": compose.decode(), "server_id": 99,
+                "server_id": 99,
                 "environment_id": 2, "destination_id": 7,
                 "destination_type": "App\\Models\\StandaloneDocker", "deleted_at": None,
             }])
@@ -430,7 +466,7 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
             return httpx.Response(200, json=[{
                 "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-destination",
                 "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
-                "docker_compose_raw": compose.decode(), "server_id": 1,
+                "server_id": 1,
                 "environment_id": 2, "destination_id": 99,
                 "destination_type": "App\\Models\\StandaloneDocker",
                 "deleted_at": None,

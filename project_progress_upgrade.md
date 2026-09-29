@@ -2393,7 +2393,9 @@ changes become production evidence.
   4.3.23 source inspection showed that it normalizes YAML before storage and hides
   raw Compose from ordinary read tokens. Reconciliation therefore needs reviewed
   sensitive-read authority; the target/adapter now use a distinct recovery credential
-  reference, while token issuance/rotation and authenticated live proof remain. The
+  reference, list metadata with ordinary inventory authority, then read only the
+  one candidate with sensitive authority. Token issuance/rotation and authenticated
+  live proof remain. The
   same installed source confirms `instant_deploy=false` avoids the start dispatch.
   Target enrollment now requires an operator-verified destination UUID, provider
   numeric ID and type. Creation sends the UUID; reconciliation checks the ID/type.
