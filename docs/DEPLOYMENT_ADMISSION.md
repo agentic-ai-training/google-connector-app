@@ -167,7 +167,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 270 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 271 tests with real PostgreSQL enabled as of
 29 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,
