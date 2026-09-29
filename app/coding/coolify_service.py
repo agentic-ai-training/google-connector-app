@@ -83,6 +83,46 @@ class CoolifyServiceClient:
         if type(result.get("id")) is not int or result["id"] != self.target.team_id:
             raise CoolifyServiceError("team_mismatch")
 
+    async def _verified_target_ids(self):
+        server = await self._json(
+            "GET", "/api/v1/servers/" + self.target.server_uuid, expected=200,
+        )
+        project = await self._json(
+            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid, expected=200,
+        )
+        environment = await self._json(
+            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid + "/"
+            + self.target.environment_uuid, expected=200,
+        )
+        if (server.get("uuid") != self.target.server_uuid
+                or project.get("uuid") != self.target.coolify_project_uuid
+                or environment.get("uuid") != self.target.environment_uuid
+                or type(server.get("id")) is not int
+                or type(project.get("id")) is not int
+                or type(environment.get("id")) is not int
+                or type(environment.get("project_id")) is not int
+                or environment.get("project_id") != project["id"]):
+            raise CoolifyServiceError("target_identity_ambiguous")
+        return server["id"], environment["id"]
+
+    async def verify_create_target(self):
+        """Read-only target preflight before consuming the one-time write claim."""
+        await self._verified_target_ids()
+        destination = await self._json(
+            "GET", "/api/v1/destinations/" + self.target.destination_uuid,
+            expected=200,
+        )
+        expected_type = {
+            "App\\Models\\StandaloneDocker": "standalone",
+            "App\\Models\\SwarmDocker": "swarm",
+        }.get(self.target.destination_type)
+        if (expected_type is None or destination.get("uuid") != self.target.destination_uuid
+                or destination.get("server_uuid") != self.target.server_uuid
+                or destination.get("type") != expected_type):
+            raise CoolifyServiceError("destination_identity_ambiguous")
+        # Coolify's public destination API omits the numeric ID. Its registered
+        # UUID-to-ID/type mapping must have separate trusted operator evidence.
+
     async def create(self, *, request_id: UUID, compose: bytes):
         """Exactly one network mutation; no automatic retry, no instant deployment."""
         compose_hash = hashlib.sha256(compose).hexdigest()
@@ -124,24 +164,7 @@ class CoolifyServiceClient:
 
     async def find_service_candidate(self, *, request_id: UUID, compose_hash: str):
         """List metadata using an ordinary team-read token, not sensitive-read."""
-        server = await self._json(
-            "GET", "/api/v1/servers/" + self.target.server_uuid, expected=200,
-        )
-        project = await self._json(
-            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid, expected=200,
-        )
-        environment = await self._json(
-            "GET", "/api/v1/projects/" + self.target.coolify_project_uuid + "/"
-            + self.target.environment_uuid, expected=200,
-        )
-        if (server.get("uuid") != self.target.server_uuid
-                or project.get("uuid") != self.target.coolify_project_uuid
-                or type(server.get("id")) is not int
-                or type(project.get("id")) is not int
-                or type(environment.get("id")) is not int
-                or type(environment.get("project_id")) is not int
-                or environment.get("project_id") != project["id"]):
-            raise CoolifyServiceError("target_identity_ambiguous")
+        server_id, environment_id = await self._verified_target_ids()
         values = await self._json(
             "GET", "/api/v1/services", expected=200, result_type=list,
             max_bytes=1_048_576,
@@ -157,11 +180,11 @@ class CoolifyServiceClient:
                 continue
             matches.append(self._require_resource_identity(
                 item, request_id=request_id, compose_hash=compose_hash,
-                server_id=server["id"], environment_id=environment["id"],
+                server_id=server_id, environment_id=environment_id,
             ))
         if len(matches) > 1:
             raise CoolifyServiceError("identity_ambiguous")
-        return (matches[0], server["id"], environment["id"]) if matches else None
+        return (matches[0], server_id, environment_id) if matches else None
 
     async def verify_service_content(self, *, resource_id: str, request_id: UUID,
                                      compose: bytes, server_id: int, environment_id: int):
@@ -231,6 +254,7 @@ async def submit_approved_service(pool, deployment_id: UUID, *, user_id: str,
     async with CoolifyServiceClient(target, token, transport=transport) as client:
         # A bad token/team cannot consume the durable write claim.
         await client.verify_team()
+        await client.verify_create_target()
         issued = await admission.claim_dispatch(
             pool, deployment_id, user_id=user_id, require_validation=True,
         )

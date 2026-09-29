@@ -2405,6 +2405,9 @@ changes become production evidence.
   numeric IDs of `0` and no project/environment. The target schema now accepts ID
   zero, but project/environment/API-token setup and authenticated API proof
   remain; no live Service was created.
+  On 2026-09-30 a read-only target preflight was added before the write claim.
+  Missing project, mismatched environment or wrong destination server/type now
+  leave the claim reserved with no provider POST in local PostgreSQL/mock tests.
   Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
   recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,

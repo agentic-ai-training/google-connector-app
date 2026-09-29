@@ -35,6 +35,12 @@ Compose bytes to the approved SHA-256, checks a bounded generated-Compose policy
 requires a real unexpired `coding_validation_claims` pass for the same user, run,
 target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
+The create path now also reads the registered server, project, environment and
+destination from installed-version API routes before consuming the one-time claim.
+It checks UUID relationships and standalone/swarm type, but Coolify's public
+destination response omits the numeric ID; the operator's registered ID still
+needs a trusted out-of-band mapping. Missing or mismatched targets leave the
+deployment reserved and make no Service POST.
 The local PostgreSQL/provider-mock test exercises one concurrent POST and denies
 replay, false/expired validation, changed source, cross-tenant access and wrong team.
 Read-only recovery of an uncertain create now checks the deterministic Service
@@ -180,8 +186,8 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 274 tests with real PostgreSQL enabled as of
-29 September 2026, including capacity races, imported-VM funding, single Service
+The complete local coding suite passes 278 tests with real PostgreSQL enabled as of
+30 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,
 image-to-source provenance, quota enforcement and a real generated-app deployment

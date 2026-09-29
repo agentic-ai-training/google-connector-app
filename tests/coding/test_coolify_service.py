@@ -29,6 +29,23 @@ prepared = prepared_fixture
 context = context_fixture
 
 
+def target_response(request):
+    """Mock installed-version read-only target endpoints, never a provider write."""
+    values = {
+        "/api/v1/teams/current": {"id": 0},
+        "/api/v1/servers/server": {"id": 1, "uuid": "server"},
+        "/api/v1/projects/project": {"id": 3, "uuid": "project"},
+        "/api/v1/projects/project/environment": {
+            "id": 2, "uuid": "environment", "project_id": 3,
+        },
+        "/api/v1/destinations/destination": {
+            "uuid": "destination", "server_uuid": "server", "type": "standalone",
+        },
+    }
+    value = values.get(request.url.path)
+    return httpx.Response(200, json=value) if value is not None else None
+
+
 def test_provider_credential_references_must_be_distinct():
     with pytest.raises(ValueError, match="must be separate"):
         deploy.RegisteredTarget(
@@ -81,12 +98,9 @@ async def test_explicit_registered_destination_is_sent_without_guessing(prepared
 async def test_inventory_rejects_sensitive_compose_list_response(prepared):
     def provider(request):
         path = request.url.path
-        if path == "/api/v1/servers/server":
-            return httpx.Response(200, json={"id": 1, "uuid": "server"})
-        if path == "/api/v1/projects/project":
-            return httpx.Response(200, json={"id": 3, "uuid": "project"})
-        if path == "/api/v1/projects/project/environment":
-            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        known = target_response(request)
+        if known is not None:
+            return known
         assert path == "/api/v1/services"
         return httpx.Response(200, json=[{"docker_compose_raw": "secret"}])
 
@@ -141,8 +155,9 @@ async def test_one_provider_create_then_record_only_submission(covered, context,
     posts = []
 
     def provider(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
+        known = target_response(request)
+        if known is not None:
+            return known
         assert request.url.path == "/api/v1/services"
         assert request.headers["Authorization"] == "Bearer scoped-test-token"
         body = request.read().decode()
@@ -181,8 +196,9 @@ async def test_ambiguous_provider_error_retains_capacity_and_cannot_repost(
     posts = []
 
     def provider(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
+        known = target_response(request)
+        if known is not None:
+            return known
         posts.append(request.url.path)
         return httpx.Response(503, text="SECRET provider detail")
 
@@ -209,8 +225,9 @@ async def test_lost_create_response_is_uncertain_not_a_second_post(covered, cont
     posts = []
 
     def provider(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
+        known = target_response(request)
+        if known is not None:
+            return known
         posts.append(request.url.path)
         raise httpx.ReadTimeout("private provider data", request=request)
 
@@ -250,6 +267,52 @@ async def test_bad_artifact_or_team_cannot_consume_claim(covered, context, monke
             resolve_token=lambda _: "scoped-test-token", transport=transport,
         )
     assert calls == ["/api/v1/teams/current"]
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval("SELECT status FROM coding_deployments") == "reserved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    "missing_project", "wrong_environment", "wrong_destination_server",
+    "wrong_destination_type",
+])
+async def test_target_preflight_denies_write_before_claim(
+        covered, context, monkeypatch, failure):
+    row, compose = await approved_deployment(covered, context, monkeypatch)
+    posts = []
+
+    def provider(request):
+        path = request.url.path
+        if request.method == "POST":
+            posts.append(path)
+            return httpx.Response(201, json={"uuid": "should-not-exist"})
+        if failure == "missing_project" and path == "/api/v1/projects/project":
+            return httpx.Response(404)
+        if failure == "wrong_environment" and path.endswith("/project/environment"):
+            return httpx.Response(200, json={
+                "id": 2, "uuid": "another-environment", "project_id": 3,
+            })
+        if path == "/api/v1/destinations/destination":
+            if failure == "wrong_destination_server":
+                return httpx.Response(200, json={
+                    "uuid": "destination", "server_uuid": "another-server",
+                    "type": "standalone",
+                })
+            if failure == "wrong_destination_type":
+                return httpx.Response(200, json={
+                    "uuid": "destination", "server_uuid": "server", "type": "swarm",
+                })
+        known = target_response(request)
+        assert known is not None
+        return known
+
+    with pytest.raises(CoolifyServiceError):
+        await submit_approved_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: "scoped-test-token",
+            transport=httpx.MockTransport(provider),
+        )
+    assert posts == []
     async with covered[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM coding_deployments") == "reserved"
 
@@ -298,14 +361,9 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
     expose_sensitive = [False]
 
     def provider(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
-        if request.url.path == "/api/v1/servers/server":
-            return httpx.Response(200, json={"id": 1, "uuid": "server"})
-        if request.url.path == "/api/v1/projects/project":
-            return httpx.Response(200, json={"id": 3, "uuid": "project"})
-        if request.url.path == "/api/v1/projects/project/environment":
-            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        known = target_response(request)
+        if known is not None:
+            return known
         if request.method == "POST":
             names.append(request.url.path)
             raise httpx.ReadTimeout("response lost", request=request)
@@ -365,8 +423,9 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
     manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
 
     def creation(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
+        known = target_response(request)
+        if known is not None:
+            return known
         return httpx.Response(503)
 
     await submit_approved_service(
@@ -387,14 +446,9 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
          for value in ("duplicate-1", "duplicate-2")],
     ):
         def listing(request):
-            if request.url.path.endswith("/teams/current"):
-                return httpx.Response(200, json={"id": 0})
-            if request.url.path == "/api/v1/servers/server":
-                return httpx.Response(200, json={"id": 1, "uuid": "server"})
-            if request.url.path == "/api/v1/projects/project":
-                return httpx.Response(200, json={"id": 3, "uuid": "project"})
-            if request.url.path == "/api/v1/projects/project/environment":
-                return httpx.Response(200, json={"id": 2, "project_id": 3})
+            known = target_response(request)
+            if known is not None:
+                return known
             if request.url.path == "/api/v1/services":
                 return httpx.Response(200, json=[
                     {key: value for key, value in service.items()
@@ -421,14 +475,9 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
     manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
 
     def provider(request):
-        if request.url.path.endswith("/teams/current"):
-            return httpx.Response(200, json={"id": 0})
-        if request.url.path == "/api/v1/servers/server":
-            return httpx.Response(200, json={"id": 1, "uuid": "server"})
-        if request.url.path == "/api/v1/projects/project":
-            return httpx.Response(200, json={"id": 3, "uuid": "project"})
-        if request.url.path == "/api/v1/projects/project/environment":
-            return httpx.Response(200, json={"id": 2, "project_id": 3})
+        known = target_response(request)
+        if known is not None:
+            return known
         if request.method == "POST":
             return httpx.Response(503)
         return httpx.Response(200, json=[])
