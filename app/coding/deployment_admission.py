@@ -47,6 +47,8 @@ class DeploymentManifest(BaseModel):
     release_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     compose_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_attestation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    validation_claim_id: UUID | None = None
+    validated_source_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     estimated_upper_bound_paise: int = Field(ge=0, strict=True)
     capacity: host_capacity.CapacityRequest | None = None
     planned_end_at: datetime
@@ -159,6 +161,36 @@ async def _grant(conn, manifest, user_id):
     return row
 
 
+async def _require_passing_validation(conn, manifest, user_id):
+    """Bind a provider write to the tenant's real immutable validation result."""
+    if manifest.validation_claim_id is None or manifest.validated_source_hash is None:
+        raise DeploymentConflict("passing validation claim and source binding required")
+    row = await conn.fetchrow(
+        "SELECT c.request,c.request_hash,c.result_hash,c.validation_outcome,c.status,"
+        "c.result_expires_at,c.run_id,c.target_id,r.deleted_at "
+        "FROM coding_validation_claims c JOIN coding_runs r ON r.id=c.run_id "
+        "AND r.user_id=c.user_id WHERE c.id=$1 AND c.user_id=$2 "
+        "AND c.run_id=$3 AND c.target_id=$4 FOR SHARE OF c,r",
+        manifest.validation_claim_id, user_id, manifest.request_id, manifest.target_id,
+    )
+    if (not row or row["deleted_at"] is not None or row["status"] != "released"
+            or row["validation_outcome"] != "passed"
+            or row["result_hash"] != manifest.validation_attestation_hash
+            or not row["result_expires_at"]
+            or row["result_expires_at"] <= datetime.now(timezone.utc)):
+        raise DeploymentConflict("passing validation claim is absent, expired or unbound")
+    from app.coding.validation_admission import ValidationRequest
+
+    request = ValidationRequest.model_validate(_json(row["request"]))
+    if (fingerprint(request) != row["request_hash"]
+            or request.run_id != manifest.request_id
+            or request.target_id != manifest.target_id
+            or request.target_hash != manifest.target_hash
+            or request.source_hash != manifest.validated_source_hash):
+        raise DeploymentConflict("validation request does not match approved source and target")
+    return row
+
+
 async def enqueue(pool, manifest: DeploymentManifest, *, user_id: str, idempotency_key: str):
     cost_ledger._text(user_id)
     cost_ledger._text(idempotency_key)
@@ -218,7 +250,8 @@ async def _check_capacity(conn, manifest, config, *, exclude=None):
                                   exclude=exclude)
 
 
-async def claim_dispatch(pool, deployment_id: UUID, *, user_id: str):
+async def claim_dispatch(pool, deployment_id: UUID, *, user_id: str,
+                         require_validation: bool = False):
     """Return one committed write claim, or None for replay; network work occurs afterwards."""
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
@@ -234,6 +267,8 @@ async def claim_dispatch(pool, deployment_id: UUID, *, user_id: str):
         if fingerprint(manifest) != row["manifest_hash"] or manifest.target_hash != target["config_hash"]:
             raise DeploymentConflict("immutable deployment evidence changed")
         await _grant(conn, manifest, user_id)
+        if require_validation:
+            await _require_passing_validation(conn, manifest, user_id)
         if row["capacity_released_at"] is not None:
             raise DeploymentConflict("deployment capacity has already been released")
         await _check_capacity(conn, manifest, RegisteredTarget.model_validate(_json(target["config"])),

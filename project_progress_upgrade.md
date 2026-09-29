@@ -2377,6 +2377,16 @@ changes become production evidence.
   validation-attestation/approval integration and live capacity enforcement are still
   pending. Capacity admission was added locally on 2026-09-27; see
   `docs/DEPLOYMENT_ADMISSION.md`. Keep this item unchecked.
+  2026-09-29 local extension: a typed, single-dispatch Coolify Service creation
+  adapter and exact-byte Compose policy were added. The write path requires a real,
+  unexpired passing validation claim bound to the same user/run/target/source;
+  provider create uses `instant_deploy=false` and records only submission or
+  uncertainty. Concurrent replay, false validation, wrong team and provider error
+  tests use mocked HTTP with disposable PostgreSQL. Full coding suite: 267 passed.
+  No live Coolify write, image build, secret setup, Service start, URL verification,
+  Chat delivery or production migration was performed. Installed-version API proof,
+  source-to-image build attestation, scoped credentials, staged writes and recovery
+  remain required; this item stays unchecked.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

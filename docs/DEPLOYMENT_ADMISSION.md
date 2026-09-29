@@ -1,6 +1,6 @@
 # Durable deployment admission
 
-Status: local implementation extended on 27 September 2026. Migrations 017–018 are
+Status: local implementation extended on 29 September 2026. Migrations 017–020 are
 unapplied to production. No generated workload or deployment write was performed
 by these tests. This is a controller component, not the completed deployment service.
 
@@ -18,6 +18,31 @@ This persistence function does not itself verify an attestation's signature or r
 tests. Hash presence is not proof. That handler integration is still pending; there
 is deliberately no public grant/deploy endpoint yet. Core-platform candidates cannot
 enter this lane: they retain separate CI, canary and promotion authority.
+
+The new `app/coding/coolify_service.py` path is an internal trusted controller step,
+not a user/model tool. Before consuming a dispatch claim, it matches the exact
+Compose bytes to the approved SHA-256, checks a bounded generated-Compose policy,
+requires a real unexpired `coding_validation_claims` pass for the same user, run,
+target and frozen source, resolves an operator-owned credential reference, and
+checks the Coolify team. Dispatch checks validation again in the ledger transaction.
+The local PostgreSQL/provider-mock test exercises one concurrent POST and denies
+replay, false/expired validation, changed source, cross-tenant access and wrong team.
+
+The provider step follows the [Coolify Service creation API](https://coolify.io/docs/api/endpoints/services/create-service)
+using `POST /api/v1/services` with base64 Compose and `instant_deploy=false`.
+It records a returned UUID as **submitted**, not started, healthy or functionally
+complete. A lost response or provider error is **uncertain** and never blindly
+reposted. The installed Coolify 4.3.23 endpoint/payload still needs version-specific
+verification before activation; the official public reference is not a live probe
+of this VM.
+
+`app/coding/compose_policy.py` currently rejects unpinned images, host binds,
+published host ports, privileged/network escapes, labels, replica multipliers,
+literal secret-like environment values, unbounded CPU/RAM and malformed or duplicate
+YAML. This is a baseline static gate, **not** build provenance, image scanning,
+runtime CPU/storage enforcement, secret provisioning or a claim that arbitrary
+generated code is safe. Named volumes still need enforceable disk quotas and backup
+policy before any service is started.
 
 ## Durable sequence
 
@@ -90,8 +115,11 @@ Before deployment activation, complete:
    coverage must still be reserved separately.
 3. Authenticated approval/standing-authority integration and real attestation checks.
 4. Scoped Coolify configuration/deployment credentials and immutable artifact loading.
-5. Typed provider operations, stable resource lookup, bounded polling and ambiguity
-   reconciliation; do not equate an accepted request with a healthy deployment.
+5. Verify this API contract against the pinned installed Coolify version, create
+   least-privilege configuration/deployment credentials, reconcile ambiguous Service
+   creation by stable identity without retry, and add separate durable secret,
+   start, bounded-poll, health, backup and behavioral-verification steps. Do not
+   equate a submitted Service UUID with a healthy deployment.
 6. Secure execution/network/storage limits, generated Compose policy, TLS/domain,
    real application security/persistence tests and exact authorized Chat delivery.
 
@@ -115,10 +143,12 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 103 tests with real PostgreSQL enabled,
-including capacity races, independent resource limits, shared funding, uncertainty,
-revocation, accrual and database migration checks. Runtime isolation, quota enforcement
-and a real generated-app deployment still need their own live evidence.
+The complete local coding suite passes 267 tests with real PostgreSQL enabled as of
+29 September 2026, including capacity races, imported-VM funding, single Service
+submission, false validation denial, uncertainty, revocation, accrual and database
+migration checks. The Coolify provider is mocked in these tests. Runtime isolation,
+image-to-source provenance, quota enforcement and a real generated-app deployment
+still need their own live evidence.
 The complete Alembic chain was also exercised in a new disposable local database:
 upgrade to 018, downgrade to 002, and upgrade back to 018. The helper is
 `python3 -m scripts.verify_cloud_migrations_local` with the loopback-only
