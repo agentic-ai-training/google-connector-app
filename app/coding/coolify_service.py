@@ -260,7 +260,7 @@ async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
             or manifest.target_hash != row["config_hash"]):
         raise admission.DeploymentConflict("immutable deployment identity changed")
     validate_compose(compose, manifest)
-    token = resolve_token(target.configuration_secret_ref)
+    token = resolve_token(target.recovery_secret_ref)
     async with CoolifyServiceClient(target, token, transport=transport) as client:
         await client.verify_team()
         resource_id = await client.matching_services(

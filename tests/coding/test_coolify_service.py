@@ -28,6 +28,20 @@ prepared = prepared_fixture
 context = context_fixture
 
 
+def test_provider_credential_references_must_be_distinct():
+    with pytest.raises(ValueError, match="must be separate"):
+        deploy.RegisteredTarget(
+            target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
+            inventory_secret_ref="test/inventory",
+            configuration_secret_ref="test/configuration",
+            deployment_secret_ref="test/deploy",
+            recovery_secret_ref="test/configuration",
+            project_id="test-project", server_uuid="server",
+            coolify_project_uuid="project", environment_uuid="environment",
+            owner_user_id="alice",
+        )
+
+
 async def approved_deployment(covered, context, monkeypatch):
     pool, _, manifest, _, _ = covered
     _, request, host, source = context
@@ -250,6 +264,13 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
         return httpx.Response(200, json=[service])
 
     transport = httpx.MockTransport(provider)
+    observed_refs = []
+
+    def recovery_token(reference):
+        observed_refs.append(reference)
+        assert reference == "test/recovery"
+        return "scoped-test-token"
+
     await submit_approved_service(
         covered[0], row["id"], user_id="alice", compose=compose,
         resolve_token=lambda _: "scoped-test-token", transport=transport,
@@ -257,13 +278,14 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
     with pytest.raises(CoolifyServiceError, match="sensitive_read_required"):
         await reconcile_created_service(
             covered[0], row["id"], user_id="alice", compose=compose,
-            resolve_token=lambda _: "scoped-test-token", transport=transport,
+            resolve_token=recovery_token, transport=transport,
         )
     expose_sensitive[0] = True
     recovered = await reconcile_created_service(
         covered[0], row["id"], user_id="alice", compose=compose,
-        resolve_token=lambda _: "scoped-test-token", transport=transport,
+        resolve_token=recovery_token, transport=transport,
     )
+    assert observed_refs == ["test/recovery", "test/recovery"]
     assert recovered == {"deployment_id": row["id"], "status": "submitted",
                          "resource_id": "created-service-1", "reconciled": True}
     assert "secrets" not in str(recovered)

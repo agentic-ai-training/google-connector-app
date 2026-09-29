@@ -35,11 +35,12 @@ approved bytes. A missing, duplicate, wrong-host or semantically different resul
 never becomes submitted and never triggers a second POST. The installed API hides
 `docker_compose_raw` from ordinary read tokens; recovery fails closed with
 `sensitive_read_required` unless a token with `read:sensitive` (or broader root)
-authority is supplied. Such a token would expose sensitive provider fields; a
-separate recovery credential and its lifecycle are **not yet implemented** and
-must be reviewed before activation. The hash marker alone is not sufficient to
-adopt a resource. The credential's scope and readback payload still need an
-authenticated live test.
+authority is supplied. The target now requires a distinct recovery credential
+reference and the adapter resolves that reference only for reconciliation. The
+operator-owned secret store, token issuance/rotation and limited lifetime remain
+to be integrated and reviewed before activation; this scope exposes sensitive
+provider fields. The hash marker alone is not sufficient to adopt a resource.
+The credential's scope and readback payload still need an authenticated live test.
 On 29 September 2026, read-only unauthenticated requests through pinned IAP/SSH to
 the installed instance returned 401 for `/api/v1/services`, `/api/v1/servers/{uuid}`,
 `/api/v1/projects/{uuid}` and the project-environment route; a deliberately absent

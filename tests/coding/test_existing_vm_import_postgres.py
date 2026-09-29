@@ -228,7 +228,8 @@ async def test_imported_host_funds_capacity_and_not_second_vm_charge(virgin):
     target = deploy.RegisteredTarget(
         target_id="existing-delhi-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
-        deployment_secret_ref="test/deploy", project_id=item.project_id,
+        deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
+        project_id=item.project_id,
         server_uuid=host.server_uuid, coolify_project_uuid="test-project",
         environment_uuid="test-environment", owner_user_id="alice", capacity_pool_id=host.pool_id,
     )

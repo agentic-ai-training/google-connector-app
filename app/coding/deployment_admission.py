@@ -35,7 +35,18 @@ class RegisteredTarget(CoolifyTarget):
     # Separate write/deploy credentials will be resolved only inside the adapter.
     configuration_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     deployment_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
+    recovery_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     capacity_pool_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{2,63}$")
+
+    @model_validator(mode="after")
+    def separate_provider_credentials(self):
+        references = (
+            self.inventory_secret_ref, self.configuration_secret_ref,
+            self.deployment_secret_ref, self.recovery_secret_ref,
+        )
+        if len(set(references)) != len(references):
+            raise ValueError("Coolify inventory, configuration, start and recovery credentials must be separate")
+        return self
 
 
 class DeploymentManifest(BaseModel):
