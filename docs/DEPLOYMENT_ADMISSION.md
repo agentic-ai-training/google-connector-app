@@ -33,14 +33,20 @@ environment IDs against the registered UUIDs. Missing, duplicate, wrong-host or
 different-content results never become submitted and never trigger a second POST.
 This recovery is only mock-tested; the pinned installed Coolify version must return
 the documented identity fields before it can be relied on operationally.
+On 29 September 2026, read-only unauthenticated requests through pinned IAP/SSH to
+the installed instance returned 401 for `/api/v1/services`, `/api/v1/servers/{uuid}`,
+`/api/v1/projects/{uuid}` and the project-environment route; a deliberately absent
+API path returned 404. This distinguishes route presence from a blanket 401, but
+does **not** prove authenticated payload schemas, credential scope, or write behavior.
+The container's Artisan route-list command failed, so it is not counted as proof.
 
 The provider step follows the [Coolify Service creation API](https://coolify.io/docs/api/endpoints/services/create-service)
 using `POST /api/v1/services` with base64 Compose and `instant_deploy=false`.
 It records a returned UUID as **submitted**, not started, healthy or functionally
 complete. A lost response or provider error is **uncertain** and never blindly
-reposted. The installed Coolify 4.3.23 endpoint/payload still needs version-specific
-verification before activation; the official public reference is not a live probe
-of this VM.
+reposted. The installed Coolify 4.3.23 payload still needs authenticated
+version-specific verification before activation; the official public reference
+is not a payload probe of this VM.
 
 `app/coding/compose_policy.py` currently rejects unpinned images, host binds,
 published host ports, privileged/network escapes, labels, replica multipliers,
