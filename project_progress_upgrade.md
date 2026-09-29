@@ -2363,7 +2363,9 @@ changes become production evidence.
   absent source, offline dependency failure and false-success output rejection. The
   VM operator policy still approves only the Python synthetic toolchain; Node/Java
   cache/image provision, live gVisor execution and PostgreSQL/cross-language profiles
-  remain unproven, so this item stays unchecked.
+  remain unproven. Deployment admission also still accepts one validation claim;
+  generated React + Spring Boot releases need an all-required-profile matrix for the
+  same frozen source before start. This item stays unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

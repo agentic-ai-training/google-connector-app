@@ -35,6 +35,11 @@ Compose bytes to the approved SHA-256, checks a bounded generated-Compose policy
 requires a real unexpired `coding_validation_claims` pass for the same user, run,
 target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
+The current manifest admits one passing validation claim. That is insufficient to
+prove a generated React + Spring Boot release: an eventual start gate must require
+the complete profile matrix for the same frozen source and reject a release with
+only a Python compile or one passing component. The locally added React/Spring
+profiles are not yet enrolled in that matrix or activated on the host.
 The Compose policy now recomputes `release_hash` from a domain-separated canonical
 statement containing that validated source hash, the exact Compose hash, and every
 service's digest-pinned image reference. A mismatched release, source or image is
