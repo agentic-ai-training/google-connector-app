@@ -11,6 +11,9 @@ be exposed as an arbitrary model tool. An operator registers a target after veri
 the Coolify team/server/project/environment and secret ownership. Target identity,
 owner, funding project, endpoint and credential references are immutable; changes
 require a new target ID. No secret plaintext is stored in target records.
+If a Coolify server has multiple Docker destinations, the operator also binds its
+verified `destination_uuid` in that immutable target. The create adapter includes
+it only when registered; it never chooses a destination from provider ordering.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.
@@ -167,7 +170,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 271 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 272 tests with real PostgreSQL enabled as of
 29 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,

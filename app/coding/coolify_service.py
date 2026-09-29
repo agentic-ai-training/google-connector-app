@@ -86,9 +86,7 @@ class CoolifyServiceClient:
     async def create(self, *, request_id: UUID, compose: bytes):
         """Exactly one network mutation; no automatic retry, no instant deployment."""
         compose_hash = hashlib.sha256(compose).hexdigest()
-        result = await self._json(
-            "POST", "/api/v1/services", expected=201,
-            payload={
+        payload = {
                 "name": "gca-" + request_id.hex,
                 "description": "gca-compose-sha256:" + compose_hash,
                 "project_uuid": self.target.coolify_project_uuid,
@@ -97,7 +95,11 @@ class CoolifyServiceClient:
                 "instant_deploy": False,
                 "force_domain_override": False,
                 "docker_compose_raw": base64.b64encode(compose).decode("ascii"),
-            },
+        }
+        if self.target.destination_uuid is not None:
+            payload["destination_uuid"] = self.target.destination_uuid
+        result = await self._json(
+            "POST", "/api/v1/services", expected=201, payload=payload,
         )
         resource_id = result.get("uuid")
         if not isinstance(resource_id, str) or not RESOURCE_ID.fullmatch(resource_id):

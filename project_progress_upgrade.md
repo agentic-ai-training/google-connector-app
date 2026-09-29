@@ -2395,6 +2395,8 @@ changes become production evidence.
   sensitive-read authority; the target/adapter now use a distinct recovery credential
   reference, while token issuance/rotation and authenticated live proof remain. The
   same installed source confirms `instant_deploy=false` avoids the start dispatch.
+  Multi-destination servers now require an operator-registered destination UUID;
+  the adapter does not infer one at write time.
   Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
   recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,

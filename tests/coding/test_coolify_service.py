@@ -12,7 +12,8 @@ from app.coding import deployment_admission as deploy
 from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
 from app.coding.coolify_service import (
-    CoolifyServiceError, reconcile_created_service, submit_approved_service,
+    CoolifyServiceClient, CoolifyServiceError, reconcile_created_service,
+    submit_approved_service,
 )
 from tests.coding.test_compose_policy import safe_compose
 from tests.coding.test_cost_ledger_postgres import DSN
@@ -40,6 +41,29 @@ def test_provider_credential_references_must_be_distinct():
             coolify_project_uuid="project", environment_uuid="environment",
             owner_user_id="alice",
         )
+
+
+@pytest.mark.asyncio
+async def test_explicit_registered_destination_is_sent_without_guessing(prepared):
+    target = prepared[1].model_copy(update={"destination_uuid": "operator-destination"})
+
+    def provider(request):
+        assert request.url.path == "/api/v1/services"
+        assert request.method == "POST"
+        assert request.read()
+        import json
+
+        payload = json.loads(request.content)
+        assert payload["destination_uuid"] == "operator-destination"
+        assert payload["instant_deploy"] is False
+        return httpx.Response(201, json={"uuid": "created-service-1"})
+
+    async with CoolifyServiceClient(
+        target, "scoped-test-token", transport=httpx.MockTransport(provider),
+    ) as client:
+        result = await client.create(request_id=prepared[2].request_id,
+                                     compose=safe_compose().encode())
+    assert result == "created-service-1"
 
 
 async def approved_deployment(covered, context, monkeypatch):
