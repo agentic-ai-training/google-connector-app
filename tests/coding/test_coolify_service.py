@@ -45,6 +45,15 @@ def test_provider_credential_references_must_be_distinct():
         )
 
 
+def test_coolify_destination_zero_is_valid_but_negative_is_not(prepared):
+    payload = prepared[1].model_dump()
+    payload["destination_id"] = 0
+    assert deploy.RegisteredTarget.model_validate(payload).destination_id == 0
+    payload["destination_id"] = -1
+    with pytest.raises(ValueError):
+        deploy.RegisteredTarget.model_validate(payload)
+
+
 @pytest.mark.asyncio
 async def test_explicit_registered_destination_is_sent_without_guessing(prepared):
     target = prepared[1]

@@ -2399,6 +2399,10 @@ changes become production evidence.
   numeric ID and type. Creation sends the UUID; reconciliation checks the ID/type.
   The public destination API omits numeric IDs, so a trusted enrollment proof is
   still needed; the adapter never guesses from provider ordering.
+  Installed-VM read-only database evidence on 2026-09-29 found server/destination
+  numeric IDs of `0` and no project/environment. The target schema now accepts ID
+  zero, but project/environment/API-token setup and authenticated API proof
+  remain; no live Service was created.
   Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
   recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,

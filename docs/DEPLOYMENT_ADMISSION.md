@@ -17,6 +17,10 @@ chooses a destination from provider ordering, and recovery compares the returned
 ID/type. The public destination API does not expose numeric IDs, so live enrollment
 requires a separately reviewed trusted verification source; no live target has been
 registered on an assumed mapping.
+The installed VM's read-only database query on 2026-09-29 found its one server and
+one standalone Docker destination at ID `0`; nonnegative ID validation is required.
+No Coolify project, environment or API token exists there yet, so this remains
+enrollment evidence only, not a deployable target.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.
@@ -173,7 +177,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 272 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 273 tests with real PostgreSQL enabled as of
 29 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,
