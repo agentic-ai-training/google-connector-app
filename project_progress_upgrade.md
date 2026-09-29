@@ -2387,11 +2387,16 @@ changes become production evidence.
   Chat delivery or production migration was performed. Installed-version API proof,
   source-to-image build attestation, scoped credentials, staged writes and recovery
   remain required; this item stays unchecked.
-  Local read-only recovery now checks the deterministic Service name, exact Compose
-  hash and provider server/project/environment identities before adopting an
-  uncertain create; absent or conflicting inventory stays uncertain and does not
-  repost. Provider-mock/loopback-PostgreSQL regression suite: 270 coding tests passed.
-  This is not installed-version or live recovery proof.
+  Local read-only recovery checks the deterministic Service name, approved Compose
+  SHA-256 marker, parsed Compose content and provider target identity; absent or
+  conflicting inventory stays uncertain and does not repost. Installed Coolify
+  4.3.23 source inspection showed that it normalizes YAML before storage and hides
+  raw Compose from ordinary read tokens. Reconciliation therefore needs reviewed
+  sensitive-read authority, a separate recovery-credential lifecycle and authenticated
+  live proof. The
+  same installed source confirms `instant_deploy=false` avoids the start dispatch.
+  Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
+  recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

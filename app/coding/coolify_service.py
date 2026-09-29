@@ -15,7 +15,9 @@ from uuid import UUID
 import httpx
 
 from app.coding import deployment_admission as admission
-from app.coding.compose_policy import validate_compose
+from app.coding.compose_policy import (
+    ComposePolicyError, parse_compose_document, validate_compose,
+)
 
 
 class CoolifyServiceError(RuntimeError):
@@ -83,10 +85,12 @@ class CoolifyServiceClient:
 
     async def create(self, *, request_id: UUID, compose: bytes):
         """Exactly one network mutation; no automatic retry, no instant deployment."""
+        compose_hash = hashlib.sha256(compose).hexdigest()
         result = await self._json(
             "POST", "/api/v1/services", expected=201,
             payload={
                 "name": "gca-" + request_id.hex,
+                "description": "gca-compose-sha256:" + compose_hash,
                 "project_uuid": self.target.coolify_project_uuid,
                 "environment_uuid": self.target.environment_uuid,
                 "server_uuid": self.target.server_uuid,
@@ -100,8 +104,10 @@ class CoolifyServiceClient:
             raise CoolifyServiceError("resource_identity_missing")
         return resource_id
 
-    async def matching_services(self, *, request_id: UUID, compose_hash: str):
-        """Read-only identity reconciliation; no raw provider payload escapes."""
+    async def matching_services(self, *, request_id: UUID, compose: bytes):
+        """Read-only identity reconciliation; normalized YAML still must match."""
+        compose_hash = hashlib.sha256(compose).hexdigest()
+        approved_document = parse_compose_document(compose)
         server = await self._json(
             "GET", "/api/v1/servers/" + self.target.server_uuid, expected=200,
         )
@@ -134,19 +140,32 @@ class CoolifyServiceClient:
             resource_id = item.get("uuid")
             raw = item.get("docker_compose_raw")
             if (not isinstance(resource_id, str) or not RESOURCE_ID.fullmatch(resource_id)
-                    or not isinstance(raw, str) or item.get("deleted_at") is not None
+                    or item.get("description") != "gca-compose-sha256:" + compose_hash
+                    or item.get("deleted_at") is not None
                     or type(item.get("server_id")) is not int
                     or type(item.get("environment_id")) is not int
                     or item.get("server_id") != server["id"]
                     or item.get("environment_id") != environment["id"]):
                 raise CoolifyServiceError("identity_ambiguous")
-            possible = [raw.encode()]
+            # Installed Coolify 4.3.23 re-dumps YAML before storing it. The
+            # exact submitted byte hash is therefore not a valid readback test.
+            # Its normal read ability also hides raw Compose. A separately
+            # scoped read:sensitive credential is required to reconcile; a
+            # description/name match alone never authorizes adoption.
+            if not isinstance(raw, str):
+                raise CoolifyServiceError("sensitive_read_required")
+            possible = [raw.encode("utf-8")]
             try:
                 possible.append(base64.b64decode(raw, validate=True))
             except (ValueError, UnicodeError):
                 pass
-            if not any(hashlib.sha256(candidate).hexdigest() == compose_hash
-                       for candidate in possible):
+            content_matches = False
+            for candidate in possible:
+                try:
+                    content_matches |= parse_compose_document(candidate) == approved_document
+                except ComposePolicyError:
+                    continue
+            if not content_matches:
                 raise CoolifyServiceError("identity_ambiguous")
             matches.append(resource_id)
         if len(matches) > 1:
@@ -219,8 +238,8 @@ async def submit_approved_service(pool, deployment_id: UUID, *, user_id: str,
 
 
 async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
-                                    resolve_token, transport=None):
-    """Resolve a lost create response by name + exact Compose, never by reposting."""
+                                    compose: bytes, resolve_token, transport=None):
+    """Resolve a lost create response by name + equivalent Compose; never repost."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT d.manifest,d.manifest_hash,d.status,d.provider_resource_id,"
@@ -240,11 +259,12 @@ async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
             or admission.fingerprint(target) != row["config_hash"]
             or manifest.target_hash != row["config_hash"]):
         raise admission.DeploymentConflict("immutable deployment identity changed")
+    validate_compose(compose, manifest)
     token = resolve_token(target.configuration_secret_ref)
     async with CoolifyServiceClient(target, token, transport=transport) as client:
         await client.verify_team()
         resource_id = await client.matching_services(
-            request_id=manifest.request_id, compose_hash=manifest.compose_hash,
+            request_id=manifest.request_id, compose=compose,
         )
     if resource_id is None:
         return {"deployment_id": deployment_id, "status": row["status"],

@@ -6,6 +6,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+import yaml
 
 from app.coding import deployment_admission as deploy
 from app.coding import validation_controller as controller
@@ -79,6 +80,7 @@ async def test_one_provider_create_then_record_only_submission(covered, context,
         assert payload["instant_deploy"] is False
         assert payload["force_domain_override"] is False
         assert base64.b64decode(payload["docker_compose_raw"]) == compose
+        assert payload["description"] == "gca-compose-sha256:" + sha256(compose).hexdigest()
         posts.append(payload["name"])
         return httpx.Response(201, json={"uuid": "created-service-1"})
 
@@ -220,6 +222,7 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
     row, compose = await approved_deployment(covered, context, monkeypatch)
     manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
     names = []
+    expose_sensitive = [False]
 
     def provider(request):
         if request.url.path.endswith("/teams/current"):
@@ -233,20 +236,32 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
         if request.method == "POST":
             names.append(request.url.path)
             raise httpx.ReadTimeout("response lost", request=request)
-        return httpx.Response(200, json=[{
+        service = {
             "name": "gca-" + manifest.request_id.hex, "uuid": "created-service-1",
-            "docker_compose_raw": base64.b64encode(compose).decode(),
+            "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
             "server_id": 1, "environment_id": 2,
             "deleted_at": None, "secrets": "never-return",
-        }])
+        }
+        if expose_sensitive[0]:
+            # Installed Coolify re-dumps YAML; byte equality is not valid.
+            service["docker_compose_raw"] = yaml.safe_dump(
+                yaml.safe_load(compose), sort_keys=True,
+            )
+        return httpx.Response(200, json=[service])
 
     transport = httpx.MockTransport(provider)
     await submit_approved_service(
         covered[0], row["id"], user_id="alice", compose=compose,
         resolve_token=lambda _: "scoped-test-token", transport=transport,
     )
+    with pytest.raises(CoolifyServiceError, match="sensitive_read_required"):
+        await reconcile_created_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: "scoped-test-token", transport=transport,
+        )
+    expose_sensitive[0] = True
     recovered = await reconcile_created_service(
-        covered[0], row["id"], user_id="alice",
+        covered[0], row["id"], user_id="alice", compose=compose,
         resolve_token=lambda _: "scoped-test-token", transport=transport,
     )
     assert recovered == {"deployment_id": row["id"], "status": "submitted",
@@ -271,10 +286,13 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
         resolve_token=lambda _: "scoped-test-token", transport=httpx.MockTransport(creation),
     )
     name = "gca-" + manifest.request_id.hex
+    description = "gca-compose-sha256:" + sha256(compose).hexdigest()
     for services in (
-        [{"name": name, "uuid": "wrong-content", "docker_compose_raw": "secret",
+        [{"name": name, "uuid": "wrong-content", "description": description,
+          "docker_compose_raw": "secret",
           "server_id": 1, "environment_id": 2}],
-        [{"name": name, "uuid": value, "docker_compose_raw": compose.decode(),
+        [{"name": name, "uuid": value, "description": description,
+          "docker_compose_raw": compose.decode(),
           "server_id": 1, "environment_id": 2}
          for value in ("duplicate-1", "duplicate-2")],
     ):
@@ -291,7 +309,7 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
 
         with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
             await reconcile_created_service(
-                covered[0], row["id"], user_id="alice",
+                covered[0], row["id"], user_id="alice", compose=compose,
                 resolve_token=lambda _: "scoped-test-token",
                 transport=httpx.MockTransport(listing),
             )
@@ -324,7 +342,7 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
         resolve_token=lambda _: "scoped-test-token", transport=transport,
     )
     missing = await reconcile_created_service(
-        covered[0], row["id"], user_id="alice",
+        covered[0], row["id"], user_id="alice", compose=compose,
         resolve_token=lambda _: "scoped-test-token", transport=transport,
     )
     assert missing["status"] == "uncertain" and missing["reconciled"] is False
@@ -333,6 +351,7 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
         if request.url.path == "/api/v1/services":
             return httpx.Response(200, json=[{
                 "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-server-service",
+                "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
                 "docker_compose_raw": compose.decode(), "server_id": 99,
                 "environment_id": 2, "deleted_at": None,
             }])
@@ -340,7 +359,7 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
 
     with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
         await reconcile_created_service(
-            covered[0], row["id"], user_id="alice",
+            covered[0], row["id"], user_id="alice", compose=compose,
             resolve_token=lambda _: "scoped-test-token",
             transport=httpx.MockTransport(wrong_server),
         )

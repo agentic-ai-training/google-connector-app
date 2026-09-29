@@ -27,18 +27,29 @@ target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
 The local PostgreSQL/provider-mock test exercises one concurrent POST and denies
 replay, false/expired validation, changed source, cross-tenant access and wrong team.
-Read-only recovery of an uncertain create now looks for the deterministic Service
-name and exact Compose hash and cross-checks Coolify's numeric server, project and
-environment IDs against the registered UUIDs. Missing, duplicate, wrong-host or
-different-content results never become submitted and never trigger a second POST.
-This recovery is only mock-tested; the pinned installed Coolify version must return
-the documented identity fields before it can be relied on operationally.
+Read-only recovery of an uncertain create now checks the deterministic Service
+name, a submitted Compose SHA-256 marker in its description, the registered
+server/project/environment identities and the parsed Compose document. Installed
+Coolify 4.3.23 re-dumps YAML before saving it, so its bytes need not match the
+approved bytes. A missing, duplicate, wrong-host or semantically different result
+never becomes submitted and never triggers a second POST. The installed API hides
+`docker_compose_raw` from ordinary read tokens; recovery fails closed with
+`sensitive_read_required` unless a token with `read:sensitive` (or broader root)
+authority is supplied. Such a token would expose sensitive provider fields; a
+separate recovery credential and its lifecycle are **not yet implemented** and
+must be reviewed before activation. The hash marker alone is not sufficient to
+adopt a resource. The credential's scope and readback payload still need an
+authenticated live test.
 On 29 September 2026, read-only unauthenticated requests through pinned IAP/SSH to
 the installed instance returned 401 for `/api/v1/services`, `/api/v1/servers/{uuid}`,
 `/api/v1/projects/{uuid}` and the project-environment route; a deliberately absent
 API path returned 404. This distinguishes route presence from a blanket 401, but
 does **not** prove authenticated payload schemas, credential scope, or write behavior.
 The container's Artisan route-list command failed, so it is not counted as proof.
+Bounded source inspection of the installed `ServicesController` independently
+confirmed the create endpoint accepts base64 Compose and defaults
+`instant_deploy` to false; its custom-Compose branch calls `StartService::dispatch`
+only when true. This is source-level evidence, not a live authenticated write.
 
 The provider step follows the [Coolify Service creation API](https://coolify.io/docs/api/endpoints/services/create-service)
 using `POST /api/v1/services` with base64 Compose and `instant_deploy=false`.

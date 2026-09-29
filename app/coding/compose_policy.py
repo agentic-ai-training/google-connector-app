@@ -49,6 +49,23 @@ def _unique_mapping(loader, node):
 _UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
 
+def parse_compose_document(compose: bytes) -> dict:
+    """Parse bounded Compose YAML without aliases, duplicate keys or extra documents."""
+    if not isinstance(compose, bytes) or not 1 <= len(compose) <= MAX_COMPOSE_BYTES:
+        raise ComposePolicyError("Compose artifact size is invalid")
+    try:
+        text = compose.decode("utf-8")
+        if any(isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken))
+               for token in yaml.scan(text)):
+            raise ComposePolicyError("Compose YAML anchors are not permitted")
+        document = yaml.load(text, Loader=_UniqueSafeLoader)  # nosec B506
+    except (UnicodeError, yaml.YAMLError, RecursionError):
+        raise ComposePolicyError("Compose artifact is invalid YAML") from None
+    if not isinstance(document, dict):
+        raise ComposePolicyError("Compose root must be a mapping")
+    return document
+
+
 def _cpu_millis(value) -> int:
     if isinstance(value, bool):
         raise ComposePolicyError("invalid CPU limit")
@@ -80,15 +97,7 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
         raise ComposePolicyError("Compose artifact size is invalid")
     if hashlib.sha256(compose).hexdigest() != manifest.compose_hash:
         raise ComposePolicyError("Compose artifact does not match approved manifest")
-    try:
-        text = compose.decode("utf-8")
-        # Aliases/anchors can obscure policy and greatly amplify parser work.
-        if any(isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken))
-               for token in yaml.scan(text)):
-            raise ComposePolicyError("Compose YAML anchors are not permitted")
-        document = yaml.load(text, Loader=_UniqueSafeLoader)  # nosec B506
-    except (UnicodeError, yaml.YAMLError, RecursionError):
-        raise ComposePolicyError("Compose artifact is invalid YAML") from None
+    document = parse_compose_document(compose)
     if not isinstance(document, dict) or set(document) - {"services", "volumes"}:
         raise ComposePolicyError("Compose root contains unsupported authority")
     services = document.get("services")
@@ -151,4 +160,4 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
     capacity = manifest.capacity
     if capacity is None or total_cpu > capacity.cpu_millis or total_memory > capacity.memory_mib:
         raise ComposePolicyError("Compose exceeds approved funded host capacity")
-    return text
+    return compose.decode("utf-8")
