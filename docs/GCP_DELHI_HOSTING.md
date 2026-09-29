@@ -12,15 +12,19 @@ until the itemized Billing report is checked; do not book the INR 3,756 entirely
 against hosting or spend the protected Vertex/reserve allocations on that basis.
 Read-only instance describe on 2026-09-29 still reported RUNNING,
 `e2-standard-4`, and the fixed 2026-10-19 stop timestamp.
+On the same date, `docker ps` through pinned IAP SSH reported Coolify, PostgreSQL,
+Redis, realtime, proxy and sentinel all `healthy` after nine days uptime. This
+is infrastructure health only, not a generated-application or backup proof.
 Read-only queries through pinned IAP SSH into the installed Coolify application on
 2026-09-29 found one server and one standalone Docker destination, both with
 provider numeric ID `0`; there were no Coolify projects or environments. One user
-and one team row exist, but that alone does not prove admin setup. The
+and one team row exist, consistent with the verified 2026-09-20 administrator
+registration noted below; current interactive login was not retested. The
 `personal_access_tokens` table contains zero rows, so no scoped Coolify API token
 exists on this instance yet.
 No Coolify project/environment, target registration or Service was created by
-these queries. Complete administrator setup and register a project/environment
-before attempting the typed deployment path.
+these queries. Recheck private administrator access and register a
+project/environment before attempting the typed deployment path.
 The user has already approved provisioning and the limited reserve draw. Do not ask
 for duplicate region, machine-size or spending authority unless this scope changes.
 
