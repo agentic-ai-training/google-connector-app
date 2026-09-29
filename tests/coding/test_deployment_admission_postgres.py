@@ -37,7 +37,8 @@ async def prepared(db):
         target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
         deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
-        project_id=PROJECT, server_uuid="server",
+        project_id=PROJECT, server_uuid="server", destination_uuid="destination",
+        destination_id=7, destination_type="App\\Models\\StandaloneDocker",
         coolify_project_uuid="project", environment_uuid="environment", owner_user_id="alice",
     )
     await deploy.register_target(pool, target, evidence_reference="test:operator-verified")

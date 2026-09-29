@@ -92,12 +92,11 @@ class CoolifyServiceClient:
                 "project_uuid": self.target.coolify_project_uuid,
                 "environment_uuid": self.target.environment_uuid,
                 "server_uuid": self.target.server_uuid,
+                "destination_uuid": self.target.destination_uuid,
                 "instant_deploy": False,
                 "force_domain_override": False,
                 "docker_compose_raw": base64.b64encode(compose).decode("ascii"),
         }
-        if self.target.destination_uuid is not None:
-            payload["destination_uuid"] = self.target.destination_uuid
         result = await self._json(
             "POST", "/api/v1/services", expected=201, payload=payload,
         )
@@ -147,7 +146,10 @@ class CoolifyServiceClient:
                     or type(item.get("server_id")) is not int
                     or type(item.get("environment_id")) is not int
                     or item.get("server_id") != server["id"]
-                    or item.get("environment_id") != environment["id"]):
+                    or item.get("environment_id") != environment["id"]
+                    or type(item.get("destination_id")) is not int
+                    or item.get("destination_id") != self.target.destination_id
+                    or item.get("destination_type") != self.target.destination_type):
                 raise CoolifyServiceError("identity_ambiguous")
             # Installed Coolify 4.3.23 re-dumps YAML before storing it. The
             # exact submitted byte hash is therefore not a valid readback test.

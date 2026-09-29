@@ -29,7 +29,9 @@ class DeploymentConflict(RuntimeError):
 class RegisteredTarget(CoolifyTarget):
     project_id: str = Field(pattern=r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
     server_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
-    destination_uuid: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,128}$")
+    destination_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
+    destination_id: int = Field(ge=1, strict=True)
+    destination_type: str = Field(pattern=r"^[a-zA-Z0-9_\\.-]{1,128}$")
     coolify_project_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
     environment_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
     owner_user_id: str = Field(min_length=1, max_length=512)

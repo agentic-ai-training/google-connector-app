@@ -38,6 +38,8 @@ def test_provider_credential_references_must_be_distinct():
             deployment_secret_ref="test/deploy",
             recovery_secret_ref="test/configuration",
             project_id="test-project", server_uuid="server",
+            destination_uuid="destination", destination_id=7,
+            destination_type="App\\Models\\StandaloneDocker",
             coolify_project_uuid="project", environment_uuid="environment",
             owner_user_id="alice",
         )
@@ -45,7 +47,7 @@ def test_provider_credential_references_must_be_distinct():
 
 @pytest.mark.asyncio
 async def test_explicit_registered_destination_is_sent_without_guessing(prepared):
-    target = prepared[1].model_copy(update={"destination_uuid": "operator-destination"})
+    target = prepared[1]
 
     def provider(request):
         assert request.url.path == "/api/v1/services"
@@ -54,7 +56,7 @@ async def test_explicit_registered_destination_is_sent_without_guessing(prepared
         import json
 
         payload = json.loads(request.content)
-        assert payload["destination_uuid"] == "operator-destination"
+        assert payload["destination_uuid"] == "destination"
         assert payload["instant_deploy"] is False
         return httpx.Response(201, json={"uuid": "created-service-1"})
 
@@ -119,6 +121,7 @@ async def test_one_provider_create_then_record_only_submission(covered, context,
         assert payload["force_domain_override"] is False
         assert base64.b64decode(payload["docker_compose_raw"]) == compose
         assert payload["description"] == "gca-compose-sha256:" + sha256(compose).hexdigest()
+        assert payload["destination_uuid"] == "destination"
         posts.append(payload["name"])
         return httpx.Response(201, json={"uuid": "created-service-1"})
 
@@ -278,6 +281,7 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
             "name": "gca-" + manifest.request_id.hex, "uuid": "created-service-1",
             "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
             "server_id": 1, "environment_id": 2,
+            "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
             "deleted_at": None, "secrets": "never-return",
         }
         if expose_sensitive[0]:
@@ -336,10 +340,12 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
     for services in (
         [{"name": name, "uuid": "wrong-content", "description": description,
           "docker_compose_raw": "secret",
-          "server_id": 1, "environment_id": 2}],
+          "server_id": 1, "environment_id": 2,
+          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker"}],
         [{"name": name, "uuid": value, "description": description,
           "docker_compose_raw": compose.decode(),
-          "server_id": 1, "environment_id": 2}
+          "server_id": 1, "environment_id": 2,
+          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker"}
          for value in ("duplicate-1", "duplicate-2")],
     ):
         def listing(request):
@@ -399,7 +405,8 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
                 "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-server-service",
                 "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
                 "docker_compose_raw": compose.decode(), "server_id": 99,
-                "environment_id": 2, "deleted_at": None,
+                "environment_id": 2, "destination_id": 7,
+                "destination_type": "App\\Models\\StandaloneDocker", "deleted_at": None,
             }])
         return provider(request)
 
@@ -408,6 +415,24 @@ async def test_reconciliation_requires_same_server_and_retains_absent_outcome(
             covered[0], row["id"], user_id="alice", compose=compose,
             resolve_token=lambda _: "scoped-test-token",
             transport=httpx.MockTransport(wrong_server),
+        )
+    def wrong_destination(request):
+        if request.url.path == "/api/v1/services":
+            return httpx.Response(200, json=[{
+                "name": "gca-" + manifest.request_id.hex, "uuid": "wrong-destination",
+                "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
+                "docker_compose_raw": compose.decode(), "server_id": 1,
+                "environment_id": 2, "destination_id": 99,
+                "destination_type": "App\\Models\\StandaloneDocker",
+                "deleted_at": None,
+            }])
+        return provider(request)
+
+    with pytest.raises(CoolifyServiceError, match="identity_ambiguous"):
+        await reconcile_created_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: "scoped-test-token",
+            transport=httpx.MockTransport(wrong_destination),
         )
     async with covered[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM coding_deployments") == "uncertain"

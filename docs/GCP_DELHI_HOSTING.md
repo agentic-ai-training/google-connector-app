@@ -4,6 +4,14 @@
 
 Provisioned 2026-09-19; setup continued 2026-09-20. User reconfirmed INR 28,694
 unspent trial balance before creation; the billing API does not expose those fields.
+On 2026-09-29 the user supplied a newer Billing screen: INR 24,938 promotional
+credit remains, Free trial, 53 days remaining, expiry 2026-11-21. The difference
+from the earlier snapshot is INR 3,756 of **total** credit use, not verified
+Compute/VM cost. Keep VM, disk, network and other-service charges unattributed
+until the itemized Billing report is checked; do not book the INR 3,756 entirely
+against hosting or spend the protected Vertex/reserve allocations on that basis.
+Read-only instance describe on 2026-09-29 still reported RUNNING,
+`e2-standard-4`, and the fixed 2026-10-19 stop timestamp.
 The user has already approved provisioning and the limited reserve draw. Do not ask
 for duplicate region, machine-size or spending authority unless this scope changes.
 

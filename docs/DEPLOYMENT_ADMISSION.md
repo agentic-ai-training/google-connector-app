@@ -11,9 +11,12 @@ be exposed as an arbitrary model tool. An operator registers a target after veri
 the Coolify team/server/project/environment and secret ownership. Target identity,
 owner, funding project, endpoint and credential references are immutable; changes
 require a new target ID. No secret plaintext is stored in target records.
-If a Coolify server has multiple Docker destinations, the operator also binds its
-verified `destination_uuid` in that immutable target. The create adapter includes
-it only when registered; it never chooses a destination from provider ordering.
+The operator binds a verified destination UUID plus its provider numeric ID and
+type in the immutable target. The create adapter always sends the UUID, never
+chooses a destination from provider ordering, and recovery compares the returned
+ID/type. The public destination API does not expose numeric IDs, so live enrollment
+requires a separately reviewed trusted verification source; no live target has been
+registered on an assumed mapping.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.
