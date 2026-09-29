@@ -39,6 +39,7 @@ async def prepared(db):
         deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
         project_id=PROJECT, server_uuid="server", destination_uuid="destination",
         destination_id=7, destination_type="App\\Models\\StandaloneDocker",
+        destination_network="gca-app-test-target",
         coolify_project_uuid="project", environment_uuid="environment", owner_user_id="alice",
     )
     await deploy.register_target(pool, target, evidence_reference="test:operator-verified")

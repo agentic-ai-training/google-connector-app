@@ -37,7 +37,14 @@ target and frozen source, resolves an operator-owned credential reference, and
 checks the Coolify team. Dispatch checks validation again in the ledger transaction.
 The create path now also reads the registered server, project, environment and
 destination from installed-version API routes before consuming the one-time claim.
-It checks UUID relationships and standalone/swarm type, but Coolify's public
+It checks UUID relationships, standalone/swarm type and an exact approved
+`gca-app-*` destination-network name; the VM's existing `coolify` network is
+explicitly ineligible for generated apps. The same network check applies to
+uncertain-write reconciliation. This is only a network-identity gate, not proof
+that the Docker network is unique, isolated, or unable to reach core services;
+network creation, uniqueness, firewall/east-west tests and runtime security remain
+required.
+Coolify's public
 destination response omits the numeric ID; the operator's registered ID still
 needs a trusted out-of-band mapping. Missing or mismatched targets leave the
 deployment reserved and make no Service POST.
@@ -186,7 +193,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passes 278 tests with real PostgreSQL enabled as of
+The complete local coding suite passes 279 tests with real PostgreSQL enabled as of
 30 September 2026, including capacity races, imported-VM funding, single Service
 submission, false validation denial, uncertainty, revocation, accrual and database
 migration checks. The Coolify provider is mocked in these tests. Runtime isolation,

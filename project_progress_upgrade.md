@@ -2408,6 +2408,9 @@ changes become production evidence.
   On 2026-09-30 a read-only target preflight was added before the write claim.
   Missing project, mismatched environment or wrong destination server/type now
   leave the claim reserved with no provider POST in local PostgreSQL/mock tests.
+  The VM's sole Docker destination is the shared `coolify` network. Target schema
+  and API preflight now require a dedicated `gca-app-*` network name and reject
+  `coolify`; actual network creation and isolation tests remain incomplete.
   Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
   recovery proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,

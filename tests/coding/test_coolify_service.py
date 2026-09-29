@@ -40,6 +40,7 @@ def target_response(request):
         },
         "/api/v1/destinations/destination": {
             "uuid": "destination", "server_uuid": "server", "type": "standalone",
+            "network": "gca-app-test-target",
         },
     }
     value = values.get(request.url.path)
@@ -57,6 +58,7 @@ def test_provider_credential_references_must_be_distinct():
             project_id="test-project", server_uuid="server",
             destination_uuid="destination", destination_id=7,
             destination_type="App\\Models\\StandaloneDocker",
+            destination_network="gca-app-test-target",
             coolify_project_uuid="project", environment_uuid="environment",
             owner_user_id="alice",
         )
@@ -67,6 +69,10 @@ def test_coolify_destination_zero_is_valid_but_negative_is_not(prepared):
     payload["destination_id"] = 0
     assert deploy.RegisteredTarget.model_validate(payload).destination_id == 0
     payload["destination_id"] = -1
+    with pytest.raises(ValueError):
+        deploy.RegisteredTarget.model_validate(payload)
+    payload = prepared[1].model_dump()
+    payload["destination_network"] = "coolify"
     with pytest.raises(ValueError):
         deploy.RegisteredTarget.model_validate(payload)
 
@@ -274,7 +280,7 @@ async def test_bad_artifact_or_team_cannot_consume_claim(covered, context, monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [
     "missing_project", "wrong_environment", "wrong_destination_server",
-    "wrong_destination_type",
+    "wrong_destination_type", "shared_coolify_network",
 ])
 async def test_target_preflight_denies_write_before_claim(
         covered, context, monkeypatch, failure):
@@ -296,11 +302,17 @@ async def test_target_preflight_denies_write_before_claim(
             if failure == "wrong_destination_server":
                 return httpx.Response(200, json={
                     "uuid": "destination", "server_uuid": "another-server",
-                    "type": "standalone",
+                    "type": "standalone", "network": "gca-app-test-target",
                 })
             if failure == "wrong_destination_type":
                 return httpx.Response(200, json={
                     "uuid": "destination", "server_uuid": "server", "type": "swarm",
+                    "network": "gca-app-test-target",
+                })
+            if failure == "shared_coolify_network":
+                return httpx.Response(200, json={
+                    "uuid": "destination", "server_uuid": "server",
+                    "type": "standalone", "network": "coolify",
                 })
         known = target_response(request)
         assert known is not None

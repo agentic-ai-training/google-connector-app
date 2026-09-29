@@ -105,9 +105,7 @@ class CoolifyServiceClient:
             raise CoolifyServiceError("target_identity_ambiguous")
         return server["id"], environment["id"]
 
-    async def verify_create_target(self):
-        """Read-only target preflight before consuming the one-time write claim."""
-        await self._verified_target_ids()
+    async def _verify_isolated_destination(self):
         destination = await self._json(
             "GET", "/api/v1/destinations/" + self.target.destination_uuid,
             expected=200,
@@ -118,10 +116,16 @@ class CoolifyServiceClient:
         }.get(self.target.destination_type)
         if (expected_type is None or destination.get("uuid") != self.target.destination_uuid
                 or destination.get("server_uuid") != self.target.server_uuid
-                or destination.get("type") != expected_type):
+                or destination.get("type") != expected_type
+                or destination.get("network") != self.target.destination_network):
             raise CoolifyServiceError("destination_identity_ambiguous")
         # Coolify's public destination API omits the numeric ID. Its registered
         # UUID-to-ID/type mapping must have separate trusted operator evidence.
+
+    async def verify_create_target(self):
+        """Read-only target preflight before consuming the one-time write claim."""
+        await self._verified_target_ids()
+        await self._verify_isolated_destination()
 
     async def create(self, *, request_id: UUID, compose: bytes):
         """Exactly one network mutation; no automatic retry, no instant deployment."""
@@ -165,6 +169,7 @@ class CoolifyServiceClient:
     async def find_service_candidate(self, *, request_id: UUID, compose_hash: str):
         """List metadata using an ordinary team-read token, not sensitive-read."""
         server_id, environment_id = await self._verified_target_ids()
+        await self._verify_isolated_destination()
         values = await self._json(
             "GET", "/api/v1/services", expected=200, result_type=list,
             max_bytes=1_048_576,

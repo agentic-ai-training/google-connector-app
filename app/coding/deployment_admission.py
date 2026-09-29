@@ -32,6 +32,7 @@ class RegisteredTarget(CoolifyTarget):
     destination_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
     destination_id: int = Field(ge=0, strict=True)
     destination_type: str = Field(pattern=r"^[a-zA-Z0-9_\\.-]{1,128}$")
+    destination_network: str = Field(pattern=r"^gca-app-[a-z0-9-]{8,55}$")
     coolify_project_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
     environment_uuid: str = Field(pattern=r"^[a-zA-Z0-9-]{1,128}$")
     owner_user_id: str = Field(min_length=1, max_length=512)
