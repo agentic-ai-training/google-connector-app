@@ -77,6 +77,29 @@ Validation output is untrusted. A zero exit code proves only that command's resu
 not complete application correctness or deployment authority. Empty Python-source
 selection is rejected instead of being labelled a successful compilation.
 
+### Generated React/Spring profiles — local code, not host activation
+
+The trusted launcher now has fixed profiles for a generated `frontend/` Vite/React
+application and `backend/` Maven/Spring application: `react_test`, `react_build`,
+`spring_test`, and `spring_package`. The archive must contain the corresponding
+lockfile/POM, source and tests; staged `dist/`, `target/` and `node_modules/` cannot
+be supplied as proof of a build. React profiles run `npm ci --offline` with lifecycle
+scripts disabled before invoking the local Vitest/Vite binaries. Vitest explicitly
+denies zero-test and focused-only success and uses one worker. Spring profiles
+use Maven offline mode with `failIfNoTests=true`. All commands and postchecks share
+one bounded validation deadline. A successful React build must produce a non-empty
+`dist/index.html`; Spring testing must produce a non-empty Surefire XML report, and
+packaging must additionally produce a non-empty JAR. Missing outputs fail the
+validation even if a command reports exit code zero. These are tool-specific
+postconditions, not proof of application behavior or source-to-image provenance.
+
+The installed operator policy still approves only the synthetic Python image.
+No dependency-complete Node or Java toolchain image, offline package cache,
+compatible Maven repository, approved image ID or live host execution is proven
+for these profiles. In particular, a read-only/offline cache that cannot satisfy
+the requested lockfile must fail rather than trigger a network download or a
+silently weaker validation. The generated-app deployment gate remains closed.
+
 ## Live evidence
 
 `scripts/install_gvisor_host.sh` added signed-APT `runsc` release-20260921.0 and held
@@ -132,7 +155,7 @@ remove a blocked row merely to make another job start.
 
 ## Remaining activation work
 
-1. Dependency-complete Python/Node/Rust/Flutter toolchains, immutable scan/build
+1. Dependency-complete Python/Node/Java/Rust/Flutter toolchains, immutable scan/build
    attestations and adversarial workload tests.
 2. Bind durable host validation jobs to authenticated core run/step IDs and the central
    funded capacity ledger. The central claim model and shared-capacity admission are
@@ -149,4 +172,8 @@ remove a blocked row merely to make another job start.
 5. Generated-app behavioral checks, actual cost reconciliation and deployment proof.
 
 Sources: [gVisor installation](https://gvisor.dev/docs/user_guide/install/),
-[Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/).
+[Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/),
+[npm clean install](https://docs.npmjs.com/cli/commands/npm-ci/),
+[Vitest CLI](https://vitest.dev/guide/cli),
+[Maven offline mode](https://maven.apache.org/guides/introduction/introduction-to-repositories),
+[Surefire no-test policy](https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo).

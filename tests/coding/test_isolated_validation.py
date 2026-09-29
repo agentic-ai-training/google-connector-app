@@ -197,3 +197,113 @@ def test_generated_process_deadline_is_enforced(monkeypatch):
     monkeypatch.setattr(runner, "DOCKER", sys.executable)
     with pytest.raises(runner.IsolationError, match="deadline"):
         runner.execute_bounded(["-c", "import time; time.sleep(30)"], 1)
+
+
+def generated_stack(root: Path):
+    for path, content in {
+        "frontend/package.json": '{"name":"generated-app","version":"1.0.0"}',
+        "frontend/package-lock.json": '{"name":"generated-app","lockfileVersion":3}',
+        "frontend/index.html": "<div id='root'></div>",
+        "frontend/src/main.tsx": "export const App = () => null;",
+        "frontend/src/App.test.tsx": "test('renders', () => {});",
+        "backend/pom.xml": "<project></project>",
+        "backend/src/main/java/example/App.java": "class App {}",
+        "backend/src/test/java/example/AppTest.java": "class AppTest {}",
+    }.items():
+        file = root / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+
+
+@pytest.mark.parametrize("profile,missing", [
+    ("react_build", "frontend/package-lock.json"),
+    ("react_test", "frontend/src/App.test.tsx"),
+    ("spring_test", "backend/src/test/java/example/AppTest.java"),
+    ("spring_package", "backend/pom.xml"),
+])
+def test_generated_profile_denies_missing_source_before_docker(tmp_path, monkeypatch,
+                                                               profile, missing):
+    generated_stack(tmp_path)
+    (tmp_path / missing).unlink()
+    calls = fake_transport(monkeypatch)
+    policy = {**POLICY, "images": {profile: IMAGE}}
+    with pytest.raises(runner.IsolationError, match="required|test source"):
+        runner.validate(tmp_path, profile, 10, policy)
+    assert calls == []
+
+
+def test_generated_build_artifacts_cannot_be_supplied_as_source(tmp_path):
+    generated_stack(tmp_path)
+    (tmp_path / "frontend/dist").mkdir()
+    (tmp_path / "frontend/dist/index.html").write_text("stale build")
+    (tmp_path / "backend/target").mkdir()
+    (tmp_path / "backend/target/stale.jar").write_text("stale jar")
+    with tarfile.open(fileobj=io.BytesIO(runner.source_archive(tmp_path))) as archive:
+        names = archive.getnames()
+    assert not any("/dist" in name or "/target" in name for name in names)
+
+
+@pytest.mark.parametrize("profile,expected", [
+    ("react_test", ["npm", "node_modules/.bin/vitest"]),
+    ("react_build", ["npm", "node_modules/.bin/vite", "test"]),
+    ("spring_test", ["mvn", "find"]),
+    ("spring_package", ["mvn", "find", "find"]),
+])
+def test_generated_profiles_run_only_fixed_offline_commands(tmp_path, monkeypatch,
+                                                            profile, expected):
+    generated_stack(tmp_path)
+    calls = fake_transport(monkeypatch)
+    commands = []
+
+    def execute(args, timeout):
+        assert 0 < timeout <= 10
+        commands.append(args[4:])
+        return {"success": True, "exit_code": 0,
+                "stdout": "artifact\n" if args[4] == "find" else "",
+                "stderr": "", "output_truncated": False}
+
+    monkeypatch.setattr(runner, "execute_bounded", execute)
+    policy = {**POLICY, "images": {profile: IMAGE}}
+    result = runner.validate(tmp_path, profile, 10, policy)
+    assert result["success"] is True
+    assert [command[0] for command in commands] == expected
+    assert any("--network=none" in args for args, _ in calls if args[0] == "create")
+    assert calls[-1][0][:3] == ("rm", "--force", "--volumes")
+
+
+@pytest.mark.parametrize("profile", ["react_build", "spring_test", "spring_package"])
+def test_missing_generated_artifact_is_a_failed_validation(tmp_path, monkeypatch, profile):
+    generated_stack(tmp_path)
+    fake_transport(monkeypatch)
+    commands = []
+
+    def execute(args, _timeout):
+        commands.append(args[4])
+        found = args[4] != "test"
+        return {"success": found, "exit_code": 0 if found else 1,
+                "stdout": "", "stderr": "",
+                "output_truncated": False}
+
+    monkeypatch.setattr(runner, "execute_bounded", execute)
+    result = runner.validate(tmp_path, profile, 10,
+                             {**POLICY, "images": {profile: IMAGE}})
+    assert result["success"] is False and result["exit_code"] == 1
+    assert commands[-1] in {"test", "find"}
+
+
+def test_failed_offline_install_never_runs_generated_react_code(tmp_path, monkeypatch):
+    generated_stack(tmp_path)
+    calls = fake_transport(monkeypatch)
+    commands = []
+
+    def execute(args, _timeout):
+        commands.append(args[4])
+        return {"success": False, "exit_code": 1, "stdout": "",
+                "stderr": "offline dependency unavailable", "output_truncated": False}
+
+    monkeypatch.setattr(runner, "execute_bounded", execute)
+    result = runner.validate(tmp_path, "react_build", 10,
+                             {**POLICY, "images": {"react_build": IMAGE}})
+    assert result["success"] is False
+    assert commands == ["npm"]
+    assert calls[-1][0][:3] == ("rm", "--force", "--volumes")

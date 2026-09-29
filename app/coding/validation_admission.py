@@ -25,7 +25,8 @@ class ValidationRequest(BaseModel):
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     image_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     profile: Literal["python_compile", "python_unit", "python_lint", "web_lint", "web_build",
-                     "flutter_analyze", "flutter_test", "rust_format", "rust_test"]
+                     "flutter_analyze", "flutter_test", "rust_format", "rust_test",
+                     "react_test", "react_build", "spring_test", "spring_package"]
     timeout_seconds: int = Field(ge=1, le=1800, strict=True)
     planned_end_at: datetime
 

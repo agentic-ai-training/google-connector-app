@@ -36,10 +36,28 @@ PROFILES = {
     "flutter_test": ("mobile", ("flutter", "test")),
     "rust_format": ("coding_runtime", ("cargo", "fmt", "--check")),
     "rust_test": ("coding_runtime", ("cargo", "test", "--locked", "--offline")),
+    # Generated-app convention: frontend = Vite/React, backend = Maven/Spring.
+    # Both require operator-reviewed, dependency-complete OFFLINE toolchain images.
+    "react_test": ("frontend", ("node_modules/.bin/vitest", "run",
+                               "--passWithNoTests=false", "--allowOnly=false",
+                               "--maxWorkers=1")),
+    "react_build": ("frontend", ("node_modules/.bin/vite", "build")),
+    "spring_test": ("backend", ("mvn", "-o", "-B", "-q",
+                               "-Dmaven.repo.local=/opt/maven-repo",
+                               "-DfailIfNoTests=true", "test")),
+    "spring_package": ("backend", ("mvn", "-o", "-B", "-q",
+                                  "-Dmaven.repo.local=/opt/maven-repo",
+                                  "-DfailIfNoTests=true", "package")),
+}
+PREPARE_COMMANDS = {
+    "react_test": ("npm", "ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund",
+                   "--cache=/opt/npm-cache"),
+    "react_build": ("npm", "ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund",
+                    "--cache=/opt/npm-cache"),
 }
 EXCLUDED_DIRS = {
     ".git", ".gca-local", ".ssh", ".aws", ".config", ".codex", ".venv", "venv",
-    "node_modules", "target", "__pycache__", ".pytest_cache", ".next",
+    "node_modules", "target", "dist", "__pycache__", ".pytest_cache", ".next",
 }
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_ENTRIES = 5000
@@ -406,7 +424,7 @@ def docker(*args: str, payload: bytes | None = None, timeout: int = 30) -> bytes
     return result.stdout
 
 
-def execute_bounded(args: list[str], timeout: int) -> dict:
+def execute_bounded(args: list[str], timeout: float) -> dict:
     child = subprocess.Popen(  # nosec B603
         [DOCKER, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=CLEAN_ENV, start_new_session=True,
@@ -459,6 +477,8 @@ def _validate(workspace: Path, profile: str, timeout: int, policy: dict, journal
 
 def check_archive(source: bytes, profile: str):
     """Validate a bounded plain tar without ever extracting it on the trusted host."""
+    if profile not in PROFILES:
+        raise IsolationError("Unknown validation profile")
     if len(source) > MAX_ARCHIVE_BYTES:
         raise IsolationError("Source archive limit exceeded")
     names = set()
@@ -487,6 +507,28 @@ def check_archive(source: bytes, profile: str):
         name.startswith(("app/", "scripts/")) and name.endswith(".py") for name in source_files
     ):
         raise IsolationError("No Python source exists for the compile profile")
+    if profile in {"react_test", "react_build"}:
+        required = {"frontend/package.json", "frontend/package-lock.json",
+                    "frontend/index.html"}
+        if not required <= source_files or not any(
+            name.startswith("frontend/src/") and name.endswith((".tsx", ".jsx"))
+            for name in source_files
+        ):
+            raise IsolationError("React source and locked dependencies are required")
+        if profile == "react_test" and not any(
+            name.startswith("frontend/src/") and name.endswith(
+                (".test.ts", ".test.tsx", ".test.js", ".test.jsx",
+                 ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx")
+            ) for name in source_files
+        ):
+            raise IsolationError("React test profile requires a test source")
+    if profile in {"spring_test", "spring_package"}:
+        if ("backend/pom.xml" not in source_files
+                or not any(name.startswith("backend/src/main/java/") and name.endswith(".java")
+                           for name in source_files)
+                or not any(name.startswith("backend/src/test/java/") and name.endswith(".java")
+                           for name in source_files)):
+            raise IsolationError("Spring source, Maven POM and tests are required")
 
 
 def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, journal: Journal,
@@ -537,11 +579,41 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             "tar", "--no-same-owner", "--no-same-permissions", "-xf", "-",
             payload=source,
         )
-        result = execute_bounded([
-            "exec", "--workdir", "/workspace" + (
-                "" if relative_cwd == "." else "/" + relative_cwd
-            ), name, *command,
-        ], timeout)
+        workdir = "/workspace" + ("" if relative_cwd == "." else "/" + relative_cwd)
+        deadline = time.monotonic() + timeout
+        result = None
+        for fixed_command in (*([PREPARE_COMMANDS[profile]] if profile in PREPARE_COMMANDS else []),
+                              command):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise IsolationError("Validation deadline exceeded")
+            result = execute_bounded(["exec", "--workdir", workdir, name, *fixed_command],
+                                     remaining)
+            if not result["success"]:
+                break
+        if result["success"]:
+            postconditions = {
+                "react_build": (("test", "-s", "dist/index.html"),),
+                "spring_test": (("find", "target/surefire-reports", "-maxdepth", "1", "-type",
+                                 "f", "-name", "TEST-*.xml", "-size", "+0c", "-print"),),
+                "spring_package": (
+                    ("find", "target/surefire-reports", "-maxdepth", "1", "-type", "f",
+                     "-name", "TEST-*.xml", "-size", "+0c", "-print"),
+                    ("find", "target", "-maxdepth", "1", "-type", "f", "-name", "*.jar",
+                     "-size", "+0c", "-print"),
+                ),
+            }
+            for postcondition in postconditions.get(profile, ()):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise IsolationError("Validation deadline exceeded")
+                artifact = execute_bounded(["exec", "--workdir", workdir, name,
+                                            *postcondition], remaining)
+                if not artifact["success"] or (postcondition[0] == "find"
+                                               and not artifact["stdout"].strip()):
+                    result = {"exit_code": 1, "success": False, "output_truncated": False,
+                              "stdout": "", "stderr": "Expected validation artifact is absent"}
+                    break
         return {
             **result, "profile": profile, "isolation": "gvisor",
             "image_id": policy["images"][profile], "network": "none",

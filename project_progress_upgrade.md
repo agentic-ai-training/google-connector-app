@@ -2357,6 +2357,13 @@ changes become production evidence.
   carry resumable evidence and preserve all actual model-chain usage.
 - [ ] Extend verified tool profiles for generated Java/Spring Boot, React/TypeScript,
   PostgreSQL migrations, Compose and cross-language repositories without arbitrary host shell.
+  On 2026-09-30, fixed offline React test/build and Spring test/package profiles
+  were added to the keyless launcher, with archive preconditions, one shared command
+  deadline and generated-artifact postconditions. Local tests exercise command order,
+  absent source, offline dependency failure and false-success output rejection. The
+  VM operator policy still approves only the Python synthetic toolchain; Node/Java
+  cache/image provision, live gVisor execution and PostgreSQL/cross-language profiles
+  remain unproven, so this item stays unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately
