@@ -27,8 +27,9 @@ Redis, realtime, proxy and sentinel all `healthy` after nine days uptime. This
 is infrastructure health only, not a generated-application or backup proof.
 The same six containers were still healthy on 2026-09-30. Docker network inventory
 still contained only `bridge`, `coolify`, `host` and `none`; no generated-app
-destination/network exists. The Coolify database still had zero projects before
-the scoped-token bootstrap, so no project or environment was created in this step.
+destination/network existed at that checkpoint. The Coolify database still had
+zero projects before the scoped-token bootstrap, so no project or environment
+was created in that step.
 Read-only queries through pinned IAP SSH into the installed Coolify application on
 2026-09-29 found one server and one standalone Docker destination, both with
 provider numeric ID `0`; there were no Coolify projects or environments. One user
@@ -55,9 +56,20 @@ its `pilot` environment `pi3o2fpjo2ituxrppav8izj4` on 2026-09-30. A second
 read-only invocation found both exact identities and issued no POST. The bootstrap
 is `scripts/bootstrap_coolify_pilot.py`; provider timeouts stop as uncertain.
 This creates no Docker destination, network, Service, domain or generated app.
-The sole existing destination uses Docker network `coolify`; it must not host
-generated user applications. A separate per-app network/destination and real
-east-west isolation proof are required before any generated Service starts.
+Later on 2026-09-30, the operator-only
+`scripts/bootstrap_coolify_pilot_destination.py` created one separate pilot
+destination: UUID `2rxr0cpp0x91g47o9flwcbzk`, network
+`gca-app-login-pilot-20260930`, on the existing server. Coolify's private
+database mapped it to standalone destination ID `1` and server ID `0`.
+Read-only API replay found the same UUID without another POST. Docker confirmed
+an attachable bridge network with zero containers. This destination has no app
+and no proven east-west isolation; the Service controller separately pins
+`connect_to_docker_network=false` so generated containers must not join a
+predefined destination network. Before any live start, inspect actual network
+membership, proxy routing and cross-app/core reachability.
+The original destination uses Docker network `coolify`; it must not host
+generated user applications. A separate pilot destination now exists, but real
+east-west isolation proof is still required before any generated Service starts.
 The earlier read-only queries created no resources. Project/environment bootstrap
 is now verified, but target registration and any Service remain pending until a
 private app-specific destination and the other admission gates exist.

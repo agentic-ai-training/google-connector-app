@@ -28,8 +28,13 @@ through pinned IAP; the deploy-only token has not been exercised. There is still
 no private generated-app destination. An operator-only API call subsequently
 created project `mnv84tsssicw2y7dtogvbmwr` and environment
 `pi3o2fpjo2ituxrppav8izj4`; readback verified both without a second write.
-No target is deployable yet. See [Delhi hosting](GCP_DELHI_HOSTING.md) for IDs,
-scope and storage.
+An app-specific pilot destination was subsequently created on the same server:
+UUID `2rxr0cpp0x91g47o9flwcbzk`, network `gca-app-login-pilot-20260930`,
+trusted database ID `1` (server ID `0`). Docker reported zero containers on its
+attachable bridge. This is target-enrollment evidence, not proof that future
+Service containers are isolated, healthy or safe to start. No target is
+deployable yet because cost-ledger import, trusted build, secret and runtime
+gates remain. See [Delhi hosting](GCP_DELHI_HOSTING.md) for identities and scope.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.
@@ -251,7 +256,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 317 tests with real PostgreSQL enabled after
+The complete local coding suite passed 319 tests with real PostgreSQL enabled after
 the Coolify network-attachment readback change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and

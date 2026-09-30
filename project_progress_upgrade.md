@@ -2462,6 +2462,12 @@ changes become production evidence.
   now explicitly sets `connect_to_docker_network=false`; sensitive readback must
   confirm false before an uncertain create can be adopted. This prevents silent
   shared-network attachment in local tests, not a live east-west isolation proof.
+  The operator then created pilot destination `2rxr0cpp0x91g47o9flwcbzk`
+  (`gca-app-login-pilot-20260930`) on the approved Coolify server. The private
+  Coolify database bound it to standalone ID `1` and server ID `0`; Docker
+  reported an attachable bridge with zero containers. Read-only replay issued no
+  second POST. This is not a running app or tenant-isolation proof. Cost import,
+  build/signing evidence, secret provisioning and start admission remain open.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,
