@@ -316,7 +316,7 @@ async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
             or manifest.target_hash != row["config_hash"]):
         raise admission.DeploymentConflict("immutable deployment identity changed")
     validate_compose(compose, manifest)
-    verify_build_attestation(target, manifest, compose=compose)
+    verify_build_attestation(target, manifest, compose=compose, require_fresh=False)
     inventory_token = resolve_token(target.inventory_secret_ref)
     async with CoolifyServiceClient(target, inventory_token, transport=transport) as inventory:
         await inventory.verify_team()

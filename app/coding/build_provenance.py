@@ -74,8 +74,13 @@ def canonical_statement(statement: BuildStatement) -> bytes:
                       separators=(",", ":")).encode()
 
 
-def verify_build_attestation(target, manifest, *, compose: bytes | None = None):
-    """Fail closed before provider access and again inside the dispatch transaction."""
+def verify_build_attestation(target, manifest, *, compose: bytes | None = None,
+                             require_fresh: bool = True):
+    """Verify identity/signature always; require freshness only for a new write.
+
+    An already-dispatched create may need read-only reconciliation after the
+    statement expires. Expiry must not make uncertain writes unrecoverable.
+    """
     attestation = manifest.build_attestation
     key_hex = target.release_verification_key_hex
     if attestation is None or key_hex is None:
@@ -90,7 +95,7 @@ def verify_build_attestation(target, manifest, *, compose: bytes | None = None):
             or statement.release_hash != manifest.release_hash
             or statement.compose_hash != manifest.compose_hash
             or statement.issued_at > now + timedelta(minutes=5)
-            or statement.expires_at <= now
+            or (require_fresh and statement.expires_at <= now)
             or statement.expires_at > manifest.planned_end_at):
         raise BuildProvenanceError("build attestation does not bind the approved release")
     services = set(statement.service_images)

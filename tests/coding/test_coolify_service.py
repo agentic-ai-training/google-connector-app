@@ -696,6 +696,72 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
 
 
 @pytest.mark.asyncio
+async def test_expired_build_statement_blocks_new_write_but_not_read_only_recovery(
+        covered, context, monkeypatch):
+    from datetime import datetime, timedelta
+    from app.coding import build_provenance as provenance
+
+    row, compose = await approved_deployment(covered, context, monkeypatch)
+    manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
+    calls = []
+    service = {
+        "name": "gca-" + manifest.request_id.hex, "uuid": "created-after-expiry",
+        "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
+        "server_id": 1, "environment_id": 2, "destination_id": 7,
+        "destination_type": "App\\Models\\StandaloneDocker", "deleted_at": None,
+    }
+
+    def provider(request):
+        known = target_response(request)
+        if known is not None:
+            return known
+        calls.append((request.method, request.url.path))
+        if request.method == "POST":
+            return httpx.Response(503)
+        if request.url.path == "/api/v1/services":
+            return httpx.Response(200, json=[service])
+        assert request.url.path == "/api/v1/services/created-after-expiry"
+        return httpx.Response(200, json={**service, "docker_compose_raw": compose.decode()})
+
+    transport = httpx.MockTransport(provider)
+    dispatched = await submit_approved_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    assert dispatched["status"] == "uncertain"
+
+    real_datetime = datetime
+
+    class LaterDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(tz) + timedelta(hours=2)
+
+    monkeypatch.setattr(provenance, "datetime", LaterDateTime)
+    with pytest.raises(BuildProvenanceError, match="does not bind"):
+        provenance.verify_build_attestation(covered[1], manifest, compose=compose)
+    altered = manifest.model_copy(update={
+        "build_attestation": manifest.build_attestation.model_copy(update={
+            "signature_hex": "0" * 128,
+        }),
+    })
+    with pytest.raises(BuildProvenanceError, match="signature is invalid"):
+        provenance.verify_build_attestation(
+            covered[1], altered, compose=compose, require_fresh=False,
+        )
+    result = await reconcile_created_service(
+        covered[0], row["id"], user_id="alice", compose=compose,
+        resolve_token=lambda _: "scoped-test-token", transport=transport,
+    )
+    assert result["status"] == "submitted" and result["reconciled"] is True
+    assert result["resource_id"] == "created-after-expiry"
+    assert calls == [
+        ("POST", "/api/v1/services"), ("GET", "/api/v1/services"),
+        ("GET", "/api/v1/services/created-after-expiry"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
         covered, context, monkeypatch):
     row, compose = await approved_deployment(covered, context, monkeypatch)

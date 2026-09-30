@@ -65,6 +65,9 @@ the `database` image is explicitly external. Missing, expired, altered or unsign
 statements fail before credentials or provider access, and the signature is checked
 again in the one-time dispatch transaction. This is **signature verification**, not
 proof that a trusted keyless builder actually measured and signed those images.
+After dispatch, read-only provider reconciliation still verifies signature and
+release identity even if the statement has expired; expiry prevents another
+write claim, not investigation of an uncertain earlier write.
 No production signer/key has been enrolled. The external PostgreSQL image also needs
 approved digest provenance/scanning before any Service may be started.
 The create path now also reads the registered server, project, environment and
@@ -227,7 +230,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 311 tests with real PostgreSQL enabled after
+The complete local coding suite passed 312 tests with real PostgreSQL enabled after
 the signed-build-verifier change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and
