@@ -1,8 +1,19 @@
 # Cloud cost authority and reservation ledger
 
-Status (28 September 2026): local implementation and PostgreSQL tests. Migration
+Status (30 September 2026): local implementation and PostgreSQL tests. Migration
 016 has **not** been applied to production. The deployment controller is not yet
 wired to this ledger; do not present it as a live billing cap.
+
+The operator reported a Cloud Billing snapshot for 1–29 September 2026:
+₹24,544.99 promotional credit remaining out of ₹28,693.88 (a ₹4,148.89
+decrease); Compute Engine usage ₹4,096.68 and Networking usage ₹23.50,
+both offset in the report, leaving ₹0 payable for that period. The two listed
+services total ₹4,120.18, so ₹28.71 of the credit decrease is not explained
+by those rows alone (it may reflect date ranges or other charges). A zero
+payable total does **not** mean zero trial credit consumption. This is
+user-reported evidence, not a provider-verified project-filtered export or a
+VM/disk-level allocation. Obtain that breakdown and a fresh credit snapshot
+before importing incurred costs or authorizing new paid resources.
 
 ## Authority
 
@@ -99,8 +110,9 @@ for dispatch/reconciliation guarantees and the still-pending authenticated host 
    deployment without reserving a second VM charge. It proves an underfunded import
    cannot back the pool, and a deployment claim cannot be dispatched twice. This
    does not constitute a Coolify API write or a real application deployment.
-   Current post-creation promotional balance and attributable VM/disk charges still
-   require fresh operator evidence before any production import. Enrollment for a
+   A post-creation operator-reported promotional balance is now recorded above;
+   project-filtered VM/disk attribution and a fresh snapshot immediately before
+   production import are still required. Enrollment for a
    *new* account still rejects snapshots with historical obligations.
 2. Apply the reviewed migration through the established backup/migration workflow.
 3. Bind deployment and Vertex adapters to authenticated principals, approved immutable

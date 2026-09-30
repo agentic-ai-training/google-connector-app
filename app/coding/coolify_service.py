@@ -15,6 +15,7 @@ from uuid import UUID
 import httpx
 
 from app.coding import deployment_admission as admission
+from app.coding.build_provenance import verify_build_attestation
 from app.coding.compose_policy import (
     ComposePolicyError, parse_compose_document, validate_compose,
 )
@@ -253,6 +254,7 @@ async def submit_approved_service(pool, deployment_id: UUID, *, user_id: str,
             or manifest.target_hash != row["config_hash"]):
         raise admission.DeploymentConflict("immutable deployment identity changed")
     validate_compose(compose, manifest)
+    verify_build_attestation(target, manifest, compose=compose)
     async with pool.acquire() as conn, conn.transaction():
         await admission._require_passing_validation(conn, manifest, user_id)
     token = resolve_token(target.configuration_secret_ref)
@@ -314,6 +316,7 @@ async def reconcile_created_service(pool, deployment_id: UUID, *, user_id: str,
             or manifest.target_hash != row["config_hash"]):
         raise admission.DeploymentConflict("immutable deployment identity changed")
     validate_compose(compose, manifest)
+    verify_build_attestation(target, manifest, compose=compose)
     inventory_token = resolve_token(target.inventory_secret_ref)
     async with CoolifyServiceClient(target, inventory_token, transport=transport) as inventory:
         await inventory.verify_team()

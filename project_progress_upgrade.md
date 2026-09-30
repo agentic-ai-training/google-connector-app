@@ -2433,6 +2433,13 @@ changes become production evidence.
   This is identity binding only: it does not prove that those image digests were
   built from the source. Trusted keyless build provenance and start admission remain
   unchecked.
+  A later local gate pins a builder public key in each immutable target and verifies
+  an Ed25519-signed run/tenant/source/release/Compose/image statement before create
+  and again in the dispatch transaction. Missing, altered and expired statements
+  fail closed in PostgreSQL/provider-mock tests. The signer and actual image-build
+  measurement are **not** implemented or activated on the VM; the third-party
+  PostgreSQL image still requires provenance/scanning. Signature checks alone are
+  not production build proof and this story remains unchecked.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

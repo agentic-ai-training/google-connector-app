@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.coding import cost_ledger
 from app.coding import host_capacity
+from app.coding.build_provenance import SignedBuildAttestation, verify_build_attestation
 from app.coding.cloud_budget import CloudCostRequest
 from app.coding.coolify import CoolifyTarget
 
@@ -40,6 +41,7 @@ class RegisteredTarget(CoolifyTarget):
     configuration_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     deployment_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     recovery_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
+    release_verification_key_hex: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     capacity_pool_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{2,63}$")
 
     @model_validator(mode="after")
@@ -86,6 +88,7 @@ class DeploymentManifest(BaseModel):
     validation_claim_id: UUID | None = None
     release_profile: Literal["single_service", "react_spring_postgres"] = "single_service"
     validation_proofs: tuple[ValidationProof, ...] = ()
+    build_attestation: SignedBuildAttestation | None = None
     validated_source_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     estimated_upper_bound_paise: int = Field(ge=0, strict=True)
     capacity: host_capacity.CapacityRequest | None = None
@@ -337,6 +340,9 @@ async def claim_dispatch(pool, deployment_id: UUID, *, user_id: str,
         await _grant(conn, manifest, user_id)
         if require_validation:
             await _require_passing_validation(conn, manifest, user_id)
+            verify_build_attestation(
+                RegisteredTarget.model_validate(_json(target["config"])), manifest,
+            )
         if row["capacity_released_at"] is not None:
             raise DeploymentConflict("deployment capacity has already been released")
         await _check_capacity(conn, manifest, RegisteredTarget.model_validate(_json(target["config"])),

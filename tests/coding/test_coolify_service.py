@@ -12,6 +12,9 @@ from app.coding import deployment_admission as deploy
 from app.coding import isolated_validation as isolation
 from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
+from app.coding.build_provenance import (
+    BuildProvenanceError, BuildStatement, SignedBuildAttestation, canonical_statement,
+)
 from app.coding.compose_policy import release_identity
 from app.coding.coolify_service import (
     CoolifyServiceClient, CoolifyServiceError, reconcile_created_service,
@@ -19,7 +22,9 @@ from app.coding.coolify_service import (
 )
 from tests.coding.test_compose_policy import safe_compose, safe_stack_compose
 from tests.coding.test_cost_ledger_postgres import DSN
-from tests.coding.test_deployment_admission_postgres import prepared as prepared_fixture
+from tests.coding.test_deployment_admission_postgres import (
+    TEST_BUILD_SIGNER, prepared as prepared_fixture,
+)
 from tests.coding.test_host_capacity_postgres import covered as covered_fixture
 from tests.coding.test_validation_controller_postgres import (
     context as context_fixture, result as validation_result,
@@ -30,6 +35,30 @@ pytestmark = pytest.mark.skipif(not DSN, reason="set COST_LEDGER_TEST_DSN to loc
 covered = covered_fixture
 prepared = prepared_fixture
 context = context_fixture
+
+
+def signed_build(manifest, target, images):
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    now = datetime.now(timezone.utc)
+    built = ("frontend", "backend") if manifest.release_profile == "react_spring_postgres" else (
+        *images,
+    )
+    external = ("database",) if manifest.release_profile == "react_spring_postgres" else ()
+    statement = BuildStatement(
+        request_id=manifest.request_id, user_id=target.owner_user_id,
+        target_id=manifest.target_id, target_hash=manifest.target_hash,
+        source_hash=manifest.validated_source_hash, release_hash=manifest.release_hash,
+        compose_hash=manifest.compose_hash, service_images=images,
+        built_services=built, external_services=external,
+        build_job_id=uuid4(), evidence_hash="e" * 64,
+        issued_at=now, expires_at=now + timedelta(minutes=20),
+    )
+    return SignedBuildAttestation(
+        statement=statement,
+        signature_hex=TEST_BUILD_SIGNER.sign(canonical_statement(statement)).hex(),
+    )
 
 
 def target_response(request):
@@ -123,8 +152,9 @@ async def test_inventory_rejects_sensitive_compose_list_response(prepared):
             )
 
 
-async def approved_deployment(covered, context, monkeypatch, *, release_hash_override=None):
-    pool, _, manifest, _, _ = covered
+async def approved_deployment(covered, context, monkeypatch, *, release_hash_override=None,
+                              attestation_change=None):
+    pool, target, manifest, _, _ = covered
     _, request, host, source = context
 
     async def validated(_host, envelope, _source):
@@ -154,6 +184,37 @@ async def approved_deployment(covered, context, monkeypatch, *, release_hash_ove
     })
     if release_hash_override is not None:
         manifest = manifest.model_copy(update={"release_hash": release_hash_override})
+    signed = signed_build(
+        manifest, target, {"api": "registry.example/api@sha256:" + "a" * 64},
+    )
+    if attestation_change in {"wrong_source", "wrong_image", "wrong_run",
+                              "wrong_user", "wrong_target", "expired"}:
+        from datetime import datetime, timedelta, timezone
+        from uuid import uuid4
+
+        changes = {
+            "wrong_source": {"source_hash": "f" * 64},
+            "wrong_run": {"request_id": uuid4()},
+            "wrong_user": {"user_id": "mallory"},
+            "wrong_target": {"target_id": "other-target"},
+            "wrong_image": {"service_images": {
+                "api": "registry.example/api@sha256:" + "b" * 64,
+            }},
+            "expired": {
+                "issued_at": datetime.now(timezone.utc) - timedelta(hours=2),
+                "expires_at": datetime.now(timezone.utc) - timedelta(hours=1),
+            },
+        }
+        statement = signed.statement.model_copy(update=changes[attestation_change])
+        signed = SignedBuildAttestation(
+            statement=statement,
+            signature_hex=TEST_BUILD_SIGNER.sign(canonical_statement(statement)).hex(),
+        )
+    elif attestation_change == "bad_signature":
+        signed = signed.model_copy(update={"signature_hex": "0" * 128})
+    elif attestation_change == "missing":
+        signed = None
+    manifest = manifest.model_copy(update={"build_attestation": signed})
     from datetime import datetime, timedelta, timezone
 
     await deploy.record_user_grant(
@@ -164,7 +225,8 @@ async def approved_deployment(covered, context, monkeypatch, *, release_hash_ove
     return row, payload
 
 
-async def approved_generated_stack(covered, context, monkeypatch, tmp_path):
+async def approved_generated_stack(covered, context, monkeypatch, tmp_path,
+                                   *, omit_backend_provenance=False):
     pool, request, host, _ = context
     generated_stack(tmp_path)
     source = isolation.source_archive(tmp_path)
@@ -216,6 +278,17 @@ async def approved_generated_stack(covered, context, monkeypatch, tmp_path):
             "cpu_millis": 1500, "memory_mib": 3072,
         }),
     })
+    signed = signed_build(manifest, covered[1], images)
+    if omit_backend_provenance:
+        statement = signed.statement.model_copy(update={
+            "built_services": ("frontend",),
+            "external_services": ("backend", "database"),
+        })
+        signed = SignedBuildAttestation(
+            statement=statement,
+            signature_hex=TEST_BUILD_SIGNER.sign(canonical_statement(statement)).hex(),
+        )
+    manifest = manifest.model_copy(update={"build_attestation": signed})
     await deploy.record_user_grant(
         pool, manifest, user_id="alice", authority_reference="test:generated-stack-approved",
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
@@ -270,6 +343,23 @@ async def test_generated_stack_missing_passing_profile_never_contacts_provider(
     async with covered[0].acquire() as conn:
         await conn.execute(updates[failure], proofs[-1].claim_id)
     with pytest.raises(deploy.DeploymentConflict, match="validation"):
+        await submit_approved_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: pytest.fail("credential was consulted"),
+        )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
+
+
+@pytest.mark.asyncio
+async def test_generated_stack_requires_signed_provenance_for_both_generated_images(
+        covered, context, monkeypatch, tmp_path):
+    row, compose, _ = await approved_generated_stack(
+        covered, context, monkeypatch, tmp_path, omit_backend_provenance=True,
+    )
+    with pytest.raises(BuildProvenanceError, match="incomplete"):
         await submit_approved_service(
             covered[0], row["id"], user_id="alice", compose=compose,
             resolve_token=lambda _: pytest.fail("credential was consulted"),
@@ -413,6 +503,41 @@ async def test_unbound_release_is_denied_before_credentials_or_provider_access(
             covered[0], row["id"], user_id="alice", compose=compose,
             resolve_token=lambda _: pytest.fail("credential was consulted"),
         )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [
+    "missing", "bad_signature", "wrong_source", "wrong_image", "wrong_run",
+    "wrong_user", "wrong_target", "expired",
+])
+async def test_untrusted_or_mismatched_build_statement_cannot_reach_coolify(
+        covered, context, monkeypatch, change):
+    row, compose = await approved_deployment(
+        covered, context, monkeypatch, attestation_change=change,
+    )
+    with pytest.raises(BuildProvenanceError, match="build attestation"):
+        await submit_approved_service(
+            covered[0], row["id"], user_id="alice", compose=compose,
+            resolve_token=lambda _: pytest.fail("credential was consulted"),
+        )
+    async with covered[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_transaction_rechecks_signed_build_without_provider_adapter(
+        covered, context, monkeypatch):
+    row, _ = await approved_deployment(
+        covered, context, monkeypatch, attestation_change="bad_signature",
+    )
+    with pytest.raises(BuildProvenanceError, match="signature"):
+        await deploy.claim_dispatch(covered[0], row["id"], user_id="alice")
     async with covered[0].acquire() as conn:
         assert await conn.fetchval(
             "SELECT status FROM coding_deployments WHERE id=$1", row["id"],

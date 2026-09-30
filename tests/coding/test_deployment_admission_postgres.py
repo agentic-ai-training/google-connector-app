@@ -7,6 +7,8 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 import asyncpg
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from app.coding import deployment_admission as deploy
 from app.coding import cost_ledger
@@ -14,6 +16,10 @@ from app.coding.cost_ledger import CostAdmissionDenied
 from tests.coding.test_cost_ledger_postgres import DSN, PROJECT
 
 pytestmark = pytest.mark.skipif(not DSN, reason="set COST_LEDGER_TEST_DSN to local PostgreSQL")
+TEST_BUILD_SIGNER = Ed25519PrivateKey.from_private_bytes(b"\x17" * 32)
+TEST_BUILD_PUBLIC_KEY_HEX = TEST_BUILD_SIGNER.public_key().public_bytes(
+    Encoding.Raw, PublicFormat.Raw,
+).hex()
 
 
 @pytest_asyncio.fixture
@@ -37,6 +43,7 @@ async def prepared(db):
         target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
         deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
+        release_verification_key_hex=TEST_BUILD_PUBLIC_KEY_HEX,
         project_id=PROJECT, server_uuid="server", destination_uuid="destination",
         destination_id=7, destination_type="App\\Models\\StandaloneDocker",
         destination_network="gca-app-test-target",
