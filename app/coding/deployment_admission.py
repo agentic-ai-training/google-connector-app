@@ -42,7 +42,21 @@ class RegisteredTarget(CoolifyTarget):
     deployment_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     recovery_secret_ref: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_/-]{2,127}$")
     release_verification_key_hex: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    approved_external_images: dict[str, str] = Field(default_factory=dict)
     capacity_pool_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{2,63}$")
+
+    @field_validator("approved_external_images")
+    @classmethod
+    def bounded_external_images(cls, images):
+        if len(images) > 12 or any(
+            not re.fullmatch(r"[a-z][a-z0-9_-]{0,62}", name)
+            or not re.fullmatch(
+                r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{1,255}@sha256:[0-9a-f]{64}", image,
+            )
+            for name, image in images.items()
+        ):
+            raise ValueError("approved external images require bounded digest references")
+        return images
 
     @model_validator(mode="after")
     def separate_provider_credentials(self):

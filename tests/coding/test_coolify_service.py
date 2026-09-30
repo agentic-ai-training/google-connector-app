@@ -14,6 +14,7 @@ from app.coding import validation_controller as controller
 from app.coding import validation_transport as transport
 from app.coding.build_provenance import (
     BuildProvenanceError, BuildStatement, SignedBuildAttestation, canonical_statement,
+    verify_build_attestation,
 )
 from app.coding.compose_policy import release_identity
 from app.coding.coolify_service import (
@@ -106,6 +107,10 @@ def test_coolify_destination_zero_is_valid_but_negative_is_not(prepared):
     payload = prepared[1].model_dump()
     payload["destination_network"] = "coolify"
     with pytest.raises(ValueError):
+        deploy.RegisteredTarget.model_validate(payload)
+    payload = prepared[1].model_dump()
+    payload["approved_external_images"] = {"database": "postgres:latest"}
+    with pytest.raises(ValueError, match="digest references"):
         deploy.RegisteredTarget.model_validate(payload)
 
 
@@ -297,6 +302,20 @@ async def approved_generated_stack(covered, context, monkeypatch, tmp_path,
         pool, manifest, user_id="alice", idempotency_key="generated-stack-service",
     )
     return row, compose, proofs
+
+
+@pytest.mark.asyncio
+async def test_generated_stack_requires_operator_pinned_database_digest(
+        covered, context, monkeypatch, tmp_path):
+    row, compose, _ = await approved_generated_stack(
+        covered, context, monkeypatch, tmp_path,
+    )
+    manifest = deploy.DeploymentManifest.model_validate(deploy._json(row["manifest"]))
+    assert verify_build_attestation(covered[1], manifest, compose=compose) is None
+    for pinned in ({}, {"database": "registry.example/postgres@sha256:" + "f" * 64}):
+        unapproved = covered[1].model_copy(update={"approved_external_images": pinned})
+        with pytest.raises(BuildProvenanceError, match="not operator approved"):
+            verify_build_attestation(unapproved, manifest, compose=compose)
 
 
 @pytest.mark.asyncio

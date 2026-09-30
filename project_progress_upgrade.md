@@ -2440,6 +2440,11 @@ changes become production evidence.
   measurement are **not** implemented or activated on the VM; the third-party
   PostgreSQL image still requires provenance/scanning. Signature checks alone are
   not production build proof and this story remains unchecked.
+  The generated stack now also requires the external PostgreSQL digest to match
+  the immutable operator target. An unpinned or changed digest is rejected; this
+  is approval pinning, not a vulnerability scan. Read-only reconciliation of an
+  already-dispatched create remains possible after statement expiry, while a new
+  dispatch is denied. Both paths passed local PostgreSQL/provider-mock tests.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

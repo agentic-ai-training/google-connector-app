@@ -44,6 +44,9 @@ async def prepared(db):
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
         deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
         release_verification_key_hex=TEST_BUILD_PUBLIC_KEY_HEX,
+        approved_external_images={
+            "database": "registry.example/postgres@sha256:" + "c" * 64,
+        },
         project_id=PROJECT, server_uuid="server", destination_uuid="destination",
         destination_id=7, destination_type="App\\Models\\StandaloneDocker",
         destination_network="gca-app-test-target",

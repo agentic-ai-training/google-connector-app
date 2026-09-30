@@ -10,8 +10,18 @@ from the earlier snapshot is INR 3,756 of **total** credit use, not verified
 Compute/VM cost. Keep VM, disk, network and other-service charges unattributed
 until the itemized Billing report is checked; do not book the INR 3,756 entirely
 against hosting or spend the protected Vertex/reserve allocations on that basis.
+On 2026-09-30 the user supplied a newer 1–29 September Billing report: INR
+24,544.99 remains out of INR 28,693.88. The report showed INR 4,096.68
+Compute Engine and INR 23.50 Networking usage offset to INR 0 payable. Trial
+credit nonetheless declined by INR 4,148.89 overall; INR 28.71 is not
+accounted for by those two displayed rows. The report was not shown filtered
+to this project and broken down by VM/disk SKU, so do not attribute its full
+amount to this host or import it as a reconciled provider charge. See
+[cost ledger](CLOUD_COST_LEDGER.md).
 Read-only instance describe on 2026-09-29 still reported RUNNING,
 `e2-standard-4`, and the fixed 2026-10-19 stop timestamp.
+The same fixed-target read-only describe on 2026-09-30 again returned VM ID
+`822115653245959101`, RUNNING, e2-standard-4, and the unchanged STOP timestamp.
 On the same date, `docker ps` through pinned IAP SSH reported Coolify, PostgreSQL,
 Redis, realtime, proxy and sentinel all `healthy` after nine days uptime. This
 is infrastructure health only, not a generated-application or backup proof.

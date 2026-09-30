@@ -103,6 +103,10 @@ def verify_build_attestation(target, manifest, *, compose: bytes | None = None,
         if (set(statement.built_services) != {"frontend", "backend"}
                 or set(statement.external_services) != {"database"}):
             raise BuildProvenanceError("generated stack build provenance is incomplete")
+        if target.approved_external_images != {
+            "database": statement.service_images.get("database"),
+        }:
+            raise BuildProvenanceError("external database image is not operator approved")
     elif set(statement.built_services) != services or statement.external_services:
         raise BuildProvenanceError("single-service build provenance is incomplete")
     from app.coding.compose_policy import ComposePolicyError, release_identity

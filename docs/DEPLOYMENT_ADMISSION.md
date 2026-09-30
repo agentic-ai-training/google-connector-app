@@ -65,6 +65,10 @@ the `database` image is explicitly external. Missing, expired, altered or unsign
 statements fail before credentials or provider access, and the signature is checked
 again in the one-time dispatch transaction. This is **signature verification**, not
 proof that a trusted keyless builder actually measured and signed those images.
+For the generated stack, the external PostgreSQL image must also match an exact
+digest-pinned image in the immutable operator-registered target. A generated
+manifest cannot choose or replace that database image. Pinning is not an image
+vulnerability scan or a proof of upstream image provenance.
 After dispatch, read-only provider reconciliation still verifies signature and
 release identity even if the statement has expired; expiry prevents another
 write claim, not investigation of an uncertain earlier write.
@@ -230,7 +234,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 312 tests with real PostgreSQL enabled after
+The complete local coding suite passed 313 tests with real PostgreSQL enabled after
 the signed-build-verifier change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and
