@@ -139,6 +139,7 @@ class CoolifyServiceClient:
                 "server_uuid": self.target.server_uuid,
                 "destination_uuid": self.target.destination_uuid,
                 "instant_deploy": False,
+                "connect_to_docker_network": False,
                 "force_domain_override": False,
                 "docker_compose_raw": base64.b64encode(compose).decode("ascii"),
         }
@@ -201,6 +202,8 @@ class CoolifyServiceClient:
             "GET", "/api/v1/services/" + resource_id, expected=200,
             max_bytes=524_288,
         )
+        if item.get("connect_to_docker_network") is not False:
+            raise CoolifyServiceError("shared_destination_network_forbidden")
         compose_hash = hashlib.sha256(compose).hexdigest()
         if self._require_resource_identity(
             item, request_id=request_id, compose_hash=compose_hash,

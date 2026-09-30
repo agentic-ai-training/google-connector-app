@@ -2457,6 +2457,11 @@ changes become production evidence.
   destination, Service, network, domain or application was created. Target
   enrollment, durable credential resolution/rotation and live deployment remain
   open.
+  Installed Coolify 4.3.23 source also shows a Service's resource-specific Compose
+  network is separate from its predefined destination network. The create adapter
+  now explicitly sets `connect_to_docker_network=false`; sensitive readback must
+  confirm false before an uncertain create can be adopted. This prevents silent
+  shared-network attachment in local tests, not a live east-west isolation proof.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

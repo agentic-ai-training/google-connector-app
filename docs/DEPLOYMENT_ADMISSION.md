@@ -92,6 +92,12 @@ uncertain-write reconciliation. This is only a network-identity gate, not proof
 that the Docker network is unique, isolated, or unable to reach core services;
 network creation, uniqueness, firewall/east-west tests and runtime security remain
 required.
+Installed Coolify 4.3.23 source confirms that Services use a resource-specific
+Compose network and join the selected predefined network only when
+`connect_to_docker_network` is true. The controller now sends `false` explicitly;
+sensitive readback rejects true or missing values before adopting an uncertain
+create. The shared Coolify proxy still connects to routed Service networks, so
+this static gate is **not** live cross-app or core-network isolation proof.
 Coolify's public
 destination response omits the numeric ID; the operator's registered ID still
 needs a trusted out-of-band mapping. Missing or mismatched targets leave the
@@ -245,8 +251,8 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 313 tests with real PostgreSQL enabled after
-the signed-build-verifier change. This run covered capacity races,
+The complete local coding suite passed 317 tests with real PostgreSQL enabled after
+the Coolify network-attachment readback change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and
 Coolify-Service suite also covers the four-profile generated stack, including a

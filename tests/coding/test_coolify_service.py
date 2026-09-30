@@ -2,7 +2,7 @@
 import asyncio
 import base64
 from hashlib import sha256
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -127,6 +127,7 @@ async def test_explicit_registered_destination_is_sent_without_guessing(prepared
         payload = json.loads(request.content)
         assert payload["destination_uuid"] == "destination"
         assert payload["instant_deploy"] is False
+        assert payload["connect_to_docker_network"] is False
         return httpx.Response(201, json={"uuid": "created-service-1"})
 
     async with CoolifyServiceClient(
@@ -405,6 +406,7 @@ async def test_one_provider_create_then_record_only_submission(covered, context,
 
         payload = json.loads(body)
         assert payload["instant_deploy"] is False
+        assert payload["connect_to_docker_network"] is False
         assert payload["force_domain_override"] is False
         assert base64.b64decode(payload["docker_compose_raw"]) == compose
         assert payload["description"] == "gca-compose-sha256:" + sha256(compose).hexdigest()
@@ -671,6 +673,7 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
             "server_id": 1, "environment_id": 2,
             "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
             "deleted_at": None, "secrets": "never-return",
+            "connect_to_docker_network": False,
         }
         if request.url.path == "/api/v1/services":
             assert request.headers["Authorization"] == "Bearer inventory-token"
@@ -715,6 +718,35 @@ async def test_lost_response_reconciles_exact_service_without_repost(covered, co
 
 
 @pytest.mark.asyncio
+async def test_recovery_rejects_shared_or_unreported_destination_attachment(prepared):
+    request_id = uuid4()
+    compose = safe_compose().encode()
+    for attachment in (True, None):
+        service = {
+            "name": "gca-" + request_id.hex, "uuid": "created-service-1",
+            "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
+            "server_id": 1, "environment_id": 2,
+            "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
+            "deleted_at": None, "docker_compose_raw": compose.decode(),
+        }
+        if attachment is not None:
+            service["connect_to_docker_network"] = attachment
+
+        def provider(request):
+            assert request.url.path == "/api/v1/services/created-service-1"
+            return httpx.Response(200, json=service)
+
+        async with CoolifyServiceClient(
+            prepared[1], "scoped-test-token", transport=httpx.MockTransport(provider),
+        ) as client:
+            with pytest.raises(CoolifyServiceError, match="shared_destination_network_forbidden"):
+                await client.verify_service_content(
+                    resource_id="created-service-1", request_id=request_id,
+                    compose=compose, server_id=1, environment_id=2,
+                )
+
+
+@pytest.mark.asyncio
 async def test_expired_build_statement_blocks_new_write_but_not_read_only_recovery(
         covered, context, monkeypatch):
     from datetime import datetime, timedelta
@@ -728,6 +760,7 @@ async def test_expired_build_statement_blocks_new_write_but_not_read_only_recove
         "description": "gca-compose-sha256:" + sha256(compose).hexdigest(),
         "server_id": 1, "environment_id": 2, "destination_id": 7,
         "destination_type": "App\\Models\\StandaloneDocker", "deleted_at": None,
+        "connect_to_docker_network": False,
     }
 
     def provider(request):
@@ -802,11 +835,13 @@ async def test_reconciliation_never_adopts_wrong_or_duplicate_service(
         [{"name": name, "uuid": "wrong-content", "description": description,
           "docker_compose_raw": "secret",
           "server_id": 1, "environment_id": 2,
-          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker"}],
+          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
+          "connect_to_docker_network": False}],
         [{"name": name, "uuid": value, "description": description,
           "docker_compose_raw": compose.decode(),
           "server_id": 1, "environment_id": 2,
-          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker"}
+          "destination_id": 7, "destination_type": "App\\Models\\StandaloneDocker",
+          "connect_to_docker_network": False}
          for value in ("duplicate-1", "duplicate-2")],
     ):
         def listing(request):
