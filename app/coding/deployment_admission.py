@@ -314,8 +314,13 @@ async def _check_capacity(conn, manifest, config, *, exclude=None):
 
 
 async def claim_dispatch(pool, deployment_id: UUID, *, user_id: str,
-                         require_validation: bool = False):
-    """Return one committed write claim, or None for replay; network work occurs afterwards."""
+                         require_validation: bool = True):
+    """Return one committed write claim, or None for replay; network work follows.
+
+    Production callers must retain the default passing-validation gate. The
+    explicit false option exists only for isolated financial-ledger tests; it is
+    not a provider/deployment authorization path.
+    """
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             "SELECT * FROM coding_deployments WHERE id=$1 AND user_id=$2", deployment_id, user_id,

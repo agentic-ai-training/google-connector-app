@@ -252,8 +252,10 @@ async def test_imported_host_funds_capacity_and_not_second_vm_charge(virgin):
     deployment = await deploy.enqueue(virgin, manifest, user_id="alice",
                                       idempotency_key="approved-existing-host-app")
     assert deployment["reservation_id"] is None
-    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice")
-    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice") is None
+    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice",
+                                       require_validation=False)
+    assert await deploy.claim_dispatch(virgin, deployment["id"], user_id="alice",
+                                       require_validation=False) is None
     async with virgin.acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 1
         assert await conn.fetchval("SELECT estimated_paise FROM cloud_cost_reservations") == item.estimated_total_hosting_paise

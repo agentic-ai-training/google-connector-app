@@ -47,6 +47,10 @@ and `database`, with an internal named database volume and bounded resources;
 a multi-service
 stack cannot be labelled `single_service`. This is a local admission gate, not live
 toolchain proof. The React/Spring profiles are not yet activated on the host.
+The low-level dispatch function now requires passing validation by default. The
+explicit unvalidated option is used only by financial-ledger tests; the Coolify
+adapter keeps the gate enabled. An absent validation claim leaves both the provider
+claim and cost reservation untouched.
 The Compose policy now recomputes `release_hash` from a domain-separated canonical
 statement containing that validated source hash, the exact Compose hash, and every
 service's digest-pinned image reference. A mismatched release, source or image is
@@ -214,7 +218,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 300 tests with real PostgreSQL enabled after
+The complete local coding suite passed 301 tests with real PostgreSQL enabled after
 the generated-stack validation-matrix change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and

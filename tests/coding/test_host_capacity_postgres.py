@@ -58,8 +58,10 @@ async def test_two_apps_share_one_host_cost_without_double_charge(covered):
     assert sum(isinstance(row, cost_ledger.CostAdmissionDenied) for row in rows) == 4
     for row in accepted:
         assert row["reservation_id"] is None
-        assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice")
-        assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice") is None
+        assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice",
+                                           require_validation=False)
+        assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice",
+                                           require_validation=False) is None
     async with covered[0].acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM cloud_cost_reservations") == 1
         assert await conn.fetchval("SELECT estimated_paise FROM cloud_cost_reservations") == 1_400_000
@@ -86,13 +88,15 @@ async def test_unknown_or_mismatched_pool_cannot_make_cost_free(covered):
 async def test_unknown_provider_outcome_keeps_capacity_until_verified_release(covered):
     cap = covered[2].capacity.model_copy(update={"cpu_millis": 2000})
     row = await queue(covered, capacity=cap)
-    await deploy.claim_dispatch(covered[0], row["id"], user_id="alice")
+    await deploy.claim_dispatch(covered[0], row["id"], user_id="alice",
+                                require_validation=False)
     await deploy.record_provider_observation(covered[0], row["id"], user_id="alice", evidence_hash="a" * 64)
     with pytest.raises(cost_ledger.CostAdmissionDenied, match="capacity_exceeded"):
         await queue(covered)
     released = await deploy.release_capacity(covered[0], row["id"], user_id="alice", evidence_hash="b" * 64)
     assert released["status"] == "retired"
-    assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice") is None
+    assert await deploy.claim_dispatch(covered[0], row["id"], user_id="alice",
+                                       require_validation=False) is None
     assert (await queue(covered))["status"] == "reserved"
     async with covered[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM cloud_cost_reservations") == "dispatched"
@@ -111,7 +115,8 @@ async def test_coverage_rechecked_at_dispatch(covered, change):
     async with covered[0].acquire() as conn:
         await conn.execute(statements[change])
     with pytest.raises(cost_ledger.CostAdmissionDenied):
-        await deploy.claim_dispatch(covered[0], row["id"], user_id="alice")
+        await deploy.claim_dispatch(covered[0], row["id"], user_id="alice",
+                                    require_validation=False)
 
 
 @pytest.mark.asyncio

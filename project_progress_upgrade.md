@@ -2367,7 +2367,9 @@ changes become production evidence.
   same-source/run/tenant/target passing proofs for `react_spring_postgres` releases
   and rejects multi-service Compose presented as `single_service`. These claims
   still need trusted live Node/Java toolchain execution and source-to-image build
-  provenance before start. This item stays unchecked.
+  provenance before start. Low-level deployment dispatch now defaults to requiring
+  passing validation; an explicit bypass remains only for isolated ledger tests.
+  This item stays unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

@@ -74,6 +74,23 @@ async def test_no_grant_means_no_deployment_or_reserved_money(prepared):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_requires_validation_by_default_before_cost_or_provider_claim(prepared):
+    await authorize(prepared)
+    row = await enqueue(prepared)
+    with pytest.raises(deploy.DeploymentConflict, match="passing validation"):
+        await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice")
+    async with prepared[0].acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT status FROM coding_deployments WHERE id=$1", row["id"],
+        ) == "reserved"
+        assert await conn.fetchval("SELECT status FROM cloud_cost_reservations") == "reserved"
+        assert await conn.fetchval(
+            "SELECT count(*) FROM coding_deployment_events WHERE deployment_id=$1 "
+            "AND event_type='dispatch_intent'", row["id"],
+        ) == 0
+
+
+@pytest.mark.asyncio
 async def test_target_cannot_be_overwritten_or_transferred(prepared):
     pool, target, _ = prepared
     for change in ({"base_url": "https://other.example"}, {"owner_user_id": "mallory"},
@@ -88,7 +105,8 @@ async def test_duplicate_enqueue_and_dispatch_have_one_cost_and_one_authority(pr
     rows = await asyncio.gather(*[enqueue(prepared) for _ in range(8)])
     assert len({row["id"] for row in rows}) == 1
     claims = await asyncio.gather(*[
-        deploy.claim_dispatch(prepared[0], rows[0]["id"], user_id="alice") for _ in range(8)
+        deploy.claim_dispatch(prepared[0], rows[0]["id"], user_id="alice",
+                              require_validation=False) for _ in range(8)
     ])
     assert sum(claim is not None for claim in claims) == 1
     async with prepared[0].acquire() as conn:
@@ -128,7 +146,8 @@ async def test_wrong_tenant_cannot_approve_enqueue_or_claim(prepared):
     await authorize(prepared)
     row = await enqueue(prepared)
     with pytest.raises(deploy.DeploymentConflict):
-        await deploy.claim_dispatch(pool, row["id"], user_id="mallory")
+        await deploy.claim_dispatch(pool, row["id"], user_id="mallory",
+                                    require_validation=False)
 
 
 @pytest.mark.asyncio
@@ -148,7 +167,8 @@ async def test_revocation_or_expiry_rechecked_at_dispatch(prepared, revocation):
         async with prepared[0].acquire() as conn:
             await conn.execute(commands[revocation])
     with pytest.raises((deploy.DeploymentConflict, CostAdmissionDenied)):
-        await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice")
+        await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice",
+                                    require_validation=False)
     async with prepared[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM cloud_cost_reservations") == "reserved"
         assert await conn.fetchval("SELECT status FROM coding_deployments") == "reserved"
@@ -179,7 +199,8 @@ async def test_dispatch_audit_failure_rolls_back_both_intents(prepared, monkeypa
 
     monkeypatch.setattr(deploy, "_event", fail)
     with pytest.raises(RuntimeError, match="commit boundary failure"):
-        await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice")
+        await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice",
+                                    require_validation=False)
     async with prepared[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM cloud_cost_reservations") == "reserved"
         assert await conn.fetchval("SELECT status FROM coding_deployments") == "reserved"
@@ -205,12 +226,14 @@ async def test_database_constraints_prevent_ownership_rebinding(prepared):
 async def test_uncertain_write_never_replays_and_can_reconcile_after_revocation(prepared):
     await authorize(prepared)
     row = await enqueue(prepared)
-    await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice")
+    await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice",
+                                require_validation=False)
     uncertain = await deploy.record_provider_observation(
         prepared[0], row["id"], user_id="alice", evidence_hash="d" * 64,
     )
     assert uncertain["status"] == "uncertain"
-    assert await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice") is None
+    assert await deploy.claim_dispatch(prepared[0], row["id"], user_id="alice",
+                                       require_validation=False) is None
     async with prepared[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM cloud_cost_reservations") == "uncertain"
     await deploy.revoke_target(prepared[0], prepared[1].target_id, user_id="alice")
