@@ -25,8 +25,11 @@ On 2026-09-30, separate limited-lifetime inventory, configuration, deployment
 and recovery tokens were issued under the existing owner (no `root` token).
 Inventory, configuration and recovery each passed a read-only team/server probe
 through pinned IAP; the deploy-only token has not been exercised. There is still
-no project, environment or private generated-app destination, so no target is
-deployable. See [Delhi hosting](GCP_DELHI_HOSTING.md) for IDs, scope and storage.
+no private generated-app destination. An operator-only API call subsequently
+created project `mnv84tsssicw2y7dtogvbmwr` and environment
+`pi3o2fpjo2ituxrppav8izj4`; readback verified both without a second write.
+No target is deployable yet. See [Delhi hosting](GCP_DELHI_HOSTING.md) for IDs,
+scope and storage.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.

@@ -2449,9 +2449,14 @@ changes become production evidence.
   inventory, configuration, deploy-only and sensitive-recovery authority; each
   expires at the fixed VM STOP deadline. The three read-capable roles passed a
   private IAP team/server probe. The deploy-only role and sensitive Compose
-  readback remain untested because no approved Service exists. The VM still has
-  zero Coolify projects and no generated-app Docker network. No user app was
-  created or started; durable credential resolution and rotation remain open.
+  readback remain untested because no approved Service exists. At that checkpoint
+  the VM had zero Coolify projects and no generated-app Docker network.
+  A subsequent one-shot private API bootstrap created pilot Coolify project
+  `mnv84tsssicw2y7dtogvbmwr` and environment `pi3o2fpjo2ituxrppav8izj4`;
+  read-only replay verified both without a second POST. No private per-app
+  destination, Service, network, domain or application was created. Target
+  enrollment, durable credential resolution/rotation and live deployment remain
+  open.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

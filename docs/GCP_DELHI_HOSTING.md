@@ -49,12 +49,18 @@ read-only team/server probe over pinned IAP. The deploy-only token was **not**
 used to start a Service, and the sensitive token was **not** exercised against
 an actual Service's Compose. Rotation and connection to a durable controller
 remain incomplete. This is credential bootstrap, not deployment proof.
+After that private token check, an operator-only, one-shot API bootstrap created
+Coolify project `mnv84tsssicw2y7dtogvbmwr` (`gca-generated-apps-pilot`) and
+its `pilot` environment `pi3o2fpjo2ituxrppav8izj4` on 2026-09-30. A second
+read-only invocation found both exact identities and issued no POST. The bootstrap
+is `scripts/bootstrap_coolify_pilot.py`; provider timeouts stop as uncertain.
+This creates no Docker destination, network, Service, domain or generated app.
 The sole existing destination uses Docker network `coolify`; it must not host
 generated user applications. A separate per-app network/destination and real
 east-west isolation proof are required before any generated Service starts.
-No Coolify project/environment, target registration or Service was created by
-these queries. Recheck private administrator access and register a
-project/environment before attempting the typed deployment path.
+The earlier read-only queries created no resources. Project/environment bootstrap
+is now verified, but target registration and any Service remain pending until a
+private app-specific destination and the other admission gates exist.
 The user has already approved provisioning and the limited reserve draw. Do not ask
 for duplicate region, machine-size or spending authority unless this scope changes.
 
