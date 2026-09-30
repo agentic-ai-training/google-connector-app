@@ -2445,6 +2445,13 @@ changes become production evidence.
   is approval pinning, not a vulnerability scan. Read-only reconciliation of an
   already-dispatched create remains possible after statement expiry, while a new
   dispatch is denied. Both paths passed local PostgreSQL/provider-mock tests.
+  On 2026-09-30, four owner/team-scoped Coolify API tokens were issued with
+  inventory, configuration, deploy-only and sensitive-recovery authority; each
+  expires at the fixed VM STOP deadline. The three read-capable roles passed a
+  private IAP team/server probe. The deploy-only role and sensitive Compose
+  readback remain untested because no approved Service exists. The VM still has
+  zero Coolify projects and no generated-app Docker network. No user app was
+  created or started; durable credential resolution and rotation remain open.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

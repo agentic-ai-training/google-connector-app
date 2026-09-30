@@ -19,8 +19,14 @@ requires a separately reviewed trusted verification source; no live target has b
 registered on an assumed mapping.
 The installed VM's read-only database query on 2026-09-29 found its one server and
 one standalone Docker destination at ID `0`; nonnegative ID validation is required.
-No Coolify project, environment or API token exists there yet, so this remains
-enrollment evidence only, not a deployable target.
+No Coolify project, environment or API token existed at that 29 September
+checkpoint, so this was enrollment evidence only, not a deployable target.
+On 2026-09-30, separate limited-lifetime inventory, configuration, deployment
+and recovery tokens were issued under the existing owner (no `root` token).
+Inventory, configuration and recovery each passed a read-only team/server probe
+through pinned IAP; the deploy-only token has not been exercised. There is still
+no project, environment or private generated-app destination, so no target is
+deployable. See [Delhi hosting](GCP_DELHI_HOSTING.md) for IDs, scope and storage.
 
 The authenticated user-service approval handler must validate the actual release,
 Compose policy and trusted validation attestation before calling `record_user_grant`.
@@ -102,10 +108,11 @@ reference. Recovery lists resource metadata with the ordinary inventory credenti
 rejects an overscoped inventory response that includes raw Compose, and reads only
 the one matching Service with the sensitive recovery credential. The adapter resolves
 that reference only after metadata identifies one candidate. The
-operator-owned secret store, token issuance/rotation and limited lifetime remain
-to be integrated and reviewed before activation; this scope exposes sensitive
-provider fields. The hash marker alone is not sufficient to adopt a resource.
-The credential's scope and readback payload still need an authenticated live test.
+operator-owned credential resolver, rotation and expiry handling remain to be
+integrated and reviewed before activation; this scope exposes sensitive provider
+fields. The hash marker alone is not sufficient to adopt a resource. The recovery
+credential's sensitive readback payload still needs an authenticated live test
+after an approved Service exists.
 On 29 September 2026, read-only unauthenticated requests through pinned IAP/SSH to
 the installed instance returned 401 for `/api/v1/services`, `/api/v1/servers/{uuid}`,
 `/api/v1/projects/{uuid}` and the project-environment route; a deliberately absent
@@ -205,9 +212,10 @@ Before deployment activation, complete:
    A zero incremental cost needs trusted host coverage; variable costs beyond that
    coverage must still be reserved separately.
 3. Authenticated approval/standing-authority integration and real attestation checks.
-4. Scoped Coolify configuration/deployment credentials and immutable artifact loading.
+4. Connect the now-issued scoped Coolify credentials to an authenticated controller
+   and immutable artifact loading. The deploy-only token has no live proof yet.
 5. Verify this API and inventory contract against the pinned installed Coolify
-   version, create least-privilege configuration/deployment credentials, connect
+   version, verify and rotate least-privilege configuration/deployment credentials, connect
    the mock-tested identity reconciliation to a trusted worker, and add durable secret,
    start, bounded-poll, health, backup and behavioral-verification steps. Do not
    equate a submitted Service UUID with a healthy deployment.

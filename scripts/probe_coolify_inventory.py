@@ -16,11 +16,15 @@ async def main():
     parser.add_argument("--target-id", default="gca-delhi-coolify")
     parser.add_argument("--team-id", type=int, default=0)
     parser.add_argument("--token-file", default=".gca-local/coolify-inventory.env")
+    parser.add_argument("--token-variable", default="COOLIFY_INVENTORY_TOKEN", choices=(
+        "COOLIFY_INVENTORY_TOKEN", "COOLIFY_CONFIGURATION_TOKEN",
+        "COOLIFY_RECOVERY_TOKEN",
+    ))
     args = parser.parse_args()
     path = Path(args.token_file)
     if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) & 0o077:
         raise SystemExit("Token file must be a regular owner-only file, not a symlink")
-    token = dotenv_values(path).get("COOLIFY_INVENTORY_TOKEN")
+    token = dotenv_values(path).get(args.token_variable)
     # inventory_secret_ref is a lookup label; the actual credential was loaded above.
     target = CoolifyTarget(target_id=args.target_id, base_url=args.base_url,
                            team_id=args.team_id,

@@ -22,16 +22,33 @@ Read-only instance describe on 2026-09-29 still reported RUNNING,
 `e2-standard-4`, and the fixed 2026-10-19 stop timestamp.
 The same fixed-target read-only describe on 2026-09-30 again returned VM ID
 `822115653245959101`, RUNNING, e2-standard-4, and the unchanged STOP timestamp.
-On the same date, `docker ps` through pinned IAP SSH reported Coolify, PostgreSQL,
+On 2026-09-29, `docker ps` through pinned IAP SSH reported Coolify, PostgreSQL,
 Redis, realtime, proxy and sentinel all `healthy` after nine days uptime. This
 is infrastructure health only, not a generated-application or backup proof.
+The same six containers were still healthy on 2026-09-30. Docker network inventory
+still contained only `bridge`, `coolify`, `host` and `none`; no generated-app
+destination/network exists. The Coolify database still had zero projects before
+the scoped-token bootstrap, so no project or environment was created in this step.
 Read-only queries through pinned IAP SSH into the installed Coolify application on
 2026-09-29 found one server and one standalone Docker destination, both with
 provider numeric ID `0`; there were no Coolify projects or environments. One user
 and one team row exist, consistent with the verified 2026-09-20 administrator
 registration noted below; current interactive login was not retested. The
-`personal_access_tokens` table contains zero rows, so no scoped Coolify API token
-exists on this instance yet.
+`personal_access_tokens` table contained zero rows, so no scoped Coolify API
+token existed at that checkpoint.
+On 2026-09-30 the count was still zero before a scoped bootstrap. Four separate
+team-0 tokens were then created by the operator-only
+`scripts/bootstrap_coolify_scoped_tokens.php`, expiring exactly at the VM's fixed
+2026-10-19T17:24:32Z STOP deadline: inventory `read` (ID 2), configuration
+`read`+`write` (ID 3), deployment `deploy` (ID 4), and recovery
+`read`+`read:sensitive` (ID 5). No `root` token was issued. Their plaintext was
+copied only into ignored `.gca-local/coolify-*-deployment-v1.env` files in an
+owner-only directory, each mode 0600; temporary container/VM files were removed.
+Inventory, configuration and recovery tokens each passed an authenticated
+read-only team/server probe over pinned IAP. The deploy-only token was **not**
+used to start a Service, and the sensitive token was **not** exercised against
+an actual Service's Compose. Rotation and connection to a durable controller
+remain incomplete. This is credential bootstrap, not deployment proof.
 The sole existing destination uses Docker network `coolify`; it must not host
 generated user applications. A separate per-app network/destination and real
 east-west isolation proof are required before any generated Service starts.
