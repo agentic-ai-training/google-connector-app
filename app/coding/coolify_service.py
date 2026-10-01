@@ -98,13 +98,18 @@ class CoolifyServiceClient:
         if (server.get("uuid") != self.target.server_uuid
                 or project.get("uuid") != self.target.coolify_project_uuid
                 or environment.get("uuid") != self.target.environment_uuid
-                or type(server.get("id")) is not int
+                or (server.get("id") is not None and (
+                    type(server["id"]) is not int
+                    or server["id"] != self.target.server_id
+                ))
                 or type(project.get("id")) is not int
                 or type(environment.get("id")) is not int
                 or type(environment.get("project_id")) is not int
                 or environment.get("project_id") != project["id"]):
             raise CoolifyServiceError("target_identity_ambiguous")
-        return server["id"], environment["id"]
+        # Installed 4.3.23 omits the numeric server ID from this API response.
+        # The operator pins it from a trusted enrollment source instead.
+        return self.target.server_id, environment["id"]
 
     async def _verify_isolated_destination(self):
         destination = await self._json(

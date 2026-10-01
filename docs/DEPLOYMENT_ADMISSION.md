@@ -15,8 +15,11 @@ The operator binds a verified destination UUID plus its provider numeric ID and
 type in the immutable target. The create adapter always sends the UUID, never
 chooses a destination from provider ordering, and recovery compares the returned
 ID/type. The public destination API does not expose numeric IDs, so live enrollment
-requires a separately reviewed trusted verification source; no live target has been
-registered on an assumed mapping.
+requires a separately reviewed trusted verification source. The installed
+server-detail API likewise omits its numeric ID, while Service readback includes
+`server_id`. The target now pins an operator-verified nonnegative `server_id`
+alongside its UUID; an API-supplied ID, if present, must match. No live target
+has been registered on an assumed mapping.
 The installed VM's read-only database query on 2026-09-29 found its one server and
 one standalone Docker destination at ID `0`; nonnegative ID validation is required.
 No Coolify project, environment or API token existed at that 29 September
@@ -256,7 +259,7 @@ Verified removal   -> release capacity
 Host costs accrue  -> move reserved money to spent, without charging it twice
 ```
 
-The complete local coding suite passed 319 tests with real PostgreSQL enabled after
+The complete local coding suite passed 320 tests with real PostgreSQL enabled after
 the Coolify network-attachment readback change. This run covered capacity races,
 imported-VM funding, single Service submission, false validation denial, uncertainty,
 revocation, accrual and database migration checks. The targeted Compose and

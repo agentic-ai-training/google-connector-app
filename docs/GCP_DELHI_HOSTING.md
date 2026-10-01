@@ -67,12 +67,21 @@ and no proven east-west isolation; the Service controller separately pins
 `connect_to_docker_network=false` so generated containers must not join a
 predefined destination network. Before any live start, inspect actual network
 membership, proxy routing and cross-app/core reachability.
+On 2026-10-01 a read-only controller preflight initially rejected the target
+because Coolify's server-detail API omitted numeric `id`. The private Coolify
+database had already established server ID `0`, and destination ID `1` was
+independently read back. The immutable target schema now pins both numeric IDs;
+the controller accepts an omitted API server ID but rejects a conflicting one.
+After this correction, the exact team/server/project/environment/destination
+preflight passed through the private IAP tunnel with **no provider write**.
+This is target-identity proof only; the cost ledger, trusted build, secrets,
+Service creation/start and functional app checks are still outstanding.
 The original destination uses Docker network `coolify`; it must not host
 generated user applications. A separate pilot destination now exists, but real
 east-west isolation proof is still required before any generated Service starts.
 The earlier read-only queries created no resources. Project/environment bootstrap
-is now verified, but target registration and any Service remain pending until a
-private app-specific destination and the other admission gates exist.
+is now verified, as is the pilot destination. Target registration and any Service
+remain pending until the other admission gates are satisfied.
 The user has already approved provisioning and the limited reserve draw. Do not ask
 for duplicate region, machine-size or spending authority unless this scope changes.
 

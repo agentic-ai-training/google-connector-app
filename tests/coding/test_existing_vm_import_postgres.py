@@ -230,7 +230,7 @@ async def test_imported_host_funds_capacity_and_not_second_vm_charge(virgin):
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
         deployment_secret_ref="test/deploy", recovery_secret_ref="test/recovery",
         project_id=item.project_id,
-        server_uuid=host.server_uuid, destination_uuid="test-destination",
+        server_uuid=host.server_uuid, server_id=1, destination_uuid="test-destination",
         destination_id=7, destination_type="App\\Models\\StandaloneDocker",
         destination_network="gca-app-existing-delhi-target",
         coolify_project_uuid="test-project",

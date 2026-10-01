@@ -47,7 +47,8 @@ async def prepared(db):
         approved_external_images={
             "database": "registry.example/postgres@sha256:" + "c" * 64,
         },
-        project_id=PROJECT, server_uuid="server", destination_uuid="destination",
+        project_id=PROJECT, server_uuid="server", server_id=1,
+        destination_uuid="destination",
         destination_id=7, destination_type="App\\Models\\StandaloneDocker",
         destination_network="gca-app-test-target",
         coolify_project_uuid="project", environment_uuid="environment", owner_user_id="alice",

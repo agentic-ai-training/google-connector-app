@@ -2468,6 +2468,11 @@ changes become production evidence.
   reported an attachable bridge with zero containers. Read-only replay issued no
   second POST. This is not a running app or tenant-isolation proof. Cost import,
   build/signing evidence, secret provisioning and start admission remain open.
+  On 2026-10-01, a live read-only controller preflight exposed that installed
+  Coolify omits numeric `id` from its server-detail API. The target now pins the
+  separately verified server ID `0` as well as destination ID `1`, and rejects
+  any conflicting API ID. The corrected live preflight verified the team,
+  server, project, environment and destination together without a provider write.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

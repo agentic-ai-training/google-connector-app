@@ -88,7 +88,7 @@ def test_provider_credential_references_must_be_distinct():
             configuration_secret_ref="test/configuration",
             deployment_secret_ref="test/deploy",
             recovery_secret_ref="test/configuration",
-            project_id="test-project", server_uuid="server",
+            project_id="test-project", server_uuid="server", server_id=1,
             destination_uuid="destination", destination_id=7,
             destination_type="App\\Models\\StandaloneDocker",
             destination_network="gca-app-test-target",
@@ -112,6 +112,38 @@ def test_coolify_destination_zero_is_valid_but_negative_is_not(prepared):
     payload["approved_external_images"] = {"database": "postgres:latest"}
     with pytest.raises(ValueError, match="digest references"):
         deploy.RegisteredTarget.model_validate(payload)
+    payload = prepared[1].model_dump()
+    payload["server_id"] = -1
+    with pytest.raises(ValueError):
+        deploy.RegisteredTarget.model_validate(payload)
+
+
+@pytest.mark.asyncio
+async def test_server_id_is_operator_pinned_when_installed_api_omits_it(prepared):
+    def without_id(request):
+        known = target_response(request)
+        assert known is not None
+        if request.url.path == "/api/v1/servers/server":
+            return httpx.Response(200, json={"uuid": "server"})
+        return known
+
+    async with CoolifyServiceClient(
+        prepared[1], "scoped-test-token", transport=httpx.MockTransport(without_id),
+    ) as client:
+        assert await client._verified_target_ids() == (1, 2)
+
+    def wrong_id(request):
+        known = target_response(request)
+        assert known is not None
+        if request.url.path == "/api/v1/servers/server":
+            return httpx.Response(200, json={"uuid": "server", "id": 99})
+        return known
+
+    async with CoolifyServiceClient(
+        prepared[1], "scoped-test-token", transport=httpx.MockTransport(wrong_id),
+    ) as client:
+        with pytest.raises(CoolifyServiceError, match="target_identity_ambiguous"):
+            await client._verified_target_ids()
 
 
 @pytest.mark.asyncio
