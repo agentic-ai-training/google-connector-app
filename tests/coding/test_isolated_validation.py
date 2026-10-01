@@ -215,6 +215,49 @@ def generated_stack(root: Path):
         file.write_text(content)
 
 
+def surefire_archive(*, tests=1, skipped=0, failures=0, errors=0, xml_override=None):
+    xml = (xml_override or f'<testsuite tests="{tests}" skipped="{skipped}" '
+           f'failures="{failures}" errors="{errors}"></testsuite>').encode()
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        item = tarfile.TarInfo("target/surefire-reports/TEST-example.AppTest.xml")
+        item.size = len(xml)
+        archive.addfile(item, io.BytesIO(xml))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("values", [
+    {"tests": 0}, {"tests": 2, "skipped": 2}, {"tests": 1, "failures": 1},
+    {"tests": 1, "errors": 1}, {"xml_override": "<!DOCTYPE x [<!ENTITY a 'x'>]><testsuite/>"},
+    {"xml_override": "<testsuite tests='one' skipped='0' failures='0' errors='0'/>"},
+])
+def test_surefire_report_rejects_nonexecuted_or_invalid_evidence(values):
+    assert runner.surefire_report_passed(surefire_archive(**values)) is False
+
+
+def test_surefire_report_accepts_executed_passing_tests():
+    assert runner.surefire_report_passed(surefire_archive(tests=3, skipped=1)) is True
+
+
+@pytest.mark.parametrize("report", [
+    surefire_archive(tests=0), surefire_archive(tests=2, skipped=2), b"not a tar archive",
+])
+def test_spring_command_exit_zero_cannot_mask_empty_test_evidence(
+        tmp_path, monkeypatch, report):
+    generated_stack(tmp_path)
+    fake_transport(monkeypatch)
+
+    def execute(args, _timeout, **kwargs):
+        return {"success": True, "exit_code": 0, "output_truncated": False,
+                "stdout": report if kwargs.get("binary") else "", "stderr": ""}
+
+    monkeypatch.setattr(runner, "execute_bounded", execute)
+    result = runner.validate(tmp_path, "spring_test", 10,
+                             {**POLICY, "images": {"spring_test": IMAGE}})
+    assert result["success"] is False
+    assert result["stderr"] == "No executed passing Surefire test report"
+
+
 @pytest.mark.parametrize("profile,missing", [
     ("react_build", "frontend/package-lock.json"),
     ("react_test", "frontend/src/App.test.tsx"),
@@ -246,8 +289,8 @@ def test_generated_build_artifacts_cannot_be_supplied_as_source(tmp_path):
 @pytest.mark.parametrize("profile,expected", [
     ("react_test", ["npm", "node_modules/.bin/vitest"]),
     ("react_build", ["npm", "node_modules/.bin/vite", "test"]),
-    ("spring_test", ["mvn", "find"]),
-    ("spring_package", ["mvn", "find", "find"]),
+    ("spring_test", ["mvn", "tar"]),
+    ("spring_package", ["mvn", "tar", "find"]),
 ])
 def test_generated_profiles_run_only_fixed_offline_commands(tmp_path, monkeypatch,
                                                             profile, expected):
@@ -255,11 +298,12 @@ def test_generated_profiles_run_only_fixed_offline_commands(tmp_path, monkeypatc
     calls = fake_transport(monkeypatch)
     commands = []
 
-    def execute(args, timeout):
+    def execute(args, timeout, **kwargs):
         assert 0 < timeout <= 10
         commands.append(args[4:])
         return {"success": True, "exit_code": 0,
-                "stdout": "artifact\n" if args[4] == "find" else "",
+                "stdout": (surefire_archive() if kwargs.get("binary") else
+                           "artifact\n" if args[4] == "find" else ""),
                 "stderr": "", "output_truncated": False}
 
     monkeypatch.setattr(runner, "execute_bounded", execute)
@@ -277,18 +321,18 @@ def test_missing_generated_artifact_is_a_failed_validation(tmp_path, monkeypatch
     fake_transport(monkeypatch)
     commands = []
 
-    def execute(args, _timeout):
+    def execute(args, _timeout, **kwargs):
         commands.append(args[4])
         found = args[4] != "test"
         return {"success": found, "exit_code": 0 if found else 1,
-                "stdout": "", "stderr": "",
+                "stdout": b"" if kwargs.get("binary") else "", "stderr": "",
                 "output_truncated": False}
 
     monkeypatch.setattr(runner, "execute_bounded", execute)
     result = runner.validate(tmp_path, profile, 10,
                              {**POLICY, "images": {profile: IMAGE}})
     assert result["success"] is False and result["exit_code"] == 1
-    assert commands[-1] in {"test", "find"}
+    assert commands[-1] in {"test", "find", "tar"}
 
 
 def test_failed_offline_install_never_runs_generated_react_code(tmp_path, monkeypatch):

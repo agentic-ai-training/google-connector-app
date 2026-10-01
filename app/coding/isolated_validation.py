@@ -24,6 +24,7 @@ import sys
 import tarfile
 import time
 import uuid
+import xml.etree.ElementTree as ET  # nosec B405
 
 
 PROFILES = {
@@ -62,6 +63,7 @@ EXCLUDED_DIRS = {
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_ENTRIES = 5000
 MAX_OUTPUT_BYTES = 256_000
+MAX_REPORT_ARCHIVE_BYTES = 4 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_SOURCE_BYTES + MAX_SOURCE_ENTRIES * 1024 + 10240
 DOCKER = "/usr/bin/docker"
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
@@ -424,7 +426,8 @@ def docker(*args: str, payload: bytes | None = None, timeout: int = 30) -> bytes
     return result.stdout
 
 
-def execute_bounded(args: list[str], timeout: float) -> dict:
+def execute_bounded(args: list[str], timeout: float, *, binary: bool = False,
+                    output_limit: int = MAX_OUTPUT_BYTES) -> dict:
     child = subprocess.Popen(  # nosec B603
         [DOCKER, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=CLEAN_ENV, start_new_session=True,
@@ -444,13 +447,14 @@ def execute_bounded(args: list[str], timeout: float) -> dict:
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
-                    remaining = MAX_OUTPUT_BYTES - sum(map(len, output.values()))
+                    remaining = output_limit - sum(map(len, output.values()))
                     output[key.data].extend(chunk[:remaining])
                     truncated = truncated or len(chunk) > remaining
             code = child.wait(timeout=max(0.1, deadline - time.monotonic()))
         return {
             "exit_code": code, "success": code == 0, "output_truncated": truncated,
-            **{key: value.decode("utf-8", errors="replace") for key, value in output.items()},
+            **{key: bytes(value) if binary else value.decode("utf-8", errors="replace")
+               for key, value in output.items()},
         }
     finally:
         if child.poll() is None:
@@ -461,6 +465,48 @@ def execute_bounded(args: list[str], timeout: float) -> dict:
             child.wait(timeout=5)
         for stream in (child.stdout, child.stderr):
             stream.close()
+
+
+def surefire_report_passed(archive_bytes: bytes) -> bool:
+    """Require an executed, passing JUnit test; a nonempty XML file is insufficient."""
+    if not archive_bytes or len(archive_bytes) > MAX_REPORT_ARCHIVE_BYTES:
+        return False
+    total_executed = 0
+    reports = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+            for member in archive:
+                if member.isdir():
+                    continue
+                if not member.isfile() or member.size > 1_048_576:
+                    return False
+                if not re.fullmatch(r"target/surefire-reports/TEST-[^/]+\.xml", member.name):
+                    continue
+                reports += 1
+                if reports > 128:
+                    return False
+                stream = archive.extractfile(member)
+                if stream is None:
+                    return False
+                xml_bytes = stream.read(1_048_577)
+                if b"<!DOCTYPE" in xml_bytes.upper() or b"<!ENTITY" in xml_bytes.upper():
+                    return False
+                root = ET.fromstring(xml_bytes)  # nosec B314
+                if root.tag != "testsuite":
+                    return False
+                counts = {}
+                for key in ("tests", "failures", "errors", "skipped"):
+                    value = root.get(key)
+                    if value is None or not re.fullmatch(r"\d{1,8}", value):
+                        return False
+                    counts[key] = int(value)
+                if (counts["failures"] or counts["errors"]
+                        or counts["skipped"] > counts["tests"]):
+                    return False
+                total_executed += counts["tests"] - counts["skipped"]
+    except (tarfile.TarError, ET.ParseError, OSError, ValueError):
+        return False
+    return reports > 0 and total_executed > 0
 
 
 def validate(workspace: Path, profile: str, timeout: int, policy: dict,
@@ -592,13 +638,23 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             if not result["success"]:
                 break
         if result["success"]:
+            if profile in {"spring_test", "spring_package"}:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise IsolationError("Validation deadline exceeded")
+                reports = execute_bounded(
+                    ["exec", "--workdir", workdir, name, "tar", "-cf", "-",
+                     "target/surefire-reports"], remaining, binary=True,
+                    output_limit=MAX_REPORT_ARCHIVE_BYTES,
+                )
+                if (not reports["success"] or reports["output_truncated"]
+                        or not surefire_report_passed(reports["stdout"])):
+                    result = {"exit_code": 1, "success": False, "output_truncated": False,
+                              "stdout": "", "stderr": "No executed passing Surefire test report"}
+        if result["success"]:
             postconditions = {
                 "react_build": (("test", "-s", "dist/index.html"),),
-                "spring_test": (("find", "target/surefire-reports", "-maxdepth", "1", "-type",
-                                 "f", "-name", "TEST-*.xml", "-size", "+0c", "-print"),),
                 "spring_package": (
-                    ("find", "target/surefire-reports", "-maxdepth", "1", "-type", "f",
-                     "-name", "TEST-*.xml", "-size", "+0c", "-print"),
                     ("find", "target", "-maxdepth", "1", "-type", "f", "-name", "*.jar",
                      "-size", "+0c", "-print"),
                 ),

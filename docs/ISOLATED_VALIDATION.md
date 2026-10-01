@@ -92,9 +92,12 @@ scripts disabled before invoking the local Vitest/Vite binaries. Vitest explicit
 denies zero-test and focused-only success and uses one worker. Spring profiles
 use Maven offline mode with `failIfNoTests=true`. All commands and postchecks share
 one bounded validation deadline. A successful React build must produce a non-empty
-`dist/index.html`; Spring testing must produce a non-empty Surefire XML report, and
-packaging must additionally produce a non-empty JAR. Missing outputs fail the
-validation even if a command reports exit code zero. These are tool-specific
+`dist/index.html`; Spring testing must produce bounded Surefire XML evidence with
+at least one executed (not skipped) test and zero reported failures/errors, and
+packaging must additionally produce a non-empty JAR. The reports are parsed by the
+trusted controller without a host mount; malformed, oversized, missing, or all-skipped
+reports fail closed. Missing outputs fail validation even if a command reports exit
+code zero. Generated source could still forge a report, so these are tool-specific
 postconditions, not proof of application behavior or source-to-image provenance.
 
 The installed operator policy still approves only the synthetic Python image.

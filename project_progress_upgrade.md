@@ -2373,6 +2373,10 @@ changes become production evidence.
   were added to the keyless launcher, with archive preconditions, one shared command
   deadline and generated-artifact postconditions. Local tests exercise command order,
   absent source, offline dependency failure and false-success output rejection. The
+  Spring postcheck now reads bounded Surefire XML through the keyless container stream
+  and rejects zero-test, all-skipped, failed, malformed or oversized reports; a nonempty
+  XML file alone no longer counts as test success. This is structural evidence only:
+  generated code could forge reports and behavioral/source-to-image proof is still needed.
   VM operator policy still approves only the Python synthetic toolchain; Node/Java
   cache/image provision, live gVisor execution and PostgreSQL/cross-language profiles
   remain unproven. A subsequent local admission change requires four distinct,
