@@ -9,6 +9,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 import pytest_asyncio
+from pydantic import ValidationError
 
 from app.coding import cost_ledger as ledger
 from app.coding import deployment_admission as deploy, host_capacity
@@ -42,7 +43,7 @@ async def virgin():
         await conn.close()
 
 
-def evidence(*, remaining=2_769_400, accrued=100_000, estimate=1_385_056):
+def evidence(*, remaining=2_769_388, accrued=100_000, estimate=1_385_056):
     now = datetime.now(timezone.utc)
     return ledger.ExistingDelhiVM(
         project_id="project-ee0c1944-144c-4364-ad4", instance_id="822115653245959101",
@@ -50,7 +51,7 @@ def evidence(*, remaining=2_769_400, accrued=100_000, estimate=1_385_056):
         machine_type="e2-standard-4", disk_type="pd-balanced", disk_gib=100,
         status="RUNNING", created_at=datetime(2026, 9, 19, 17, 24, 34, 872000, timezone.utc),
         observed_at=now, stop_at=datetime(2026, 10, 19, 17, 24, 32, tzinfo=timezone.utc),
-        initial_trial_credit_paise=2_869_400, remaining_trial_credit_paise=remaining,
+        initial_trial_credit_paise=2_869_388, remaining_trial_credit_paise=remaining,
         credit_observed_at=now,
         credit_admission_cutoff=datetime(2026, 11, 20, tzinfo=timezone.utc),
         accrued_hosting_paise=accrued, charge_observed_at=now,
@@ -59,6 +60,19 @@ def evidence(*, remaining=2_769_400, accrued=100_000, estimate=1_385_056):
         credit_evidence_reference="test:fresh-promo-credit",
         charge_evidence_reference="test:attributable-compute-and-disk-charge",
     )
+
+
+def test_exact_trial_total_is_required_not_earlier_rounded_figure():
+    item = evidence()
+    assert item.initial_trial_credit_paise == 2_869_388
+    with pytest.raises(ValidationError):
+        ledger.ExistingDelhiVM.model_validate({
+            **item.model_dump(), "initial_trial_credit_paise": 2_869_400,
+        })
+    with pytest.raises(ValidationError):
+        ledger.ExistingDelhiVM.model_validate({
+            **item.model_dump(), "remaining_trial_credit_paise": 2_869_389,
+        })
 
 
 @pytest.fixture(autouse=True)

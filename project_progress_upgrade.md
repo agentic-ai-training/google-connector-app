@@ -2253,6 +2253,12 @@ changes become production evidence.
   checks also passed. Production migration, audited import of the
   existing VM obligation, and deployment/provider adapter integration remain pending;
   see `docs/CLOUD_COST_LEDGER.md`. This item is intentionally not marked complete.
+  On 2026-10-01, read-only Cloud Billing API inventory proved the account has
+  exactly one linked project, and Compute inventory found only the approved VM,
+  100-GiB disk and no snapshots. The import model now accepts the exact
+  ₹28,693.88 initial credit from the later report rather than the rounded
+  ₹28,694 pre-creation confirmation. September service totals still lack a
+  current SKU-level breakdown, so no production ledger import occurred.
   2026-09-27: added cumulative charge accrual without double-counting refreshed credit,
   and migration 018 for apps sharing the existing host's funded CPU/RAM/storage pool.
   Admission/dispatch, uncertainty and cleanup are tested in local PostgreSQL; 103

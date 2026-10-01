@@ -18,6 +18,13 @@ accounted for by those two displayed rows. The report was not shown filtered
 to this project and broken down by VM/disk SKU, so do not attribute its full
 amount to this host or import it as a reconciled provider charge. See
 [cost ledger](CLOUD_COST_LEDGER.md).
+On 2026-10-01, an authenticated read-only Cloud Billing API call showed this
+account has only the target project linked. Current Compute inventory showed
+only the approved VM and its 100-GiB disk, with no snapshots. Thus the displayed
+September service totals can be associated with this project, but no SKU split,
+post-29-September cost or fresh promotional balance was supplied. The audited
+VM import schema was corrected to the exact initial ₹28,693.88; it remains
+unapplied until fresh, attributable evidence is available.
 Read-only instance describe on 2026-09-29 still reported RUNNING,
 `e2-standard-4`, and the fixed 2026-10-19 stop timestamp.
 The same fixed-target read-only describe on 2026-09-30 again returned VM ID

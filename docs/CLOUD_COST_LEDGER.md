@@ -1,6 +1,6 @@
 # Cloud cost authority and reservation ledger
 
-Status (30 September 2026): local implementation and PostgreSQL tests. Migration
+Status (1 October 2026): local implementation and PostgreSQL tests. Migration
 016 has **not** been applied to production. The deployment controller is not yet
 wired to this ledger; do not present it as a live billing cap.
 
@@ -11,8 +11,15 @@ both offset in the report, leaving ₹0 payable for that period. The two listed
 services total ₹4,120.18, so ₹28.71 of the credit decrease is not explained
 by those rows alone (it may reflect date ranges or other charges). A zero
 payable total does **not** mean zero trial credit consumption. This is
-user-reported evidence, not a provider-verified project-filtered export or a
-VM/disk-level allocation. Obtain that breakdown and a fresh credit snapshot
+user-reported cost evidence, not a provider-verified SKU-level charge export.
+On 2026-10-01, the authenticated read-only Cloud Billing API listed exactly
+one linked project for this account: `project-ee0c1944-144c-4364-ad4`.
+Read-only Compute inventory listed one VM, its 100-GiB balanced disk and no
+snapshots. This strengthens project/host attribution of the displayed Compute
+and Networking totals, but does not split VM, disk, IP or egress SKUs, establish
+charges after 29 September, or prove that the remaining balance is current.
+The import schema now uses the exact ₹28,693.88 initial credit instead of the
+earlier rounded ₹28,694. Obtain SKU-level costs and a fresh credit snapshot
 before importing incurred costs or authorizing new paid resources.
 
 ## Authority

@@ -21,6 +21,9 @@ from app.coding import gce_identity
 from app.coding.validation_transport import IAPValidationHost
 
 POLICY = "cloud-credit-envelopes-2026-09-19-hosting-reserve-only"
+# The pre-VM confirmation rounded this amount to INR 28,694. The later Billing
+# report supplied the exact promotional-credit total: INR 28,693.88.
+INITIAL_TRIAL_CREDIT_PAISE = 2_869_388
 
 
 class CostLedgerConflict(RuntimeError):
@@ -45,8 +48,8 @@ class ExistingDelhiVM(BaseModel):
     created_at: datetime
     observed_at: datetime
     stop_at: datetime
-    initial_trial_credit_paise: Literal[2_869_400]
-    remaining_trial_credit_paise: int = Field(ge=0, le=2_869_400, strict=True)
+    initial_trial_credit_paise: Literal[2_869_388]
+    remaining_trial_credit_paise: int = Field(ge=0, le=INITIAL_TRIAL_CREDIT_PAISE, strict=True)
     credit_observed_at: datetime
     # The portal gives a date but not an exact hour. Use a deliberately earlier
     # admission cutoff, never an invented precise provider expiration timestamp.
