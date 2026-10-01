@@ -76,6 +76,14 @@ After this correction, the exact team/server/project/environment/destination
 preflight passed through the private IAP tunnel with **no provider write**.
 This is target-identity proof only; the cost ledger, trusted build, secrets,
 Service creation/start and functional app checks are still outstanding.
+The read-only inventory probe now resolves its scoped token through the
+operator-only private-file resolver, which enforces file ownership/mode, an exact
+registered reference and the 2026-10-19 token expiry without printing plaintext.
+The local inventory file passed a no-network resolver check on 2026-10-01. The
+first live probe exposed single-quoted bootstrap values; after strict quote
+handling was added, the read-only IAP probe verified the exact team and pilot
+target. The tunnel was then closed. The controller has not yet been wired to all
+four scoped credentials in production.
 The original destination uses Docker network `coolify`; it must not host
 generated user applications. A separate pilot destination now exists, but real
 east-west isolation proof is still required before any generated Service starts.

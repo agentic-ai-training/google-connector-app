@@ -2479,6 +2479,14 @@ changes become production evidence.
   separately verified server ID `0` as well as destination ID `1`, and rejects
   any conflicting API ID. The corrected live preflight verified the team,
   server, project, environment and destination together without a provider write.
+  A subsequent operator-only secret resolver now maps registered references to
+  private file or environment credentials, rejects unsafe file permissions,
+  symlinks, unknown references and expired tokens, and is exercised by the
+  read-only inventory probe. A live IAP probe initially found single-quoted
+  bootstrap values and returned 401; strict quote parsing corrected this, and
+  the second probe verified team/server/project/environment/destination with
+  no provider write. The IAP tunnel was closed. This does not connect a
+  production controller or start an app.
 - [ ] Validate generated Compose/image policy; provision private per-app network,
   persistent database, secrets and domain. Never reuse the core Neon owner connection.
 - [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,

@@ -7,24 +7,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime
 import json
 from pathlib import Path
-import stat
-
-from dotenv import dotenv_values
 
 from app.coding.coolify_service import CoolifyServiceClient, CoolifyServiceError
 from app.coding.deployment_admission import RegisteredTarget
+from app.coding.operator_secrets import (
+    OperatorSecretError, OperatorTokenResolver, TokenBinding,
+)
 
 
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--token-file", default=".gca-local/coolify-inventory-deployment-v1.env")
     args = parser.parse_args()
-    path = Path(args.token_file)
-    if path.is_symlink() or not path.is_file() or stat.S_IMODE(path.stat().st_mode) & 0o077:
-        raise SystemExit("Inventory credential must be a private regular file")
-    token = dotenv_values(path).get("COOLIFY_INVENTORY_TOKEN")
+    resolver = OperatorTokenResolver((TokenBinding(
+        reference="local/coolify-inventory", variable="COOLIFY_INVENTORY_TOKEN",
+        source="private_file", path=Path(args.token_file),
+        expires_at=datetime.fromisoformat("2026-10-19T17:24:32+00:00"),
+    ),))
     target = RegisteredTarget(
         target_id="gca-delhi-login-pilot-probe", base_url="http://127.0.0.1:18000",
         team_id=0, project_id="project-ee0c1944-144c-4364-ad4",
@@ -36,19 +38,22 @@ async def main():
         environment_uuid="pi3o2fpjo2ituxrppav8izj4",
         owner_user_id="operator-read-only-probe",
         # These are lookup labels in an unregistered probe target, not credentials.
-        inventory_secret_ref="probe/inventory",  # nosec B106
+        inventory_secret_ref="local/coolify-inventory",  # nosec B106
         configuration_secret_ref="probe/configuration",
         deployment_secret_ref="probe/deployment",
         recovery_secret_ref="probe/recovery",
     )
     phase = "team"
     try:
+        token = resolver(target.inventory_secret_ref)
         async with CoolifyServiceClient(target, token or "") as client:
             await client.verify_team()
             phase = "project_environment"
             await client._verified_target_ids()
             phase = "destination"
             await client._verify_isolated_destination()
+    except OperatorSecretError as error:
+        raise SystemExit(f"credential:{error.category}") from None
     except CoolifyServiceError as error:
         if phase == "project_environment":
             async with CoolifyServiceClient(target, token or "") as client:

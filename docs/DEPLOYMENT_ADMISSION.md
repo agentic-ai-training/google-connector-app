@@ -124,12 +124,21 @@ authority is supplied. The target now requires a distinct recovery credential
 reference. Recovery lists resource metadata with the ordinary inventory credential,
 rejects an overscoped inventory response that includes raw Compose, and reads only
 the one matching Service with the sensitive recovery credential. The adapter resolves
-that reference only after metadata identifies one candidate. The
-operator-owned credential resolver, rotation and expiry handling remain to be
-integrated and reviewed before activation; this scope exposes sensitive provider
-fields. The hash marker alone is not sufficient to adopt a resource. The recovery
-credential's sensitive readback payload still needs an authenticated live test
-after an approved Service exists.
+that reference only after metadata identifies one candidate. This scope exposes
+sensitive provider fields. The hash marker alone is not sufficient to adopt a
+resource. The recovery credential's sensitive readback payload still needs an
+authenticated live test after an approved Service exists.
+
+`app/coding/operator_secrets.py` now provides a callable operator resolver for
+explicitly registered reference-to-file or reference-to-environment bindings.
+Private-file reads use an owner-only directory, an owner-only regular file,
+`O_NOFOLLOW`, a bounded single assignment, strict single-quote parsing for the
+existing bootstrap files and a fixed expiry; unknown references and expired
+credentials fail closed without logging values. On 2026-10-01 the read-only pilot
+target probe used this resolver and authenticated inventory token to verify the
+Coolify team, server, project, environment and destination over IAP. This does
+not yet bind the four references to a production deployment worker, prove token
+rotation, or authorize Service creation/start.
 On 29 September 2026, read-only unauthenticated requests through pinned IAP/SSH to
 the installed instance returned 401 for `/api/v1/services`, `/api/v1/servers/{uuid}`,
 `/api/v1/projects/{uuid}` and the project-environment route; a deliberately absent
