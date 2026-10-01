@@ -2327,6 +2327,12 @@ changes become production evidence.
   deployment or production account import was performed.
 - [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
   models, and report when secure execution prerequisites are unavailable.
+  On 2026-10-01, the local Groq planning/resume path was hardened to require
+  the isolated launcher and config before a provider call. Frozen model-authored
+  plans carry an origin marker in the approval hash; preview and approved replay
+  cannot fall back to host validation. Explicitly authored offline plans retain
+  the labelled `host_not_isolated` compatibility path. Local Rust tests pass;
+  secure macOS/Docker Desktop operation and hosted end-to-end coding remain open.
 - [ ] Provision Coolify on the approved GCP target with verified SSH host keys,
   scoped access, protected admin UI, TLS/domain ownership and backup/restore procedure.
 - [ ] Verify generated workloads cannot read core secrets, core DB, another app's

@@ -41,10 +41,14 @@ Hosted settings `CODING_VALIDATION_LAUNCHER` and `CODING_VALIDATION_CONFIG` beco
 `GCA_REQUIRE_ISOLATED_VALIDATION=1`. Keyless preview preserves only these isolation
 settings, not provider keys. Missing configuration/profile/image fails closed.
 
-The private/non-Git local CLI remains usable. Its compatibility validation path is
-labelled `host_not_isolated`. A copied directory and cleared environment do not contain
-arbitrary code. Use managed isolation for untrusted tests. Secure Docker Desktop local
-execution still needs separate capability verification; Linux proof is not macOS proof.
+The private/non-Git local CLI remains usable for explicitly authored offline
+plans. Its compatibility validation path is labelled `host_not_isolated`: a copied
+directory and cleared environment do not contain arbitrary code. Cloud-model
+plans now require an operator-owned launcher/config outside the workspace before
+the provider call, and both preview and approved replay require isolated
+validation. Missing or invalid isolation fails closed; it cannot silently use
+the host compatibility path. Secure Docker Desktop local execution still needs
+separate capability verification; Linux proof is not macOS proof.
 
 ## Bounds and limitations
 

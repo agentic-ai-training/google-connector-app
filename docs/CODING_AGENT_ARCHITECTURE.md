@@ -128,6 +128,14 @@ cannot call a shell, read excluded files, mint approval tokens or claim validati
 
 For a Groq-planned request, put the instruction in a local file rather than shell history:
 
+Before doing so, configure the operator-owned `GCA_VALIDATION_LAUNCHER` and
+`GCA_VALIDATION_CONFIG` as real files outside the project. Model-generated plans
+require the isolated validation launcher for both preview and approved replay.
+Without it, `plan-request` and `resume-request` stop **before** contacting Groq;
+the runner never falls back to host validation for such plans. The launcher
+must supply verified gVisor isolation on the supported Linux target. The local
+machine's macOS/Docker Desktop environment has not been proved equivalent.
+
 ```bash
 printf 'Change the validated parser without changing its public schema.\n' > /tmp/task.txt
 gca-local plan-request \
@@ -163,6 +171,10 @@ writes a mode-`0600` `<plan>.approval.json` manifest containing exact before/aft
 the approval token and validation evidence. The approved invocation reruns the complete
 plan in a fresh sandbox, checks every preimage, applies all files transactionally with
 rollback, and changes the manifest status to `applied`.
+The frozen plan carries `origin: cloud_model` in its approval hash, and approved
+replay enforces isolation again. An explicitly authored offline JSON plan can
+still use the documented local compatibility path; its host validation is
+labelled `host_not_isolated` and must not be treated as an untrusted-code sandbox.
 
 ## Hosted GitHub App boundary
 

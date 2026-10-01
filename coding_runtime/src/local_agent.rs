@@ -288,7 +288,9 @@ fn execute_planner_loop(
 
             if name == "submit_plan" {
                 validate_submitted_plan(&arguments)?;
-                let plan_bytes = serde_json::to_vec_pretty(&arguments)
+                let mut approved_plan = arguments.clone();
+                approved_plan["origin"] = json!("cloud_model");
+                let plan_bytes = serde_json::to_vec_pretty(&approved_plan)
                     .map_err(|error| format!("cannot serialize plan: {error}"))?;
                 atomic_private_write(plan_path, &plan_bytes)?;
                 checkpoint.events.push(json!({
@@ -566,7 +568,7 @@ fn read_checkpoint(path: &Path) -> Result<LocalAgentCheckpoint, String> {
         .map_err(|error| format!("local checkpoint violates its schema: {error}"))
 }
 
-fn validate_run_id(run_id: &str) -> Result<(), String> {
+pub fn validate_run_id(run_id: &str) -> Result<(), String> {
     if run_id.len() != 26
         || !run_id.starts_with("local-")
         || !run_id[6..].bytes().all(|byte| byte.is_ascii_hexdigit())

@@ -164,6 +164,7 @@ pub struct Broker {
     root: PathBuf,
     max_output_bytes: usize,
     allow_mutations: bool,
+    require_isolated_validation: bool,
 }
 
 pub fn parse_request(input: &str) -> Result<ToolRequest, BrokerError> {
@@ -227,6 +228,7 @@ impl Broker {
             root,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             allow_mutations: false,
+            require_isolated_validation: false,
         })
     }
 
@@ -237,6 +239,13 @@ impl Broker {
     pub fn new_mutable(root: impl AsRef<Path>) -> Result<Self, BrokerError> {
         let mut broker = Self::new(root)?;
         broker.allow_mutations = true;
+        Ok(broker)
+    }
+
+    /// A mutable broker for model-authored plans; never run validation on the host.
+    pub fn new_mutable_isolated(root: impl AsRef<Path>) -> Result<Self, BrokerError> {
+        let mut broker = Self::new_mutable(root)?;
+        broker.require_isolated_validation = true;
         Ok(broker)
     }
 
@@ -1112,7 +1121,8 @@ impl Broker {
                 "timeout_seconds must be between 1 and 1800",
             ));
         }
-        if std::env::var_os("GCA_VALIDATION_LAUNCHER").is_some()
+        if self.require_isolated_validation
+            || std::env::var_os("GCA_VALIDATION_LAUNCHER").is_some()
             || std::env::var("GCA_REQUIRE_ISOLATED_VALIDATION").as_deref() == Ok("1")
         {
             return self.run_isolated_validation(profile, timeout_seconds);
