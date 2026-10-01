@@ -64,6 +64,15 @@ and `database`, with an internal named database volume and bounded resources;
 a multi-service
 stack cannot be labelled `single_service`. This is a local admission gate, not live
 toolchain proof. The React/Spring profiles are not yet activated on the host.
+For this typed stack, static Compose admission now also requires the Postgres data
+volume at `/var/lib/postgresql/data`, exactly `POSTGRES_DB`, `POSTGRES_USER`, and a
+secret-reference `POSTGRES_PASSWORD` on the database service, and matching
+`SPRING_DATASOURCE_URL`, username, and password on the backend. Database command,
+entrypoint, working-directory and authentication-mode overrides are denied. This
+prevents a release from claiming a connected private PostgreSQL stack while its
+declared credentials or destination contradict one another. It does not prove
+that secrets have been provisioned, Spring actually connects, or the database
+persists; those require later live behavioral and restart tests.
 The low-level dispatch function now requires passing validation by default. The
 explicit unvalidated option is used only by financial-ledger tests; the Coolify
 adapter keeps the gate enabled. An absent validation claim leaves both the provider

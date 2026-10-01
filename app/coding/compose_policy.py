@@ -22,6 +22,7 @@ class ComposePolicyError(ValueError):
 MAX_COMPOSE_BYTES = 131_072
 IMAGE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{1,255}@sha256:[0-9a-f]{64}$")
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+DB_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 VOLUME = re.compile(r"^([a-z][a-z0-9_-]{0,62}):(/[a-zA-Z0-9._/-]+)(?::ro)?$")
 SECRET_NAME = re.compile(r"(?:PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)", re.I)
 REQUIRED_REFERENCE = re.compile(r"^\$\{[A-Z][A-Z0-9_]*:\?[^}]*\}$")
@@ -194,6 +195,26 @@ def validate_compose(compose: bytes, manifest: DeploymentManifest) -> str:
                 or services["database"].get("expose")
                 or not services["database"].get("volumes")):
             raise ComposePolicyError("generated stack dependencies or private storage are absent")
+        database = services["database"]
+        backend = services["backend"]
+        db_env = database.get("environment", {})
+        backend_env = backend.get("environment", {})
+        db_name = db_env.get("POSTGRES_DB")
+        db_user = db_env.get("POSTGRES_USER")
+        db_password = db_env.get("POSTGRES_PASSWORD")
+        if (any(key in database for key in ("command", "entrypoint", "working_dir"))
+                or set(db_env) != {"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"}
+                or not any(mount.endswith(":/var/lib/postgresql/data")
+                           for mount in database["volumes"])
+                or not isinstance(db_name, str) or not DB_IDENTIFIER.fullmatch(db_name)
+                or not isinstance(db_user, str) or not DB_IDENTIFIER.fullmatch(db_user)
+                or not isinstance(db_password, str)
+                or not REQUIRED_REFERENCE.fullmatch(db_password)
+                or backend_env.get("SPRING_DATASOURCE_URL") !=
+                f"jdbc:postgresql://database:5432/{db_name}"
+                or backend_env.get("SPRING_DATASOURCE_USERNAME") != db_user
+                or backend_env.get("SPRING_DATASOURCE_PASSWORD") != db_password):
+            raise ComposePolicyError("generated Spring/PostgreSQL connection is not bound")
     capacity = manifest.capacity
     if capacity is None or total_cpu > capacity.cpu_millis or total_memory > capacity.memory_mib:
         raise ComposePolicyError("Compose exceeds approved funded host capacity")

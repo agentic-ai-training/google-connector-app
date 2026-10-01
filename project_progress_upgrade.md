@@ -2449,6 +2449,12 @@ changes become production evidence.
   This is identity binding only: it does not prove that those image digests were
   built from the source. Trusted keyless build provenance and start admission remain
   unchecked.
+  A later local Compose check requires the generated Spring/PostgreSQL services to
+  declare matching database URL, name, user and secret reference, persistent
+  Postgres data-path volume, and no database command/authentication override.
+  Local tests reject mismatched or unsafe declarations; actual secret provisioning,
+  database connection, restart persistence and private-network behavior are still
+  unverified.
   A later local gate pins a builder public key in each immutable target and verifies
   an Ed25519-signed run/tenant/source/release/Compose/image statement before create
   and again in the dispatch transaction. Missing, altered and expired statements

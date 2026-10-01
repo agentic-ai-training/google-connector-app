@@ -56,11 +56,19 @@ def safe_stack_compose():
             "  backend:\n"
             "    image: registry.example/backend@sha256:" + "b" * 64 + "\n"
             "    depends_on: [database]\n"
+            "    environment:\n"
+            "      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/app\n"
+            "      SPRING_DATASOURCE_USERNAME: app\n"
+            "      SPRING_DATASOURCE_PASSWORD: '${DB_PASSWORD:?required}'\n"
             "    deploy:\n"
             "      resources:\n"
             "        limits: {cpus: '0.6', memory: 1GiB}\n"
             "  database:\n"
             "    image: registry.example/postgres@sha256:" + "c" * 64 + "\n"
+            "    environment:\n"
+            "      POSTGRES_DB: app\n"
+            "      POSTGRES_USER: app\n"
+            "      POSTGRES_PASSWORD: '${DB_PASSWORD:?required}'\n"
             "    volumes: [dbdata:/var/lib/postgresql/data]\n"
             "    deploy:\n"
             "      resources:\n"
@@ -146,6 +154,30 @@ def test_generated_stack_requires_all_four_profile_proofs_and_canonical_shape():
             "compose_hash": sha256(wrong.encode()).hexdigest(),
         }))
     assert validate_compose(single_data, single_manifest) == single_data.decode()
+
+
+@pytest.mark.parametrize("before,after", [
+    ("SPRING_DATASOURCE_USERNAME: app", "SPRING_DATASOURCE_USERNAME: other"),
+    ("SPRING_DATASOURCE_PASSWORD: '${DB_PASSWORD:?required}'",
+     "SPRING_DATASOURCE_PASSWORD: '${OTHER_PASSWORD:?required}'"),
+    ("jdbc:postgresql://database:5432/app", "jdbc:postgresql://elsewhere:5432/app"),
+    ("POSTGRES_DB: app", "POSTGRES_DB: other"),
+    ("POSTGRES_PASSWORD: '${DB_PASSWORD:?required}'",
+     "POSTGRES_PASSWORD: '${OTHER_PASSWORD:?required}'"),
+    ("      POSTGRES_USER: app\n",
+     "      POSTGRES_USER: app\n      POSTGRES_HOST_AUTH_METHOD: trust\n"),
+    ("dbdata:/var/lib/postgresql/data", "dbdata:/tmp/throwaway"),
+    ("  database:\n", "  database:\n    command: ['echo', 'not-postgres']\n"),
+])
+def test_generated_stack_requires_matching_private_database_configuration(before, after):
+    text = safe_stack_compose()
+    if before.startswith("POSTGRES_PASSWORD"):
+        text = text.replace("      " + before, "      " + after)
+    else:
+        text = text.replace(before, after)
+    data, manifest = approved_stack(text=text)
+    with pytest.raises(ComposePolicyError, match="Spring/PostgreSQL connection"):
+        validate_compose(data, manifest)
 
 
 @pytest.mark.parametrize("fragment", [
