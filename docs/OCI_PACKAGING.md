@@ -181,8 +181,8 @@ These are internal trusted-controller operations, not public/model-callable APIs
 Typed receipts and matching hashes are **not** authentication or proof that output
 exists: the controller must authenticate the worker, rehash the actual durable CAS
 object and verify cleanup before calling `record_result`/`release_resources`.
-The worker, authenticated receipt/cleanup transport, output CAS, registry and signer
-are still incomplete. No production migration has been applied.
+Activation of the worker/output CAS, authenticated receipt/cleanup transport,
+registry and signer are still incomplete. No production migration has been applied.
 
 Verification of this ledger checkpoint: all 465 coding tests passed against the
 real loopback PostgreSQL fixtures (no skips). The disposable full Alembic chain
@@ -191,6 +191,53 @@ upgraded to 021, downgraded to 002 and upgraded back to 021 successfully using
 --check` passed. The image-job tests measure actual synthetic OCI assembly for
 receipt fixtures, but the worker receipt/cleanup authority is simulated; no live
 keyless worker or durable OCI output-store proof is claimed.
+
+## Private retained OCI outputs and fixed worker logic
+
+The next local component, `image_output_store.py`, retains actual OCI archive bytes
+in owner-only per-job directories (0700 directories, 0600 files). SQLite WAL/FULL
+tracks the exact dispatch binding, image evidence, archive digest/size and expiry.
+File and directory fsync precede the retained state. Interrupted writes remain
+`writing`, occupy their storage allowance and cannot be blindly overwritten.
+Repeated fully committed requests recover the same immutable measurement.
+
+The store permits at most eight live outputs, 768 MiB per archive and 2 GiB total;
+it retains bounded tombstones to prevent reuse of removed job identities. Reads
+rehash actual bytes and verify the complete OCI blob graph, compressed descriptors
+and uncompressed rootfs diff IDs without extracting anything onto the host.
+Unbound blobs, links, unsafe ownership/permissions, changed content and foreign
+dispatch bindings are rejected. Cleanup removes only tracked filenames and refuses
+unexpected content. Its observation explicitly says `execution_cleanup_verified:
+false`: deleting an output is not proof that a worker stopped.
+
+`image_packaging_worker.py` exposes only fixed assembly and read-only observation.
+It binds the actual artifact, approved runtime-policy hash and base manifest to the
+central job envelope, assembles with the non-executing packager and stores the image.
+Its isolated-Python bootstrap imports only reviewed, protected sibling modules,
+not generated repository code. Responses contain measured references, never source
+bodies, model keys or a claim of worker termination. The central dispatch now emits
+the exact worker envelope including target/server/project, timeout and deadlines.
+
+The CLI requires Linux UID 65532, an allowlisted keyless environment, empty effective
+capabilities, no-new-privileges, seccomp filtering, finite cgroup CPU/memory/pid limits,
+zero swap, loopback-only networking and a read-only root; it sets additional process
+and transfer/time bounds. These guest-side checks do not authenticate the runtime
+or its host. The trusted launcher still must consume the exact dispatch in its host
+journal, enforce gVisor/container/mount identity, preserve only per-job storage,
+own cancellation/reaping and verify process termination before recording a central
+success/cleanup receipt. That host launcher/transport and activation are **not yet
+implemented/proven**; this component has not been installed or run on the VM.
+
+Local tests exercise real assembly and filesystem/database retention with synthetic
+runtime/JAR fixtures. They also prove standalone `python -I` bootstrap and CLI
+rejection of the current unenforced environment. They do not simulate a successful
+enforced Linux launch as live evidence, and do not prove a running generated app.
+
+Verification for this output/worker checkpoint: all 501 coding tests passed with
+real loopback PostgreSQL fixtures and no skips; targeted Flake8, Bandit and diff
+checks passed. The only warning is the existing Google GenAI Python 3.14 typing
+deprecation from the user-owned Vertex-provider test. No production migration,
+VM modification, model call, registry publication or generated Service occurred.
 
 References: [OCI manifests](https://github.com/opencontainers/image-spec/blob/main/manifest.md),
 [OCI image configuration](https://github.com/opencontainers/image-spec/blob/main/config.md),

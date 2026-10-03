@@ -214,8 +214,22 @@ async def claim_dispatch(pool, job_id, *, user_id, lease_owner):
             "dispatched_at=now(),heartbeat_at=now(),updated_at=now() WHERE id=$1", job_id, token, lease_owner,
         )
         await _event(conn, job_id, "dispatch_intent")
+        from app.coding.image_output_store import verify_binding
+        binding = verify_binding({
+            "version": 1, "build_job_id": str(job_id), "dispatch_token": str(token),
+            "request_hash": row["request_hash"], "source_hash": request.source_hash,
+            "validation_claim_id": str(request.validation_claim_id),
+            "validation_job_id": artifact["validation_job_id"], "profile": request.profile,
+            "artifact_sha256": request.artifact_sha256, "base_manifest_digest": request.base_manifest_digest,
+            "runtime_policy_hash": request.runtime_policy_hash, "timeout_seconds": request.timeout_seconds,
+            "execution_deadline_unix": int(request.planned_end_at.timestamp()),
+            "output_expires_at_unix": int(request.output_expires_at.timestamp()),
+            "target_hash": request.target_hash, "server_uuid": target.server_uuid,
+            "project_id": target.project_id,
+        })
         return {"build_job_id": job_id, "dispatch_token": token, "request_hash": row["request_hash"],
-                "request": request, "artifact": artifact, "server_uuid": target.server_uuid}
+                "request": request, "artifact": artifact, "server_uuid": target.server_uuid,
+                "worker_binding": binding}
 
 
 def _dispatch(row, token, owner):

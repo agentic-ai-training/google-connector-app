@@ -2739,3 +2739,40 @@ disk cleanup. This is conservation accounting with a state machine. A capacity
 ledger only admits work—it does not enforce operating-system limits. The keyless
 worker must independently enforce those limits and authenticate its cleanup proof.
 See [the implemented boundary and remaining worker work](OCI_PACKAGING.md).
+
+<a id="dictionary-durable-oci-output-commit"></a>
+## Durable output commit, tombstones and two different cleanup proofs
+
+An image held in a Python object is not a durable workflow result. Our output store
+uses this ordering to bridge file bytes and the journal:
+
+```text
+bound intent committed (writing)
+  -> exclusive temporary file -> write -> fsync(file)
+  -> exclusive final link -> remove temporary link -> fsync(directory)
+  -> journal commit (retained)
+  -> compact measured reference returned
+```
+
+A crash before the last journal commit leaves an uncertain `writing` record, not
+permission to overwrite or pretend the image completed. A lost response after the
+last commit can be recovered by reading and rehashing the exact retained object.
+These are different failure states. SQLite commits and filesystem fsync are separate
+durability primitives; no single transaction magically covers both.
+
+Deletion leaves a **tombstone**: a compact record that a job identity was removed.
+This prevents delayed messages from recreating the same output. Live bytes, live
+object count and tombstone count each need bounds. Reaching a bound is an explicit
+capacity error, not a reason to silently drop replay-protection history.
+
+Rehashing a `B`-byte output costs `O(B)`. Verifying its manifest/blob references is a
+graph traversal with dictionary lookup, `O(V + E)` graph work plus the cost of hashing
+all compressed and bounded expanded bytes. The current implementation retains bounded
+archive/blob bytes in memory; it is not an unbounded streaming store. Production must
+also enforce the declared cgroup/process/storage limits.
+
+Finally, deleting a file and terminating a process are independent observations.
+The CAS may prove `output_removed=true` while explicitly reporting
+`execution_cleanup_verified=false`. Only the authenticated host controller can
+combine exact job/runtime identity and verified termination with the CAS observation
+to release the central resource obligation. Matching JSON fields alone are not proof.

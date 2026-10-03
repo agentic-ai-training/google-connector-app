@@ -2351,6 +2351,18 @@ changes become production evidence.
   skips), the full disposable Alembic 021 -> 002 -> 021 round trip, targeted
   Flake8/Bandit and diff checks. No production schema, model call, resource, public
   port or deployment was changed. These results do not prove live worker execution.
+  The next local checkpoint adds an actual owner-private, bounded, fsync/SQLite-backed
+  OCI output store and fixed assembly/observation worker logic. Central dispatch
+  emits its source/artifact/policy/base/target/server/project/timeout envelope. Reads
+  rehash the complete OCI blob graph; interrupted writes stay allocated and cannot
+  be overwritten; cleanup refuses untracked data and does not claim process cleanup.
+  The standalone CLI rejects missing Linux/keyless/cgroup/network/read-only-root
+  prerequisites. Authenticated host-journal consumption, actual gVisor launch,
+  cancellation/reaping, receipt transport, production activation and live generated
+  app proof still remain open; do not mark this story complete.
+  Local verification: all 501 coding tests passed with real loopback PostgreSQL and
+  no skips; targeted Flake8/Bandit and diff checks passed. No production schema,
+  host bundle, service, resource or model-provider call was changed in this checkpoint.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

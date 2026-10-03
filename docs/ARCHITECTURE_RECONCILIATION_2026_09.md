@@ -272,3 +272,10 @@ durable output CAS, authenticated recovery/cleanup transport, registry publicati
 protected signing, production migrations and generated-app end-to-end verification
 remain open. See [OCI packaging](OCI_PACKAGING.md). The user-owned edits in
 `docs/ARCHITECTURE.md` have not been overwritten by this checkpoint.
+
+The following local checkpoint adds real bounded/private OCI output persistence and
+fixed keyless worker assembly/observation logic, with exact envelopes emitted by the
+job ledger. The worker CLI fails closed on an unenforced environment. Its guest-side
+checks are not authenticated host/container proof: gVisor launcher/journal integration,
+per-job mounted persistence, process reaping, result transport and live activation are
+still required. Output removal explicitly does not release execution authority by itself.

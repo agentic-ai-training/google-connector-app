@@ -84,6 +84,10 @@ async def test_duplicate_reserve_and_claim_dispatch_once(build):
     assert len({row["id"] for row in rows}) == 1
     issued = await asyncio.gather(*[dispatch(build, rows[0]) for _ in range(8)])
     assert len([item for item in issued if item]) == 1
+    envelope = next(item["worker_binding"] for item in issued if item)
+    assert envelope["dispatch_token"] == str(next(item["dispatch_token"] for item in issued if item))
+    assert envelope["source_hash"] == build[1].source_hash
+    assert envelope["target_hash"] == build[1].target_hash and envelope["server_uuid"] == build[2].server_uuid
     async with build[0].acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM coding_image_build_events "
                                    "WHERE event_type='dispatch_intent'") == 1
