@@ -26,6 +26,10 @@ REMOTE_COMMAND = (
     "sudo -n /usr/bin/env GCA_VALIDATION_CONFIG=/etc/gca-validation/policy.json "
     "/usr/bin/python3 -I /usr/local/libexec/gca/isolated_validation.py --gateway"
 )
+REMOTE_PACKAGING_COMMAND = (
+    "sudo -n /usr/bin/python3 -I /usr/local/libexec/gca/isolated_packaging.py "
+    "--policy /etc/gca-packaging/policy.json"
+)
 MAX_RESPONSE_BYTES = 2_000_000
 
 
@@ -113,8 +117,13 @@ def command(host: IAPValidationHost) -> tuple[list[str], dict]:
 
 
 async def _exchange(host: IAPValidationHost, payload: bytes, timeout: int, *,
-                    response_limit: int = MAX_RESPONSE_BYTES, binary: bool = False) -> dict | bytes:
+                    response_limit: int = MAX_RESPONSE_BYTES, binary: bool = False,
+                    gateway: str = "validation") -> dict | bytes:
+    if not isinstance(gateway, str) or gateway not in {"validation", "packaging"}:
+        raise ValidationTransportError("unsupported_fixed_host_gateway")
     args, environment = command(host)
+    if gateway == "packaging":
+        args[-1] = REMOTE_PACKAGING_COMMAND
     process = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE, env=environment, start_new_session=True,

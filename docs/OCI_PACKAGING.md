@@ -295,3 +295,67 @@ References: [OCI manifests](https://github.com/opencontainers/image-spec/blob/ma
 [OCI image configuration](https://github.com/opencontainers/image-spec/blob/main/config.md),
 [OCI layers and whiteouts](https://github.com/opencontainers/image-spec/blob/main/layer.md),
 [OCI layouts](https://github.com/opencontainers/image-spec/blob/main/image-layout.md).
+
+## Fixed host launcher and durable controller — 3 October 2026
+
+The formerly missing launcher and receipt path are now implemented **locally** in
+`isolated_packaging.py`, `image_build_transport.py` and `image_build_controller.py`.
+Earlier checkpoint paragraphs describe the state at those checkpoints, not current
+installation status. This seven-file bundle is not yet installed on the VM.
+
+```text
+Leased controller + consent + funded capacity
+        |
+one-time dispatch binding persisted in PostgreSQL
+        |
+pinned IAP/SSH -> fixed root gateway -> shared host journal intent
+        |
+exact retained validation artifact + approved offline runtime base
+        |
+private 2,040 MiB filesystem; read-only per-job input/base/bundle mounts
+        |
+fixed UID 65532 gVisor worker; no network, keys, Docker socket or shell choice
+        |
+non-executing OCI assembly -> fsync/private output journal
+        |
+exact container termination -> host rehash -> authenticated bound receipt
+        |
+CPU/memory released; output disk remains held
+        |
+explicit/expiry cleanup -> normal verified unmount -> private volume removed
+        |
+authenticated removal receipt -> disk reservation released
+```
+
+The root controller and guest share the operator-prepared `gcapackaging.slice`
+aggregate limit: at most one CPU, 3 GiB memory, no swap and 64 total tasks. The guest
+also has its own 16-task limit. A private fixed-size ext4 backing file bounds staging;
+normal unmount is mandatory. Busy, foreign or ambiguous mounts remain allocated.
+The reviewed source bundle is hashed and loaded from exact protected files, without
+workspace imports or cached bytecode. The controller never extracts build archives
+or runs generated code. Only the guest can write its private output mount.
+
+Transport sends bounded metadata, not a second artifact upload. The host reads its
+already retained validated artifact. Loss of a response, controller cancellation or
+worker death preserves the original dispatch and capacity obligation. A replacement
+controller observes/retrieves the same job; it cannot launch another one. Cleanup
+remains available after run deletion or target revocation and cannot use a guest's
+JSON assertion as authentication. Both execution and storage evidence are required.
+
+Before activation, still required: install/hash the complete protected bundle;
+prepare and verify the operator cgroup; approve real offline Node/Java validation
+toolchains and runtime bases; run synthetic Linux/gVisor mount, interruption,
+reaper and cleanup proofs; apply approved production migrations and enroll funded
+capacity using fresh attributable billing; implement registry publication/protected
+signing and worker integration; complete behavioral generated-app and Chat delivery
+proof. Existing two-file VM installation and local mocks do not satisfy these gates.
+
+Tests use real local SQLite/OCI files and disposable PostgreSQL schemas, while
+Docker, privileged filesystem mounts, cgroups and pinned-host responses are simulated.
+No new cloud resource, production migration, private-source remote execution,
+provider call, registry publication or generated deployment occurred here.
+
+Verification for this launcher/controller checkpoint: 601 coding tests passed with
+real loopback PostgreSQL and no skips; targeted Flake8, Bandit and diff checks passed.
+The existing Google GenAI/Python 3.14 deprecation warning remains. No migration SQL
+changed after the prior successful disposable 022 -> 002 -> 022 round trip.

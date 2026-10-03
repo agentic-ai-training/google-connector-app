@@ -289,3 +289,13 @@ Late process observations reopen obligations, including after retirement. Cleanu
 survives deletion/revocation/expiry but cannot prove successful assembly or publication.
 This is local implementation, not a VM-installed packaging launcher or production
 migration; per-job mounts, actual gVisor execution and authenticated receipts remain open.
+
+The next local checkpoint implements the fixed root packaging launcher, private
+per-job bounded filesystem/mounts, shared aggregate controller/guest cgroup contract,
+and pinned IAP/SSH assembly/recovery/removal protocol. Its durable controller dispatches
+once, retains uncertain obligations, recovers the original receipt and separates
+execution from storage release. No arbitrary model-selected host command is accepted.
+The complete bundle, operator cgroup, actual toolchain/runtime bases and live gVisor
+enforcement remain uninstalled/unproven. Publication/signing, production integration,
+funded enrollment and the full application demonstration remain open. Local tests
+must not be represented as an active production image pipeline.

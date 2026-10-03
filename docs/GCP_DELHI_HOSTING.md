@@ -302,3 +302,19 @@ does not provide an updated promotional-credit balance or application health pro
 Sources: [Coolify installation](https://coolify.io/docs/start-with-self-hosted),
 [GCE runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
 [billing budget alerts](https://docs.cloud.google.com/billing/docs/how-to/budgets).
+
+### User-provided billing report — received 3 October 2026
+
+The pasted report covers **1–29 September**, not current October usage. It shows
+Compute Engine usage INR 4,096.68 and Networking INR 23.50, total INR 4,120.18,
+offset by the same amount of trial-credit/other savings and net INR 0.00. This is
+credit consumption, not zero-cost infrastructure. The trial balance is INR 24,544.99
+of INR 28,693.88, implying INR 4,148.89 consumed overall. The INR 28.71 difference
+is unexplained by that displayed service table; do not invent its service or period.
+The September forecast is not a current October accrued-cost measurement.
+
+Fresh project-filtered charges through today, separated by SKU (VM, disk, network
+and other services), and a current trial balance are still required for attributable
+funded production enrollment. Do not double-charge the net-zero credit-offset
+invoice, extrapolate this partial period as a full month, spend the protected Vertex
+allocation on hosting, or extend the fixed STOP deadline from this report.

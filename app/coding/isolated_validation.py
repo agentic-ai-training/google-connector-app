@@ -91,7 +91,26 @@ def _artifact_helper():
         raise IsolationError("Artifact helper is unavailable")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    # The reviewed sibling source, not a potentially stale cached bytecode file.
+    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)  # nosec B102
+    return module
+
+
+def _packaging_helper():
+    if __package__:
+        from app.coding import isolated_packaging
+        return isolated_packaging
+    path = Path(__file__).resolve().with_name("isolated_packaging.py")
+    for item in (path, *path.parents):
+        info = item.lstat()
+        if item.is_symlink() or info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise IsolationError("Packaging cleanup helper is not operator protected")
+    spec = importlib.util.spec_from_file_location("gca_isolated_packaging", path)
+    if spec is None or spec.loader is None:
+        raise IsolationError("Packaging cleanup helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)  # nosec B102
     return module
 
 
@@ -433,9 +452,16 @@ class Journal:
                 artifacts_purged = helper.purge_expired_build_artifacts(self.directory)
             except helper.BuildArtifactError as error:
                 raise IsolationError("Build artifact cleanup requires operator inspection") from error
+        packaging_purged = 0
+        if (self.directory / "packaging-jobs").exists():
+            try:
+                packaging_purged = _packaging_helper().purge_expired(self)
+            except (RuntimeError, OSError, ValueError) as error:
+                raise IsolationError("Packaging storage cleanup requires operator inspection") from error
         return {"cleaned_job_ids": cleaned, "uncertain_job_ids": sorted(uncertain),
                 "untracked_container_count": untracked,
-                "expired_build_artifacts_purged": artifacts_purged}
+                "expired_build_artifacts_purged": artifacts_purged,
+                "expired_packaging_staging_purged": packaging_purged}
 
 
 def source_archive(root: Path) -> bytes:

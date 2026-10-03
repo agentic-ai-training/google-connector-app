@@ -2817,3 +2817,44 @@ external I/O and dominates constant-size comparisons. Matching a hash prevents
 cross-job confusion but is not authentication. The real recovery path separately
 pins SSH identity and never accepts a model-selected command or cleanup assertion.
 See [the current implementation and remaining live proof](OCI_PACKAGING.md).
+
+<a id="dictionary-hierarchical-resource-budget"></a>
+## Hierarchical resource budget and private filesystem lease
+
+A **hierarchical budget** constrains the sum of child consumption, not merely each
+child independently. Two processes each capped at 3 GiB could otherwise consume
+6 GiB. The packaging controller and worker therefore belong below one 3 GiB cgroup
+parent, with tighter worker-specific task limits. The parent must be operator-owned;
+model-generated commands cannot create or raise it. This is a resource tree with
+the invariant `sum(active descendant usage) <= ancestor limit` at every constrained
+node. Inspecting a child alone does not prove the ancestor invariant.
+
+```text
+gcapackaging.slice: 1 CPU / 3 GiB / no swap / 64 tasks
+    +-- controller: trusted artifact/base reads and bounded copying
+    +-- guest: fixed UID 65532 worker / 16 tasks / private network
+
+PostgreSQL storage reservation: 2,048 MiB
+    +-- private backing filesystem: 2,040 MiB
+    +-- bounded host metadata and immutable binding
+```
+
+A **private filesystem lease** separates storage lifetime from process lifetime.
+The mount is tied to one immutable job and backing file, not just a path string.
+Kernel mount identity, filesystem type, mount options and backing-file identity
+must match before recovery or removal. No lazy/forced unmount is allowed: uncertain
+ownership means the ledger continues holding capacity. Filesystem expiry permits
+cleanup, never re-execution. The retained host tombstone prevents dispatch replay.
+
+In Python, dictionaries give expected `O(1)` indexed identity lookup, while canonical
+JSON serialization and hashing cost `O(k)` for `k` metadata bytes. Full OCI content
+verification remains `O(B)` for `B` bytes; a matching metadata hash does not replace
+that work. A bounded directory scan is `O(n)` with a hard cap on `n`. These algorithmic
+bounds complement, but do not replace, kernel CPU, memory, task and filesystem caps.
+
+A **bootstrap trust boundary** controls which Python modules can execute before
+normal application imports. The standalone worker loads exact reviewed, hashed,
+protected sibling source files, not workspace modules or stale `.pyc` caches.
+`python -I -B` and a cleared environment are additional defenses, not a sandbox by
+themselves. Execution isolation still requires the independently verified host and
+guest controls. Local mocked controls are tests of decision logic, not live evidence.

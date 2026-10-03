@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import resource
 import signal
+import stat
 import sys
 import time
 import types
@@ -42,7 +43,10 @@ def _bootstrap():
             raise RuntimeError("packaging bundle is unavailable")
         module = importlib.util.module_from_spec(spec)
         sys.modules[identity] = module
-        spec.loader.exec_module(module)
+        # Only the exact protected sibling source is executed. Ignore stale .pyc
+        # files; no generated repository module is imported.
+        exec(compile((root / (name + ".py")).read_bytes(), str(root / (name + ".py")), "exec"),
+             module.__dict__)  # nosec B102
 
 
 if not __package__:
@@ -150,12 +154,27 @@ def main():
     parser.add_argument("--runtime-policy", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--request-file", type=Path)
     args = parser.parse_args()
     try:
         require_enforcement()
         signal.alarm(45)
-        result = serve(sys.stdin.buffer, runtime_policy_path=args.runtime_policy,
-                       output_root=args.output_root, workspace=args.workspace)
+        if args.request_file is None:
+            result = serve(sys.stdin.buffer, runtime_policy_path=args.runtime_policy,
+                           output_root=args.output_root, workspace=args.workspace)
+        else:
+            # The host launcher mounts its private fixed frame read-only. This is
+            # an operator CLI path, never a generated tool/shell argument.
+            runtimes._protected(args.request_file, args.workspace.resolve(strict=True))
+            descriptor = os.open(args.request_file, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                        or info.st_mode & 0o077
+                        or not 1 <= info.st_size <= build_artifact.MAX_ARTIFACT_ARCHIVE_BYTES + 16384):
+                    raise PackagingWorkerError("packaging frame is not private and bounded")
+                result = serve(stream, runtime_policy_path=args.runtime_policy,
+                               output_root=args.output_root, workspace=args.workspace)
         # No body, private source, environment or provider credential is printed.
         sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
         sys.stdout.flush()

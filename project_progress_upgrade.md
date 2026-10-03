@@ -2378,6 +2378,20 @@ changes become production evidence.
   the full disposable Alembic 022 -> 002 -> 022 round trip, targeted Flake8/Bandit
   and diff checks passed. Existing user-owned model/configuration/architecture edits
   were preserved and not included in this checkpoint.
+  The next local checkpoint implements `isolated_packaging` and the pinned
+  `image_build_transport`/`image_build_controller`: fixed protected seven-file bundle,
+  shared journal intent before private reads, private bounded filesystem and exact
+  gVisor mount/resource inspection, aggregate controller-plus-worker limits, actual
+  OCI rehashing, same-dispatch recovery and explicit authenticated storage cleanup.
+  Local tests use real PostgreSQL/SQLite/artifacts but simulated Docker, mounts,
+  cgroups and host responses. The VM still has the old two-file validation bundle;
+  production activation, actual runtime/toolchain approval, registry/signing and
+  end-to-end behavior/Chat proof remain incomplete. Keep this story unchecked.
+  Verification: 601 coding tests passed with real loopback PostgreSQL and no skips;
+  targeted Flake8/Bandit and diff checks passed. No migration SQL changed from the
+  prior round-tripped 022 revision. The user-provided September billing report was
+  recorded without treating credit offsets as free resource usage or current October
+  accrued charges. Existing user-owned edits were preserved.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.
