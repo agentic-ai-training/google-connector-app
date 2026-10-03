@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -96,6 +97,43 @@ def test_policy_inside_repository_is_not_authority(tmp_path):
         runner.load_policy(config, tmp_path)
 
 
+@pytest.mark.parametrize("tampered", [False, True])
+def test_missing_toolchain_reload_requires_operator_archive_digest(monkeypatch, tampered):
+    with tempfile.TemporaryDirectory(prefix=".gca-offline-toolchain-", dir=Path.home()) as directory:
+        root = Path(directory)
+        body = b"synthetic archive bytes"
+        archive = root / (IMAGE.removeprefix("sha256:") + ".tar")
+        archive.write_bytes(body + (b"tampered" if tampered else b""))
+        archive.chmod(0o600)
+        registry = root / "toolchain-registry.json"
+        registry.write_text(json.dumps({"version": 1, "images": {IMAGE: {
+            "archive_path": str(archive), "archive_bytes": archive.stat().st_size,
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "repository_digest": "registry.example/toolchain@sha256:" + "a" * 64,
+        }}}))
+        registry.chmod(0o600)
+        monkeypatch.setattr(runner, "TOOLCHAIN_REGISTRY", registry)
+        calls = []
+
+        def docker(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("image", "inspect"):
+                if len(calls) == 1:
+                    raise runner.IsolationError("missing image")
+                return IMAGE.encode()
+            return b""
+
+        monkeypatch.setattr(runner, "docker", docker)
+        if tampered:
+            with pytest.raises(runner.IsolationError, match="archive digest mismatch"):
+                runner.ensure_toolchain_image(IMAGE)
+            assert len(calls) == 1
+        else:
+            runner.ensure_toolchain_image(IMAGE)
+            assert calls[1] == ("image", "load", "--input", str(archive))
+            assert not any("pull" in call for call in calls)
+
+
 def fake_transport(monkeypatch, *, fail=None, mounts=None):
     calls = []
     container = {}
@@ -114,6 +152,8 @@ def fake_transport(monkeypatch, *, fail=None, mounts=None):
             raise subprocess.TimeoutExpired(args, 30)
         if args[0] == "create":
             return b"c" * 64
+        if args[:2] == ("image", "inspect"):
+            return IMAGE.encode()
         if args[0] == "inspect":
             return json.dumps([container]).encode()
         if args[0] == "ps":
@@ -135,7 +175,7 @@ def test_validator_copies_snapshot_without_host_mount_or_credentials(tmp_path, m
     calls = fake_transport(monkeypatch)
     result = runner.validate(tmp_path, "python_compile", 10, POLICY)
     assert result["isolation"] == "gvisor"
-    create = calls[0][0]
+    create = next(args for args, _ in calls if args[0] == "create")
     assert "--runtime=runsc" in create
     assert "--network=none" in create
     assert "--pull=never" in create
@@ -303,7 +343,7 @@ def test_generated_profiles_run_only_fixed_offline_commands(tmp_path, monkeypatc
         commands.append(args[4:])
         return {"success": True, "exit_code": 0,
                 "stdout": (surefire_archive() if kwargs.get("binary") else
-                           "artifact\n" if args[4] == "find" else ""),
+                           "target/app.jar\n" if args[4] == "find" else ""),
                 "stderr": "", "output_truncated": False}
 
     monkeypatch.setattr(runner, "execute_bounded", execute)

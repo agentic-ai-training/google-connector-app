@@ -15,6 +15,7 @@ from app.coding import deployment_admission as deployment
 from app.coding import isolated_validation as isolation
 from app.coding import validation_admission as admission
 from app.coding import validation_transport as transport
+from app.coding.build_artifact import BuildArtifactError, verify_artifact_reference
 from app.coding.repository import encrypt_json, decrypt_json
 from app.config.settings import get_settings
 
@@ -48,10 +49,22 @@ def _verified_result(request, claim_id, result):
     if sum(len(value.encode()) for value in text.values()) > isolation.MAX_OUTPUT_BYTES * 3:
         # UTF-8 replacement of invalid raw bytes may increase the encoded byte count.
         raise admission.ValidationConflict("validation output exceeds bounds")
+    artifact = {}
+    if result["success"] and request.profile in {"react_build", "spring_package"}:
+        try:
+            artifact["build_artifact"] = verify_artifact_reference(
+                result.get("build_artifact"), profile=request.profile,
+                source_hash=request.source_hash, claim_id=str(claim_id),
+                job_id=result["validation_job_id"],
+            )
+        except BuildArtifactError as error:
+            raise admission.ValidationConflict("validated build artifact is absent or unbound") from error
+    elif result.get("build_artifact") is not None:
+        raise admission.ValidationConflict("unexpected validated build artifact")
     return {**required, **text, "success": result["success"], "exit_code": result["exit_code"],
             "cleanup_verified": True, "workspace_mutations_discarded": True,
             "validation_job_id": result["validation_job_id"],
-            "output_truncated": result.get("output_truncated") is True}
+            "output_truncated": result.get("output_truncated") is True, **artifact}
 
 
 async def _read(pool, claim_id, user_id):

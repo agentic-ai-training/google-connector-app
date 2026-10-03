@@ -8,7 +8,9 @@ from uuid import uuid4
 import pytest
 
 from app.coding import isolated_validation as runner
-from tests.coding.test_isolated_validation import fake_transport
+from tests.coding.test_isolated_validation import fake_transport, generated_stack, surefire_archive
+from tests.coding.test_build_artifact import archive, boot_jar
+from app.coding.build_artifact import load_build_artifact
 
 
 IMAGE = "sha256:" + "a" * 64
@@ -65,6 +67,36 @@ def test_bound_execution_persists_identity_before_create_and_rejects_replay(setu
         assert observed["binding_hash"] == hashlib.sha256(json.dumps(
             binding, sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
+
+
+@pytest.mark.parametrize("profile", ["react_build", "spring_package"])
+def test_bound_build_retains_actual_output_before_cleanup(setup, monkeypatch, profile):
+    workspace, policy, binding = setup
+    generated_stack(workspace)
+    policy["images"] = {profile: IMAGE}
+    binding.update(profile=profile,
+                   source_hash=hashlib.sha256(runner.source_archive(workspace)).hexdigest())
+    payload = (archive({"dist/index.html": b"<html>app</html>"}) if profile == "react_build"
+               else archive({"target/app.jar": boot_jar()}))
+    calls = fake_transport(monkeypatch)
+
+    def execute(args, _timeout, **kwargs):
+        output = "target/app.jar\n" if args[4] == "find" else ""
+        if kwargs.get("binary"):
+            output = surefire_archive() if args[-1] == "target/surefire-reports" else payload
+        return {"success": True, "exit_code": 0, "stdout": output, "stderr": "",
+                "output_truncated": False}
+
+    monkeypatch.setattr(runner, "execute_bounded", execute)
+    result = runner.validate(workspace, profile, 10, policy, binding)
+    reference = result["build_artifact"]
+    assert reference["source_hash"] == binding["source_hash"]
+    assert reference["claim_id"] == binding["claim_id"]
+    assert reference["validation_job_id"] == result["validation_job_id"]
+    assert load_build_artifact(Path(policy["state_directory"]), reference["artifact_id"],
+                               reference["archive_sha256"]) == payload
+    assert result["cleanup_verified"] is True
+    assert calls[-1][0][:3] == ("rm", "--force", "--volumes")
 
 
 @pytest.mark.parametrize("field,value", [

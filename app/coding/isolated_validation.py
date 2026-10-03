@@ -11,6 +11,7 @@ import argparse
 import fcntl
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -66,11 +67,32 @@ MAX_OUTPUT_BYTES = 256_000
 MAX_REPORT_ARCHIVE_BYTES = 4 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_SOURCE_BYTES + MAX_SOURCE_ENTRIES * 1024 + 10240
 DOCKER = "/usr/bin/docker"
+TOOLCHAIN_REGISTRY = Path("/etc/gca-validation/toolchain-registry.json")
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
 
 
 class IsolationError(RuntimeError):
     pass
+
+
+def _artifact_helper():
+    if __package__:
+        from app.coding import build_artifact
+        return build_artifact
+    # Python -I omits the script directory from sys.path. Load the installed,
+    # operator-owned stdlib helper by an exact sibling path, never from a workspace.
+    path = Path(__file__).resolve().with_name("build_artifact.py")
+    for item in (path, *path.parents):
+        info = item.stat()
+        if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise IsolationError("Artifact helper is not operator protected")
+    spec = importlib.util.spec_from_file_location("gca_build_artifact", path)
+    if spec is None or spec.loader is None:
+        raise IsolationError("Artifact helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def sensitive_name(name: str) -> bool:
@@ -237,12 +259,15 @@ class Journal:
             os.close(self.lock)
         self.db = self.lock = None
 
-    def begin(self, profile: str, image: str, timeout: int, binding: dict | None = None) -> dict:
+    def require_available(self, binding: dict | None = None):
         if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
                                        (binding["claim_id"],)).fetchone():
             raise IsolationError("Dispatch claim already consumed; reconcile instead of replaying")
         if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
             raise IsolationError("Validation slot held by an unreconciled job")
+
+    def begin(self, profile: str, image: str, timeout: int, binding: dict | None = None) -> dict:
+        self.require_available(binding)
         job_id = uuid.uuid4().hex
         now = int(time.time())
         with self.db:
@@ -358,8 +383,16 @@ class Journal:
             except (IsolationError, subprocess.TimeoutExpired, ValueError, KeyError):
                 self.record(job, "cleanup_uncertain")
                 uncertain.add(job["id"])
+        artifacts_purged = 0
+        if (self.directory / "build-artifacts").exists():
+            helper = _artifact_helper()
+            try:
+                artifacts_purged = helper.purge_expired_build_artifacts(self.directory)
+            except helper.BuildArtifactError as error:
+                raise IsolationError("Build artifact cleanup requires operator inspection") from error
         return {"cleaned_job_ids": cleaned, "uncertain_job_ids": sorted(uncertain),
-                "untracked_container_count": untracked}
+                "untracked_container_count": untracked,
+                "expired_build_artifacts_purged": artifacts_purged}
 
 
 def source_archive(root: Path) -> bytes:
@@ -424,6 +457,57 @@ def docker(*args: str, payload: bytes | None = None, timeout: int = 30) -> bytes
     if len(result.stdout) > 1_048_576:
         raise IsolationError("Docker control response exceeded bounds")
     return result.stdout
+
+
+def ensure_toolchain_image(image_id: str):
+    """Reload only an operator-archived exact pin; workload execution never downloads."""
+    try:
+        observed = docker("image", "inspect", image_id, "--format", "{{.Id}}").decode().strip()
+        if observed != image_id:
+            raise IsolationError("Toolchain image identity mismatch")
+        return
+    except IsolationError:
+        pass
+    registry = TOOLCHAIN_REGISTRY.resolve(strict=True)
+    for item in (registry, *registry.parents):
+        info = item.stat()
+        if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise IsolationError("Offline toolchain registry is not operator protected")
+    if registry.stat().st_size > 32768 or registry.stat().st_mode & 0o077:
+        raise IsolationError("Offline toolchain registry is invalid")
+    document = json.loads(registry.read_text())
+    if (not isinstance(document, dict) or set(document) != {"version", "images"}
+            or document["version"] != 1
+            or not isinstance(document["images"], dict) or len(document["images"]) > 8):
+        raise IsolationError("Offline toolchain registry is invalid")
+    record = document["images"].get(image_id)
+    if (not isinstance(record, dict) or set(record) != {
+            "archive_path", "archive_sha256", "archive_bytes", "repository_digest"}
+            or not re.fullmatch(r"[0-9a-f]{64}", str(record["archive_sha256"]))
+            or not isinstance(record["archive_path"], str)
+            or type(record["archive_bytes"]) is not int
+            or not 1 <= record["archive_bytes"] <= 512 * 1024 * 1024):
+        raise IsolationError("Approved toolchain has no offline archive")
+    archive = Path(record["archive_path"])
+    if (not archive.is_absolute() or archive.is_symlink()
+            or archive.name != image_id.removeprefix("sha256:") + ".tar"):
+        raise IsolationError("Offline toolchain archive identity is invalid")
+    for item in (archive, *archive.parents):
+        info = item.stat()
+        if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+            raise IsolationError("Offline toolchain archive is not operator protected")
+    if (not archive.is_file() or archive.stat().st_mode & 0o077
+            or archive.stat().st_size != record["archive_bytes"]):
+        raise IsolationError("Offline toolchain archive is invalid")
+    digest = hashlib.sha256()
+    with archive.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    if digest.hexdigest() != record["archive_sha256"]:
+        raise IsolationError("Offline toolchain archive digest mismatch")
+    docker("image", "load", "--input", str(archive), timeout=60)
+    if docker("image", "inspect", image_id, "--format", "{{.Id}}").decode().strip() != image_id:
+        raise IsolationError("Reloaded toolchain image identity mismatch")
 
 
 def execute_bounded(args: list[str], timeout: float, *, binary: bool = False,
@@ -591,6 +675,10 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
     check_archive(source, profile)
     if binding is not None:
         verify_dispatch(binding, policy, source, profile, timeout)
+    artifact_helper = (_artifact_helper() if binding is not None
+                       and profile in {"react_build", "spring_package"} else None)
+    journal.require_available(binding)
+    ensure_toolchain_image(policy["images"][profile])
     job = journal.begin(profile, policy["images"][profile], timeout, binding)
     name = job["name"]
     create_confirmed = False
@@ -628,6 +716,8 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
         workdir = "/workspace" + ("" if relative_cwd == "." else "/" + relative_cwd)
         deadline = time.monotonic() + timeout
         result = None
+        export_path = "dist" if profile == "react_build" else None
+        build_artifact = None
         for fixed_command in (*([PREPARE_COMMANDS[profile]] if profile in PREPARE_COMMANDS else []),
                               command):
             remaining = deadline - time.monotonic()
@@ -670,6 +760,43 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
                     result = {"exit_code": 1, "success": False, "output_truncated": False,
                               "stdout": "", "stderr": "Expected validation artifact is absent"}
                     break
+                if profile == "spring_package" and postcondition[0] == "find":
+                    paths = artifact["stdout"].splitlines()
+                    if (artifact["output_truncated"] or len(paths) != 1
+                            or not re.fullmatch(r"target/[A-Za-z0-9][A-Za-z0-9._-]*\.jar", paths[0])):
+                        result = {"exit_code": 1, "success": False, "output_truncated": False,
+                                  "stdout": "", "stderr": "Expected exactly one package JAR"}
+                        break
+                    export_path = paths[0]
+        if result["success"] and artifact_helper is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise IsolationError("Validation deadline exceeded")
+            captured = execute_bounded(
+                ["exec", "--workdir", workdir, name, "tar", "-cf", "-", export_path],
+                remaining, binary=True,
+                output_limit=artifact_helper.MAX_ARTIFACT_ARCHIVE_BYTES,
+            )
+            if not captured["success"] or captured["output_truncated"]:
+                raise IsolationError("Generated artifact export failed or exceeded bounds")
+            try:
+                manifest = artifact_helper.inspect_build_artifact(captured["stdout"], profile)
+                artifact_id = artifact_helper.save_build_artifact(
+                    journal.directory, job["id"], captured["stdout"], manifest,
+                )
+            except (artifact_helper.BuildArtifactError, OSError) as error:
+                raise IsolationError("Generated artifact could not be retained safely") from error
+            file_set_hash = hashlib.sha256(json.dumps(
+                manifest.file_hashes, separators=(",", ":"),
+            ).encode()).hexdigest()
+            build_artifact = {
+                "artifact_id": artifact_id, "archive_sha256": manifest.archive_sha256,
+                "file_set_sha256": file_set_hash, "file_count": manifest.file_count,
+                "content_bytes": manifest.content_bytes, "profile": profile,
+                "validation_job_id": job["id"], "claim_id": binding["claim_id"],
+                "source_hash": binding["source_hash"],
+                "expires_at_unix": int(time.time()) + artifact_helper.ARTIFACT_TTL_SECONDS,
+            }
         return {
             **result, "profile": profile, "isolation": "gvisor",
             "image_id": policy["images"][profile], "network": "none",
@@ -677,6 +804,7 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             "validation_job_id": job["id"], "cleanup_verified": True,
             **({"claim_id": binding["claim_id"], "request_hash": binding["request_hash"],
                 "source_hash": binding["source_hash"]} if binding else {}),
+            **({"build_artifact": build_artifact} if build_artifact is not None else {}),
         }
     finally:
         # Failure here overrides success. The caller must record cleanup uncertainty.

@@ -2315,6 +2315,19 @@ changes become production evidence.
   immutable evidence, single dispatch, unknown-outcome recovery and rollback guards
   are covered by disposable PostgreSQL tests. The controller is not yet connected to
   the actual Rust broker/hosted worker; no production claim has been issued.
+  2026-10-03: source-bound React/Spring build-output inspection and private bounded
+  artifact retention were added before cleanup; the controller requires an exact
+  claim/source/profile/job/digest/expiry reference. The two-file stdlib bundle was
+  installed on the existing VM with an idle-journal/import check. A missing synthetic
+  Python pin was replaced by a verified immutable official AMD64 image only after
+  valid/invalid sandbox compilation proofs. The image was archived privately;
+  controlled removal and exact offline reload passed, followed by bound transport,
+  replay-denial and cleanup proof. Docker containerd manifest/config identity handling
+  is explicitly checked. All 380 coding tests passed with disposable local PostgreSQL
+  schemas; targeted Flake8, Bandit and diff checks passed. Node/Java offline toolchains,
+  live generated artifacts, trusted image packaging/signing, authenticated artifact
+  consumption and production ledger/worker activation remain open. No new VM,
+  production migration, paid model call or generated app was started; keep unchecked.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

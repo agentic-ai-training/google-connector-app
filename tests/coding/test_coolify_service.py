@@ -2,6 +2,7 @@
 import asyncio
 import base64
 from hashlib import sha256
+import time
 from uuid import UUID, uuid4
 
 import httpx
@@ -271,9 +272,19 @@ async def approved_generated_stack(covered, context, monkeypatch, tmp_path,
     source_hash = sha256(source).hexdigest()
 
     async def validated(_host, envelope, _source):
-        return validation_result(
-            envelope, validation_job_id=envelope["claim_id"].replace("-", ""),
-        )
+        job_id = envelope["claim_id"].replace("-", "")
+        result = validation_result(envelope, validation_job_id=job_id)
+        # Mock the source-bound export contract; this fixture is not live build proof.
+        if envelope["profile"] in {"react_build", "spring_package"}:
+            result["build_artifact"] = {
+                "artifact_id": job_id + "-" + "e" * 64 + ".tar",
+                "archive_sha256": "e" * 64, "file_set_sha256": "f" * 64,
+                "file_count": 1, "content_bytes": 10, "profile": envelope["profile"],
+                "validation_job_id": job_id, "claim_id": envelope["claim_id"],
+                "source_hash": envelope["source_hash"],
+                "expires_at_unix": int(time.time()) + 3600,
+            }
+        return result
 
     monkeypatch.setattr(transport, "dispatch", validated)
     proofs = []
