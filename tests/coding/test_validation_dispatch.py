@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -95,6 +96,25 @@ def test_bound_build_retains_actual_output_before_cleanup(setup, monkeypatch, pr
     assert reference["validation_job_id"] == result["validation_job_id"]
     assert load_build_artifact(Path(policy["state_directory"]), reference["artifact_id"],
                                reference["archive_sha256"]) == payload
+    with runner.Journal(Path(policy["state_directory"])) as journal:
+        assert runner.retained_artifact(journal, binding, reference) == payload
+        for altered in ({**binding, "source_hash": "f" * 64},
+                        {**binding, "claim_id": str(uuid4())}):
+            with pytest.raises(runner.IsolationError, match="unknown, altered"):
+                runner.retained_artifact(journal, altered, reference)
+        journal.db.execute("UPDATE jobs SET state='cleanup_uncertain'")
+        with pytest.raises(runner.IsolationError, match="unreconciled"):
+            runner.retained_artifact(journal, binding, reference)
+        journal.db.execute("UPDATE jobs SET state='cleaned'")
+        expired = {**reference, "expires_at_unix": 0}
+        with pytest.raises(runner.IsolationError, match="unavailable or unbound"):
+            runner.retained_artifact(journal, binding, expired)
+    frame = json.dumps({"operation": "artifact", "binding": binding,
+                        "reference": reference}).encode() + b"\n"
+    output = io.BytesIO()
+    assert runner.gateway(io.BytesIO(frame), policy, output=output) is None
+    header, transferred = output.getvalue().split(b"\n", 1)
+    assert json.loads(header)["reference"] == reference and transferred == payload
     assert result["cleanup_verified"] is True
     assert calls[-1][0][:3] == ("rm", "--force", "--volumes")
 

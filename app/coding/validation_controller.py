@@ -5,6 +5,7 @@ for a fixed validation command, not permission to publish, deploy or claim full 
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -202,3 +203,85 @@ async def purge_expired_results(pool) -> int:
             "WHERE r.id=c.run_id AND r.user_id=c.user_id AND r.deleted_at IS NOT NULL))",
         )
     return int(status.rsplit(" ", 1)[-1])
+
+
+async def fetch_build_artifact(pool, claim_id: UUID, *, user_id: str, host,
+                             run_id: UUID, target_id: str, source_hash: str) -> tuple[bytes, dict]:
+    """Authorize exact private build bytes before the trusted packager consumes them."""
+    row = await _read(pool, claim_id, user_id)
+    request = admission.ValidationRequest.model_validate(deployment._json(row["request"]))
+    if (request.run_id != run_id or request.target_id != target_id
+            or request.source_hash != source_hash or request.profile not in {
+                "react_build", "spring_package"}
+            or deployment.fingerprint(request) != row["request_hash"]
+            or row["validation_outcome"] != "passed" or row["status"] != "released"):
+        raise admission.ValidationConflict("build artifact does not belong to the requested run")
+    async with pool.acquire() as conn, conn.transaction():
+        target_row = await deployment._target(conn, target_id, user_id)
+    target = deployment.RegisteredTarget.model_validate(deployment._json(target_row["config"]))
+    if (target.server_uuid != host.server_uuid or target.project_id != host.project_id
+            or deployment.fingerprint(target) != request.target_hash):
+        raise admission.ValidationConflict("build artifact host or target changed")
+    outcome = _outcome(row)
+    result = outcome["result"]
+    if result is None:
+        raise admission.ValidationConflict("private build result expired or was removed")
+    verified = _verified_result(request, claim_id, result)
+    # Reconstruct from immutable claim/target facts exactly as dispatch/recovery do.
+    # The envelope is deliberately not a model-writable database JSON field.
+    envelope = admission._host_envelope(claim_id, request, target, row["request_hash"])
+    if (not isinstance(envelope, dict) or envelope.get("request_hash") != row["request_hash"]
+            or envelope.get("claim_id") != str(claim_id)
+            or envelope.get("source_hash") != source_hash
+            or envelope.get("server_uuid") != host.server_uuid):
+        raise admission.ValidationConflict("stored build envelope is unavailable or altered")
+    reference = verified["build_artifact"]
+    body = await transport.fetch_artifact(host, envelope, reference)
+    # A tenant deletion/revocation racing the transfer must prevent builder consumption.
+    current = await _read(pool, claim_id, user_id)
+    if current["result_hash"] != row["result_hash"] or _outcome(current)["result"] is None:
+        raise admission.ValidationConflict("private build result changed during transfer")
+    async with pool.acquire() as conn, conn.transaction():
+        current_target = await deployment._target(conn, target_id, user_id)
+        if current_target["config_hash"] != request.target_hash:
+            raise admission.ValidationConflict("build target changed during transfer")
+    _verified_result(request, claim_id, _outcome(current)["result"])
+    return body, reference
+
+
+async def package_build_artifact(pool, claim_id: UUID, *, user_id: str, host,
+                                 run_id: UUID, target_id: str, source_hash: str,
+                                 runtime_policy_path, source_workspace):
+    """Authenticated artifact -> operator-pinned OCI image; no publish/sign/deploy."""
+    from app.coding.oci_packager import package_validated_artifact
+    from app.coding.runtime_image_store import load_runtime_base
+
+    body, reference = await fetch_build_artifact(
+        pool, claim_id, user_id=user_id, host=host, run_id=run_id,
+        target_id=target_id, source_hash=source_hash,
+    )
+    role = ("nginx_static_v1" if reference["profile"] == "react_build"
+            else "temurin_java17_v1")
+
+    def assemble():
+        base = load_runtime_base(runtime_policy_path, role=role, workspace=source_workspace)
+        return package_validated_artifact(
+            base, body, reference, profile=reference["profile"], source_hash=source_hash,
+            claim_id=str(claim_id), job_id=reference["validation_job_id"],
+        )
+
+    image = await asyncio.to_thread(assemble)
+    # Assembly does not hold a DB lock; recheck deletion/revocation and expiry afterwards.
+    row = await _read(pool, claim_id, user_id)
+    result = _outcome(row)["result"]
+    if result is None or result.get("build_artifact") != reference:
+        raise admission.ValidationConflict("private build evidence changed during packaging")
+    request = admission.ValidationRequest.model_validate(deployment._json(row["request"]))
+    _verified_result(request, claim_id, result)
+    async with pool.acquire() as conn, conn.transaction():
+        current_target = await deployment._target(conn, target_id, user_id)
+        current_config = deployment.RegisteredTarget.model_validate(deployment._json(current_target["config"]))
+        if (current_target["config_hash"] != request.target_hash
+                or deployment.fingerprint(current_config) != request.target_hash):
+            raise admission.ValidationConflict("build target changed during packaging")
+    return image

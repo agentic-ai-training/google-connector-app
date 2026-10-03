@@ -2600,3 +2600,87 @@ until the remote outcome is independently checked.
 Deletion and compensation are also distinct. A deleted user's private result is
 scrubbed, while a minimal orphan claim remains until the host job is reconciled. A
 simple cascade-delete would lose the only evidence needed for safe cleanup.
+
+<a id="dictionary-oci-content-addressed-image"></a>
+## OCI images, content-addressed storage and Merkle-style identity
+
+An image tag is a mutable name. A digest identifies exact bytes. Our local
+[OCI packaging component](OCI_PACKAGING.md) produces a manifest referencing a
+configuration blob and an ordered list of filesystem layers. Each descriptor contains
+the hash and size of its blob. Changing a child blob changes its descriptor; rebuilding
+the parent manifest changes its digest. This is a Merkle-style directed acyclic graph,
+not proof of who built it. Authentication, tenant authorization, signing and measured
+validation provenance remain distinct requirements.
+
+```text
+image manifest digest
+       |
+       +--> config digest --> ordered uncompressed layer diff IDs
+       |
+       +--> compressed base layer digest(s)
+       |
+       `--> compressed generated-output layer digest
+```
+
+Python's `dict` indexes blobs by digest, so duplicate content can share one entry:
+
+```python
+import hashlib
+
+def blob_key(body: bytes) -> str:
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+candidate_blobs = [b"first blob", b"second blob", b"first blob"]
+expected_digest = blob_key(b"first blob")
+blobs = {blob_key(body): body for body in candidate_blobs}
+assert blob_key(blobs[expected_digest]) == expected_digest
+```
+
+Hashing `B` bytes costs `O(B)` time. Dictionary insertion/lookup is expected `O(1)`
+after computing the key; cryptographic hashing is not free. The stored blobs still
+cost `O(B)` space. Hash collision resistance is a cryptographic assumption, not a
+mathematical guarantee that two different inputs can never collide. Never equate a
+hash supplied by a caller with trusted authority.
+
+<a id="dictionary-image-diff-id-whiteout"></a>
+## Image layer digest, diff ID and whiteout
+
+A compressed layer digest hashes the gzip bytes. A diff ID hashes the uncompressed
+tar bytes. They normally differ. Our assembler streams decompression while checking
+the base's diff IDs, with an aggregate expansion bound. This is a streaming-algorithm
+problem: retain a hash state and a byte counter, not the complete expanded filesystem.
+Time is `O(B)` in expanded bytes; extra checking memory is bounded by the read buffer.
+
+An OCI whiteout (`.wh.<name>`) represents deletion from a lower layer. It is not an
+ordinary asset filename. Generated React output must not acquire deletion authority
+merely by naming a file that way. The packager rejects whiteout path components before
+forming the output layer. This is an example of semantic validation beyond generic
+path traversal checks.
+
+Canonical ordering, fixed tar ownership/modes, zero timestamps and deterministic
+compression reduce irrelevant digest changes. Determinism is only promised for the
+same inputs and supported toolchain behavior, not for independently generated source
+or every future Python/zlib version. It does not prove that the application works.
+
+<a id="dictionary-non-executing-packaging"></a>
+## Non-executing packaging versus isolated validation
+
+Validation runs generated tests inside the sandbox; packaging copies their measured
+outputs into a trusted runtime contract without running them. These are different
+capabilities and should have separate authority. The sequence is a dependency DAG:
+
+```text
+source --tests/build--> verified output --package--> measured image
+                                                 |
+                                  publish/sign/deploy/behavioral checks
+```
+
+No node may infer a downstream result from its predecessor's success. A valid JAR
+header is not a passing API test; a valid image manifest is not a running container;
+a running container is not a connected database; an available URL is not proof of
+correct user-request completion. The durable workflow must verify each postcondition
+and preserve its evidence separately.
+
+The in-process local assembly helper is not yet a production keyless worker. A Python
+thread cannot be forcibly stopped safely when a coroutine is cancelled. Production
+needs process/container lifetime, finite resource admission and durable recovery.

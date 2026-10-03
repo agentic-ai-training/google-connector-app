@@ -815,7 +815,36 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             raise IsolationError(f"Sandbox cleanup uncertain for {name}") from error
 
 
-def gateway(stream, policy: dict) -> dict:
+def retained_artifact(journal: Journal, binding: dict, reference: dict) -> bytes:
+    """Read exact stored output for an already consumed, reconciled host claim."""
+    if not isinstance(binding, dict) or not isinstance(reference, dict):
+        raise IsolationError("Invalid retained artifact request")
+    claim_id = binding.get("claim_id")
+    if not isinstance(claim_id, str) or str(uuid.UUID(claim_id)) != claim_id:
+        raise IsolationError("Invalid retained artifact claim")
+    row = journal.db.execute(
+        "SELECT c.binding_hash,c.request_hash,j.id,j.state,j.profile FROM dispatch_claims c "
+        "JOIN jobs j ON j.id=c.job_id WHERE c.claim_id=?", (claim_id,),
+    ).fetchone()
+    binding_hash = hashlib.sha256(json.dumps(binding, sort_keys=True,
+                                            separators=(",", ":")).encode()).hexdigest()
+    if (row is None or row["state"] != "cleaned" or row["binding_hash"] != binding_hash
+            or row["request_hash"] != binding.get("request_hash")
+            or row["profile"] != binding.get("profile")):
+        raise IsolationError("Retained artifact claim is unknown, altered or unreconciled")
+    helper = _artifact_helper()
+    try:
+        verified = helper.verify_artifact_reference(
+            reference, profile=row["profile"], source_hash=binding["source_hash"],
+            claim_id=claim_id, job_id=row["id"],
+        )
+        return helper.load_build_artifact(journal.directory, verified["artifact_id"],
+                                          verified["archive_sha256"])
+    except (helper.BuildArtifactError, OSError, KeyError) as error:
+        raise IsolationError("Retained artifact is unavailable or unbound") from error
+
+
+def gateway(stream, policy: dict, *, output=None) -> dict | tuple[dict, bytes] | None:
     """Fixed SSH command; authenticated controller input, never a public listener.
 
     Hold the one host slot while accepting source: concurrent uploads cannot multiply
@@ -834,6 +863,19 @@ def gateway(stream, policy: dict) -> dict:
             if not isinstance(request["claim_id"], str):
                 raise IsolationError("Invalid observation claim")
             return journal.observe_claim(request["claim_id"])
+        if (set(request) == {"operation", "binding", "reference"}
+                and request["operation"] == "artifact"):
+            body = retained_artifact(journal, request["binding"], request["reference"])
+            metadata = {"operation": "artifact", "reference": request["reference"],
+                        "archive_bytes": len(body)}
+            if output is not None:
+                # Keep the host slot and upload/transfer alarm until the private bytes
+                # are drained: slow clients cannot multiply staging-memory allocations.
+                output.write(json.dumps(metadata, separators=(",", ":")).encode() + b"\n")
+                output.write(body)
+                output.flush()
+                return None
+            return metadata, body
         if (set(request) != {"operation", "binding", "archive_bytes"}
                 or request["operation"] != "validate"
                 or type(request["archive_bytes"]) is not int
@@ -871,9 +913,10 @@ def main() -> int:
                 raise IsolationError("Gateway cannot accept another operation")
             # Abrupt upload timeout creates no container; flock is released on exit.
             signal.alarm(45)
-            result = gateway(sys.stdin.buffer, load_policy(config, None))
+            result = gateway(sys.stdin.buffer, load_policy(config, None), output=sys.stdout.buffer)
             signal.alarm(0)
-            print(json.dumps(result))
+            if result is not None:
+                print(json.dumps(result))
             return 0
         if args.observe_claim:
             if args.workspace or args.profile or args.timeout or args.claim_id or args.reap:

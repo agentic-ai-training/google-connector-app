@@ -37,7 +37,8 @@ def boot_jar(*, executable=True):
                     "Main-Class: org.springframework.boot.loader.launch.JarLauncher\n"
                     "Start-Class: example.App\n") if executable else "Manifest-Version: 1.0\n"
         jar.writestr("META-INF/MANIFEST.MF", manifest)
-        jar.writestr("BOOT-INF/classes/example/App.class", b"class data")
+        # Class-version header only: this fixture is not a runnable application.
+        jar.writestr("BOOT-INF/classes/example/App.class", b"\xca\xfe\xba\xbe\x00\x00\x00\x3d" + b"class data")
         jar.writestr("BOOT-INF/lib/dependency.jar", b"dependency")
     return output.getvalue()
 

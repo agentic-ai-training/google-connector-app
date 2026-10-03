@@ -112,7 +112,8 @@ def command(host: IAPValidationHost) -> tuple[list[str], dict]:
     return args, env
 
 
-async def _exchange(host: IAPValidationHost, payload: bytes, timeout: int) -> dict:
+async def _exchange(host: IAPValidationHost, payload: bytes, timeout: int, *,
+                    response_limit: int = MAX_RESPONSE_BYTES, binary: bool = False) -> dict | bytes:
     args, environment = command(host)
     process = await asyncio.create_subprocess_exec(
         *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
@@ -126,21 +127,23 @@ async def _exchange(host: IAPValidationHost, payload: bytes, timeout: int) -> di
         finally:
             process.stdin.close()
 
-    async def read(stream):
+    async def read(stream, limit):
         body = bytearray()
         while chunk := await stream.read(65536):
-            if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
+            if len(body) + len(chunk) > limit:
                 raise ValidationTransportError("host_output_limit")
             body.extend(chunk)
         return bytes(body)
 
-    tasks = [asyncio.create_task(write()), asyncio.create_task(read(process.stdout)),
-             asyncio.create_task(read(process.stderr))]
+    tasks = [asyncio.create_task(write()), asyncio.create_task(read(process.stdout, response_limit)),
+             asyncio.create_task(read(process.stderr, MAX_RESPONSE_BYTES))]
     try:
         async with asyncio.timeout(timeout):
             _, output, stderr = await asyncio.gather(*tasks)
             if await process.wait() != 0:
                 raise ValidationTransportError(_failure_category(stderr))
+        if binary:
+            return output
         try:
             result = json.loads(output)
         except (ValueError, UnicodeError, RecursionError):
@@ -209,3 +212,39 @@ async def observe(host: IAPValidationHost, claim_id: str) -> dict:
         raise ValidationTransportError("invalid_claim_identity")
     payload = json.dumps({"operation": "observe", "claim_id": claim_id}).encode() + b"\n"
     return await _exchange(host, payload, 45)
+
+
+async def fetch_artifact(host: IAPValidationHost, envelope: dict, reference: dict) -> bytes:
+    """Read-only private transfer; caller first authorizes the durable tenant claim."""
+    from app.coding.build_artifact import (
+        BuildArtifactError, MAX_ARTIFACT_ARCHIVE_BYTES, verify_artifact_reference,
+    )
+    try:
+        if not isinstance(envelope, dict) or envelope.get("server_uuid") != host.server_uuid:
+            raise ValidationTransportError("artifact_host_binding_mismatch")
+        verified = verify_artifact_reference(
+            reference, profile=envelope["profile"], source_hash=envelope["source_hash"],
+            claim_id=envelope["claim_id"], job_id=reference["validation_job_id"],
+        )
+    except (BuildArtifactError, KeyError, TypeError):
+        raise ValidationTransportError("artifact_reference_invalid") from None
+    payload = json.dumps({"operation": "artifact", "binding": envelope,
+                          "reference": verified}, separators=(",", ":")).encode() + b"\n"
+    if len(payload) > 8192:
+        raise ValidationTransportError("artifact_header_limit")
+    output = await _exchange(host, payload, 120,
+                             response_limit=MAX_ARTIFACT_ARCHIVE_BYTES + 8192, binary=True)
+    header, separator, body = output.partition(b"\n")
+    if not separator or len(header) > 8192:
+        raise ValidationTransportError("artifact_response_framing")
+    try:
+        info = json.loads(header)
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValidationTransportError("artifact_response_invalid") from None
+    if (not isinstance(info, dict) or set(info) != {"operation", "reference", "archive_bytes"}
+            or info["operation"] != "artifact" or info["reference"] != verified
+            or type(info["archive_bytes"]) is not int or info["archive_bytes"] != len(body)
+            or not 1 <= len(body) <= MAX_ARTIFACT_ARCHIVE_BYTES
+            or hashlib.sha256(body).hexdigest() != verified["archive_sha256"]):
+        raise ValidationTransportError("artifact_response_binding_mismatch")
+    return body

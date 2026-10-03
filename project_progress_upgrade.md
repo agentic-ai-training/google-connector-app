@@ -2328,6 +2328,17 @@ changes become production evidence.
   live generated artifacts, trusted image packaging/signing, authenticated artifact
   consumption and production ledger/worker activation remain open. No new VM,
   production migration, paid model call or generated app was started; keep unchecked.
+  The next local component now connects tenant-authorized private artifact transfer
+  to operator-pinned non-executing OCI image assembly. It binds real output bytes to
+  claim/source/job/file-set evidence, verifies base blob/diff-ID identities, rejects
+  layer whiteouts and known Java-version incompatibility, and rechecks deletion,
+  revocation and expiry around transfer/assembly. The fixed gateway has bounded binary
+  framing and holds its slot during transfer. See `docs/OCI_PACKAGING.md`. Dedicated
+  keyless build-job execution, actual runtime bases, registry publication, signer,
+  worker/Rust integration and live generated-app proof remain open.
+  Local verification of this retrieval/OCI checkpoint: 426 coding tests passed
+  against disposable loopback PostgreSQL schemas; targeted Flake8/Bandit and diff
+  checks passed. Existing model-router edits remain user-owned and uncommitted.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

@@ -100,6 +100,11 @@ release identity even if the statement has expired; expiry prevents another
 write claim, not investigation of an uncertain earlier write.
 No production signer/key has been enrolled. The external PostgreSQL image also needs
 approved digest provenance/scanning before any Service may be started.
+The local [OCI packaging pipeline](OCI_PACKAGING.md) now measures a generated image's
+actual manifest/config/layer bytes from its authorized validated artifact and an
+operator-pinned runtime base. This is not yet a durable hosted builder, registry
+publication or production signing proof. Existing deployment gates remain closed;
+do not manufacture a passing signed statement from local test fixtures.
 The create path now also reads the registered server, project, environment and
 destination from installed-version API routes before consuming the one-time claim.
 It checks UUID relationships, standalone/swarm type and an exact approved

@@ -139,9 +139,10 @@ separately retained build output has been captured. Cleanup uncertainty still
 overrides validation success.
 
 This export supplies input for the next trusted image-packaging step. The image
-builder, registry publication, measured image digest and signer still require
-implementation and live proof; artifact structure alone does not prove application
-behavior or establish source-to-image provenance.
+assembly component now connects authorized private retrieval to an operator-pinned,
+non-executing OCI packager; see [OCI packaging](OCI_PACKAGING.md). Production worker
+activation, registry publication, signed provenance and live behavioral proof remain
+open. Artifact structure alone does not prove application behavior or deployment.
 
 ## Live evidence
 
