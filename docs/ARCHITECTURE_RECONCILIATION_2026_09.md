@@ -256,3 +256,19 @@ components, minimize new machinery, make narrow changes and demand executable ev
 No claim of 100% correctness, unlimited free capacity, or guaranteed sub-10,000-token
 solutions is an acceptance criterion. Record measured success, coverage, costs and known
 limits. No production deployment or training job was performed during this reconciliation.
+
+### 3 October 2026 — Image packaging ownership checkpoint
+
+The existing build-artifact transfer and non-executing OCI assembly now have a local
+durable job-authority ledger (migration 021), with tenant/run/validation/source/target/
+runtime-policy binding, one-time dispatch, encrypted immutable results and separate
+execution-versus-output-storage release. Build, validation and deployed-app obligations
+share one funded capacity pool. A stale heartbeat never grants another execution;
+an authenticated old receipt can be recovered by a new leased controller. Run deletion
+scrubs private receipts while preserving outstanding cleanup obligations.
+
+This is not a production worker or deployment proof. Actual keyless host execution,
+durable output CAS, authenticated recovery/cleanup transport, registry publication,
+protected signing, production migrations and generated-app end-to-end verification
+remain open. See [OCI packaging](OCI_PACKAGING.md). The user-owned edits in
+`docs/ARCHITECTURE.md` have not been overwritten by this checkpoint.

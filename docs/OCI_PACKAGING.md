@@ -31,7 +31,7 @@ OCI layout archive (LOCAL COMPONENT)
                  |
 ----- not yet activated/proven below this line -----
 Scoped registry publication and exact readback
-Trusted build-job persistence + separate protected signer
+Activate durable build-job ledger + separate protected signer
 Compose bound to the two measured image digests + approved PostgreSQL
 Cost/capacity/user grant + one-time deployment dispatch
 Private runtime + behavioral/security/restart verification
@@ -106,7 +106,7 @@ and local mocked proofs must not be described as a live generated-image build.
 | Client transfer timeout | 120 seconds |
 
 Assembly still needs a dedicated keyless worker with enforced CPU/memory/storage/time
-limits and durable build-job ownership before production use. In-process thread
+limits and activation of durable build-job ownership before production use. In-process thread
 cancellation does not stop CPU work; it is not equivalent to an isolated worker.
 No runtime base has been enrolled on the VM, no image published, no signing key
 installed and no generated Service started by this component.
@@ -121,8 +121,9 @@ Do not use this count to claim live production deployment or behavior.
 
 1. Provision and scan approved Nginx/Java/PostgreSQL bases and complete offline
    Node/Maven validation toolchains under the existing hosting envelope.
-2. Add durable image-build intent/result/storage retention and finite recovery to
-   the shared capacity ledger; do not hold database locks over assembly or network I/O.
+2. Activate the migration-021 image-job ledger through the authenticated worker;
+   implement its host journal and durable output CAS. Do not hold database locks
+   over assembly or network I/O. Local ledger implementation is described below.
 3. Run the dedicated keyless builder and authenticated publication controller.
    Record exact registry manifest readback; a local image ID or a tag is insufficient.
 4. Bind measured image evidence, run/tenant/source/target/validation proof set to a
@@ -131,6 +132,65 @@ Do not use this count to claim live production deployment or behavior.
    security/behavioral verification and final authorized URL delivery.
 6. Demonstrate the complete durable request and fault recovery, not merely mocked
    HTTP or a structurally valid OCI layout.
+
+## Durable image-job ownership (local implementation, migration 021)
+
+`app/coding/image_build_jobs.py` records the exact tenant/run, passed validation
+claim, artifact/source digests, immutable target, runtime-policy hash, base manifest,
+execution deadline and output-retention deadline. Enqueue and dispatch separately
+recheck the current coding-run lease, consent, target, passing artifact evidence and
+funded host capacity. Transactional events and an immutable request hash make
+idempotent repeats observable without giving them a second dispatch token.
+
+```text
+consented, leased run + passing private build artifact
+                       |
+  reserve shared funded CPU / memory / storage
+                       |
+  commit ONE dispatch token + owner + original deadline
+                       |
+  [keyless resource-enforced host worker: STILL TO BE WIRED]
+          |                             |
+   bound measured receipt          interruption/lost response
+          |                             |
+   finish + encrypted result       uncertain; capacity retained
+   release CPU/memory                   |
+   retain output disk             authenticated observation
+          |                       (never blind redispatch)
+          +---------+-------------------+
+                    |
+   verified staging/output cleanup -> release disk -> retired
+```
+
+Fixed admission is 1 CPU, 3 GiB memory and 2 GiB temporary/output storage, shared
+with validation and deployed-app claims. The worker must enforce those limits on
+that exact funded host; a local Python thread is not such a worker. Successful
+packaging releases CPU/memory only after authenticated process-cleanup evidence;
+disk remains charged until its retained output is actually removed. Neither a
+heartbeat timeout nor an output expiry frees capacity by itself.
+
+A replacement leased controller may recover the old worker's measured receipt
+without changing its dispatch token. The receipt's completion time must fall
+between the original dispatch and execution deadline, even if delivery is later.
+Recovery still requires live output retention and private validation evidence.
+The result is immutable and encrypted; deletion/expiry suppress private access.
+Deleting a run preserves orphan resource obligations and scrubs the stored private
+receipt. Downgrade refuses outstanding resources or retained private receipts.
+
+These are internal trusted-controller operations, not public/model-callable APIs.
+Typed receipts and matching hashes are **not** authentication or proof that output
+exists: the controller must authenticate the worker, rehash the actual durable CAS
+object and verify cleanup before calling `record_result`/`release_resources`.
+The worker, authenticated receipt/cleanup transport, output CAS, registry and signer
+are still incomplete. No production migration has been applied.
+
+Verification of this ledger checkpoint: all 465 coding tests passed against the
+real loopback PostgreSQL fixtures (no skips). The disposable full Alembic chain
+upgraded to 021, downgraded to 002 and upgraded back to 021 successfully using
+`scripts/verify_cloud_migrations_local.py`. Targeted Flake8, Bandit and `git diff
+--check` passed. The image-job tests measure actual synthetic OCI assembly for
+receipt fixtures, but the worker receipt/cleanup authority is simulated; no live
+keyless worker or durable OCI output-store proof is claimed.
 
 References: [OCI manifests](https://github.com/opencontainers/image-spec/blob/main/manifest.md),
 [OCI image configuration](https://github.com/opencontainers/image-spec/blob/main/config.md),

@@ -223,7 +223,7 @@ async def _deployment_schema(pool):
         await conn.execute("""CREATE TABLE coding_runs(
             id UUID PRIMARY KEY,user_id TEXT NOT NULL,status TEXT NOT NULL,
             source_egress_consented_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ)""")
-        for name in ("019_validation_capacity", "020_validation_results"):
+        for name in ("019_validation_capacity", "020_validation_results", "021_image_build_jobs"):
             await conn.execute(importlib.import_module("migrations.versions." + name).SCHEMA_SQL)
 
 

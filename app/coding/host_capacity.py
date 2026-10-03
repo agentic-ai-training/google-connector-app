@@ -54,7 +54,7 @@ async def register_pool(pool, host: FundedHost, *, evidence_reference: str):
 
 
 async def admit(conn, request: CapacityRequest, *, project_id, server_uuid, planned_end_at,
-                exclude=None, exclude_validation=None):
+                exclude=None, exclude_validation=None, exclude_image_build=None):
     if not conn.is_in_transaction():
         raise cost_ledger.CostLedgerConflict("capacity admission requires a transaction")
     account = await cost_ledger._account(conn, project_id)
@@ -93,7 +93,15 @@ async def admit(conn, request: CapacityRequest, *, project_id, server_uuid, plan
         FROM coding_validation_claims WHERE pool_id=$1 AND released_at IS NULL
           AND ($2::uuid IS NULL OR id<>$2)""", request.pool_id, exclude_validation,
     )
+    image_used = await conn.fetchrow(
+        """SELECT COALESCE(sum(CASE WHEN execution_released_at IS NULL THEN cpu_millis ELSE 0 END),0)
+          AS cpu_millis,
+        COALESCE(sum(CASE WHEN execution_released_at IS NULL THEN memory_mib ELSE 0 END),0) AS memory_mib,
+        COALESCE(sum(storage_mib),0) AS storage_mib FROM coding_image_build_jobs
+        WHERE pool_id=$1 AND storage_released_at IS NULL AND ($2::uuid IS NULL OR id<>$2)""",
+        request.pool_id, exclude_image_build,
+    )
     for key in ("cpu_millis", "memory_mib", "storage_mib"):
-        if used[key] + validation_used[key] + getattr(request, key) > host[key]:
+        if used[key] + validation_used[key] + image_used[key] + getattr(request, key) > host[key]:
             raise cost_ledger.CostAdmissionDenied(f"host_{key}_capacity_exceeded")
     return dict(host)

@@ -219,9 +219,14 @@ async def test_migration_refuses_to_erase_unreconciled_claims(covered, monkeypat
             await conn.execute(statements[0])
         assert await conn.fetchval("SELECT id FROM coding_validation_claims") == row["id"]
     await validation.cancel_before_dispatch(covered[0], row["id"], user_id="alice")
+    image_migration = importlib.import_module("migrations.versions.021_image_build_jobs")
+    monkeypatch.setattr(image_migration, "op", Capture)
+    image_migration.downgrade()
     async with covered[0].acquire() as conn:
+        await conn.execute(statements[1])
         await conn.execute(statements[0])
         await conn.execute(migration.SCHEMA_SQL)
+        await conn.execute(image_migration.SCHEMA_SQL)
         assert await conn.fetchval("SELECT count(*) FROM coding_validation_claims") == 0
 
 

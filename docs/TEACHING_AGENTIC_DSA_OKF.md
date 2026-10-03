@@ -2684,3 +2684,58 @@ and preserve its evidence separately.
 The in-process local assembly helper is not yet a production keyless worker. A Python
 thread cannot be forcibly stopped safely when a coroutine is cancelled. Production
 needs process/container lifetime, finite resource admission and durable recovery.
+
+<a id="dictionary-image-job-ownership"></a>
+## One-time dispatch, recovery receipts and resource vectors
+
+A lease is a temporary right to coordinate work, not evidence that a previous
+process stopped. Consider a controller that sends a job, loses its connection,
+and then expires. Reassigning the same execution to the next controller can run
+two processes at once. Our image-job state machine consumes its dispatch token
+once and keeps uncertain work allocated until authenticated observation settles it.
+
+```text
+reserved -> dispatched -> finished -> retired
+                  |           |
+                  v           +-- CPU/memory free; output disk still held
+              uncertain
+                  |
+           old receipt recovery OR verified full cleanup
+```
+
+The UUID is a dispatch identity, not a monotonically increasing fencing token and
+not a substitute for authentication. A true fencing protocol increments an epoch
+and makes the resource reject commands from earlier epochs; checking a lease only
+in the controller does not stop an already-running old process. Our one-time
+dispatch ledger must be paired with host-journal consumption and enforced process
+ownership before production activation. A new controller with a valid parent-run lease
+may record the old worker's bound receipt, but may not start that consumed job
+again. The completion timestamp must fit the original execution window. This
+separates *when work happened* from *when its result arrived*.
+
+Capacity is a vector, not one Boolean slot:
+
+```python
+def fits(host: tuple[int, int, int], used: tuple[int, int, int],
+         request: tuple[int, int, int]) -> bool:
+    """CPU millis, memory MiB, storage MiB; illustration, not admission authority."""
+    if any(value < 0 for vector in (host, used, request) for value in vector):
+        raise ValueError("negative resource count")
+    return all(u + r <= limit for limit, u, r in zip(host, used, request))
+
+assert fits((2000, 8192, 20480), (1000, 3072, 2048), (1000, 2048, 4096))
+assert not fits((2000, 8192, 20480), (1000, 3072, 2048), (2000, 2048, 4096))
+```
+
+For three resources this comparison is `O(1)` time/space; in `d` resource dimensions
+it is `O(d)`. Summing `n` claims is `O(nd)` without cached aggregates. Under concurrent
+requests, summing and checking outside one transaction is incorrect: both callers
+can see the same spare capacity. The real database code locks the account/pool and
+checks all build, validation and deployment claims before committing the new claim.
+
+Finished computation and retained data have different lifetimes. Releasing CPU
+must not release output disk; deleting private metadata must not imply physical
+disk cleanup. This is conservation accounting with a state machine. A capacity
+ledger only admits work—it does not enforce operating-system limits. The keyless
+worker must independently enforce those limits and authenticate its cleanup proof.
+See [the implemented boundary and remaining worker work](OCI_PACKAGING.md).

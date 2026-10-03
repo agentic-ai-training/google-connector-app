@@ -2339,6 +2339,18 @@ changes become production evidence.
   Local verification of this retrieval/OCI checkpoint: 426 coding tests passed
   against disposable loopback PostgreSQL schemas; targeted Flake8/Bandit and diff
   checks passed. Existing model-router edits remain user-owned and uncommitted.
+  On 2026-10-03, durable image-build ownership was added locally in migration 021:
+  exact validation/artifact/source/target/base-policy binding, shared funded capacity,
+  atomic one-time dispatch, immutable encrypted receipts, old-receipt recovery by a
+  replacement leased controller, and separate CPU/memory versus retained-output disk
+  release. Lost workers never become blindly redispatchable. Deletion preserves
+  cleanup obligations and suppresses private receipts. Actual keyless host execution,
+  durable OCI output storage, authenticated cleanup, publication/signing and production
+  activation still need implementation/proof; keep the overall story unchecked.
+  This checkpoint passed all 465 coding tests with real loopback PostgreSQL (no
+  skips), the full disposable Alembic 021 -> 002 -> 021 round trip, targeted
+  Flake8/Bandit and diff checks. No production schema, model call, resource, public
+  port or deployment was changed. These results do not prove live worker execution.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.
