@@ -2776,3 +2776,44 @@ The CAS may prove `output_removed=true` while explicitly reporting
 `execution_cleanup_verified=false`. Only the authenticated host controller can
 combine exact job/runtime identity and verified termination with the CAS observation
 to release the central resource obligation. Matching JSON fields alone are not proof.
+
+<a id="dictionary-shared-journal-observation-state-machine"></a>
+## Shared journal, purpose partition and cleanup observations
+
+A **purpose** label partitions meaning, not physical capacity. Validation and image
+packaging use one host slot; separate per-purpose locks could admit both against the
+same CPU/memory allowance. The journal stores the purpose alongside immutable job
+identity and verifies it before deleting a container. Legacy records receive the
+`validation` purpose during the local SQLite schema upgrade.
+
+Two independent state dimensions matter:
+
+```text
+Execution: unknown -> creating/running -> cleanup uncertain -> removed
+Output:    absent  -> writing          -> retained          -> removed
+
+execution removed + output retained = CPU free, disk held
+execution unknown + output removed  = CPU held, success unknown
+execution removed + output removed  = full resource release
+```
+
+This is a **product state machine**: its state is the pair `(execution, output)`,
+not one convenient `done` Boolean. With `e` execution states and `o` output states,
+the naive product has at most `e * o` combinations; explicit invariants remove
+illegal combinations. A reported failure or missing response is an observation,
+not necessarily a transition of the actual process. A trusted, pinned host observer
+must establish the real transition before the controller releases capacity.
+
+The SQL controller serializes account/target/job mutations in one transaction.
+A stable observation hash makes duplicate evidence idempotent **only when current
+resource state is consistent with it**. A late container after retirement must reopen
+the obligation even if its observation repeats an earlier hash. This is why storing
+`seen_hashes` and ignoring every duplicate is not a universally correct algorithm.
+
+The host job ID is looked up through an indexed dispatch mapping; expected binding
+fields are reconstructed and canonically hashed in `O(k)` for `k` metadata bytes.
+The bounded reaper scans at most 128 entries per batch; container inspection is
+external I/O and dominates constant-size comparisons. Matching a hash prevents
+cross-job confusion but is not authentication. The real recovery path separately
+pins SSH identity and never accepts a model-selected command or cleanup assertion.
+See [the current implementation and remaining live proof](OCI_PACKAGING.md).

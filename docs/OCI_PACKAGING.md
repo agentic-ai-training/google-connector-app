@@ -239,6 +239,58 @@ checks passed. The only warning is the existing Google GenAI Python 3.14 typing
 deprecation from the user-owned Vertex-provider test. No production migration,
 VM modification, model call, registry publication or generated Service occurred.
 
+## Shared host journal and cleanup-only recovery
+
+The local launcher journal now records `purpose=validation|image_packaging` in
+the **same** SQLite database and flock-protected slot. Existing rows are migrated
+in place as validation work. Both purposes persist their exact dispatch binding
+before container creation, share the deadline reaper, require exact immutable
+image/name/container/scope/job/purpose identity, and preserve consumed-claim
+tombstones. A crashed owner cannot free the slot just by releasing its lock.
+Packaging work cannot be used to authorize a validation-artifact read.
+
+```text
+Central one-time dispatch -> shared host journal intent
+                                |
+                         process outcome uncertain
+                                |
+                pinned IAP/SSH read-only observation
+                                |
+                    exact job + binding verified
+                      /                    \
+             process present          process removed
+             CPU/memory held          CPU/memory free
+                      \                    /
+                       output storage still held
+                                |
+               authenticated CAS removal + host cleanup
+                                |
+                       full resources released
+```
+
+Migration 022 binds recovery to an immutable host job ID and stores only a
+sanitized observation digest/time. `image_build_jobs.recover_execution` checks the
+registered target before invoking the existing protected-credential, pinned-host
+IAP/SSH observation transport. It never launches a worker. The reconciliation
+path reconstructs the original envelope from immutable ledger facts, including
+after run deletion, target revocation or private-result expiry. Unknown jobs,
+transport failures, wrong fingerprints and guest claims cannot free resources.
+The host's `packaging_success=null` is intentional: termination does not prove an
+image was assembled. Output storage stays allocated until separately verified
+removal. If a late container is observed after cleanup—even after retirement—the
+resource obligation reopens without issuing a new dispatch.
+
+These local journal and controller changes have **not** been installed/activated
+on the VM. The fixed gVisor packaging launcher, private per-job mounts, authenticated
+image receipt/cleanup transfer, registry publication and protected signing remain
+unfinished. Migration 022 has not been applied to production. Passing mocked host
+observations and real local database tests do not constitute live packaging proof.
+
+Verification: all 537 coding tests passed against real loopback PostgreSQL fixtures,
+with no skips. The full disposable migration chain passed upgrade to 022, downgrade
+to 002 and re-upgrade to 022. Targeted Flake8, Bandit and `git diff --check` passed.
+The existing Google GenAI/Python 3.14 deprecation warning remains unchanged.
+
 References: [OCI manifests](https://github.com/opencontainers/image-spec/blob/main/manifest.md),
 [OCI image configuration](https://github.com/opencontainers/image-spec/blob/main/config.md),
 [OCI layers and whiteouts](https://github.com/opencontainers/image-spec/blob/main/layer.md),

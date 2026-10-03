@@ -242,6 +242,13 @@ class Journal:
                     binding_hash TEXT NOT NULL,job_id TEXT NOT NULL UNIQUE);
                 CREATE INDEX IF NOT EXISTS jobs_deadline ON jobs(state,deadline);
             """)
+            # Preserve old jobs as validation work. Different purposes share ONE
+            # slot and reaper, never independent locks that can overcommit the host.
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(jobs)")}
+            if "purpose" not in columns:
+                with self.db:
+                    self.db.execute("ALTER TABLE jobs ADD COLUMN purpose TEXT NOT NULL DEFAULT 'validation' "
+                                    "CHECK(purpose IN ('validation','image_packaging'))")
             with self.db:
                 self.db.execute("INSERT OR IGNORE INTO metadata VALUES('scope',?)", (uuid.uuid4().hex,))
             self.scope = self.db.execute("SELECT value FROM metadata WHERE key='scope'").fetchone()[0]
@@ -261,24 +268,55 @@ class Journal:
 
     def require_available(self, binding: dict | None = None):
         if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
-                                       (binding["claim_id"],)).fetchone():
+                                       (self.binding_claim(binding),)).fetchone():
             raise IsolationError("Dispatch claim already consumed; reconcile instead of replaying")
         if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
             raise IsolationError("Validation slot held by an unreconciled job")
 
-    def begin(self, profile: str, image: str, timeout: int, binding: dict | None = None) -> dict:
+    @staticmethod
+    def binding_claim(binding):
+        if not isinstance(binding, dict) or ("claim_id" in binding) == ("build_job_id" in binding):
+            raise IsolationError("Ambiguous dispatch claim purpose")
+        value = binding.get("claim_id", binding.get("build_job_id"))
+        try:
+            if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+                raise ValueError("noncanonical claim")
+        except (ValueError, TypeError, AttributeError) as error:
+            raise IsolationError("Invalid dispatch claim identity") from error
+        return value
+
+    def begin(self, profile: str, image: str, timeout: int, binding: dict | None = None,
+              *, purpose: str = "validation") -> dict:
+        if (purpose not in {"validation", "image_packaging"}
+                or (purpose == "image_packaging" and (profile != "image_packaging" or binding is None
+                                                       or "build_job_id" not in binding))
+                or (purpose == "validation" and (profile not in PROFILES
+                                                  or (binding is not None and "claim_id" not in binding)))):
+            raise IsolationError("Journal purpose/profile does not match dispatch")
+        if (type(timeout) is not int or not 1 <= timeout <= 1800
+                or not isinstance(image, str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", image)):
+            raise IsolationError("Invalid journal toolchain or timeout")
+        now = int(time.time())
+        deadline = now + timeout + 90
+        if binding is not None:
+            self.binding_claim(binding)
+            deadline = binding.get("deadline" if purpose == "validation" else "execution_deadline_unix")
+            if (type(deadline) is not int or not now < deadline <= now + 1920
+                    or not isinstance(binding.get("request_hash"), str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", binding["request_hash"])):
+                raise IsolationError("Invalid journal request fingerprint or deadline")
         self.require_available(binding)
         job_id = uuid.uuid4().hex
-        now = int(time.time())
         with self.db:
-            self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,'creating',NULL,?)",
-                            (job_id, "gca-validation-" + job_id, image, profile,
-                             binding["deadline"] if binding else now + timeout + 90, now))
+            self.db.execute("INSERT INTO jobs(id,name,image,profile,deadline,state,container_id,updated_at,purpose) "
+                            "VALUES(?,?,?,?,?,'creating',NULL,?,?)",
+                            (job_id, ("gca-validation-" if purpose == "validation" else "gca-packaging-") + job_id,
+                             image, profile, deadline, now, purpose))
             if binding:
                 digest = hashlib.sha256(json.dumps(binding, sort_keys=True,
                                                     separators=(",", ":")).encode()).hexdigest()
                 self.db.execute("INSERT INTO dispatch_claims VALUES(?,?,?,?)",
-                                (binding["claim_id"], binding["request_hash"], digest, job_id))
+                                (self.binding_claim(binding), binding["request_hash"], digest, job_id))
             self.db.execute("INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)",
                             (job_id, "creating", now))
         return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
@@ -301,7 +339,7 @@ class Journal:
         if str(uuid.UUID(claim_id)) != claim_id:
             raise IsolationError("Invalid observation claim")
         row = self.db.execute(
-            "SELECT c.*,j.state,j.name,j.image,j.profile,j.deadline,j.container_id "
+            "SELECT c.*,j.state,j.name,j.image,j.profile,j.deadline,j.container_id,j.purpose "
             "FROM dispatch_claims c JOIN jobs j ON j.id=c.job_id WHERE c.claim_id=?",
             (claim_id,),
         ).fetchone()
@@ -315,6 +353,11 @@ class Journal:
                          "--format", "{{.ID}}").decode().split()
             if ids:
                 self.record(job, "cleanup_uncertain")
+        if job["purpose"] == "image_packaging":
+            return {"claim_id": claim_id, "packaging_job_id": job["id"], "purpose": job["purpose"],
+                    "request_hash": job["request_hash"], "binding_hash": job["binding_hash"],
+                    "state": job["state"], "cleanup_verified": job["state"] == "cleaned",
+                    "packaging_success": None}
         return {"claim_id": claim_id, "validation_job_id": job["id"],
                 "request_hash": job["request_hash"], "binding_hash": job["binding_hash"],
                 "state": job["state"], "cleanup_verified": job["state"] == "cleaned",
@@ -341,7 +384,7 @@ class Journal:
         if (spec["Name"] != "/" + job["name"] or spec["Image"] != job["image"]
                 or labels.get("gca.scope") != self.scope
                 or labels.get("gca.job") != job["id"]
-                or labels.get("gca.purpose") != "validation"):
+                or labels.get("gca.purpose") != job["purpose"]):
             raise IsolationError("Sandbox identity mismatch; refusing cleanup")
 
     def reap(self) -> dict:
@@ -824,7 +867,7 @@ def retained_artifact(journal: Journal, binding: dict, reference: dict) -> bytes
         raise IsolationError("Invalid retained artifact claim")
     row = journal.db.execute(
         "SELECT c.binding_hash,c.request_hash,j.id,j.state,j.profile FROM dispatch_claims c "
-        "JOIN jobs j ON j.id=c.job_id WHERE c.claim_id=?", (claim_id,),
+        "JOIN jobs j ON j.id=c.job_id WHERE c.claim_id=? AND j.purpose='validation'", (claim_id,),
     ).fetchone()
     binding_hash = hashlib.sha256(json.dumps(binding, sort_keys=True,
                                             separators=(",", ":")).encode()).hexdigest()

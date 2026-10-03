@@ -2,7 +2,9 @@
 import asyncio
 import hashlib
 import importlib
+import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -391,3 +393,231 @@ async def test_event_failure_rolls_back_dispatch_token(build, monkeypatch):
     async with build[0].acquire() as conn:
         assert await conn.fetchval("SELECT status FROM coding_image_build_jobs") == "reserved"
         assert await conn.fetchval("SELECT dispatch_token IS NULL FROM coding_image_build_jobs")
+
+
+def execution_observation(issued, *, state="cleaned", **changes):
+    binding_hash = hashlib.sha256(json.dumps(issued["worker_binding"], sort_keys=True,
+                                             separators=(",", ":")).encode()).hexdigest()
+    return {"claim_id": str(issued["build_job_id"]), "packaging_job_id": "b" * 32,
+            "purpose": "image_packaging", "request_hash": issued["request_hash"],
+            "binding_hash": binding_hash, "state": state, "cleanup_verified": state == "cleaned",
+            "packaging_success": None, **changes}
+
+
+async def observe(build, row, observation, **changes):
+    return await jobs.reconcile_execution_observation(
+        build[0], row["id"], user_id=changes.pop("user_id", "alice"), observation=observation, **changes,
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_cleanup_frees_execution_only_never_claims_build_success(build, covered):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    evidence = execution_observation(issued)
+    saved = await observe(build, row, evidence)
+    assert saved["execution_released_at"] and saved["storage_released_at"] is None
+    assert saved["status"] == "uncertain" and saved["result_hash"] is None
+    assert saved["host_job_id"] == "b" * 32 and saved["host_observed_at"]
+    assert (await observe(build, row, evidence))["host_observed_at"] == saved["host_observed_at"]
+    cap = covered[2].capacity.model_copy(update={"cpu_millis": 2000, "storage_mib": covered[4].storage_mib})
+    with pytest.raises(cost_ledger.CostAdmissionDenied, match="storage_mib"):
+        await queue(covered, capacity=cap)
+    assert await dispatch(build, row) is None
+    with pytest.raises(jobs.ImageBuildConflict, match="unavailable"):
+        await jobs.read_result(build[0], row["id"], user_id="alice")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("claim_id", str(uuid4())), ("purpose", "validation"), ("request_hash", "f" * 64),
+    ("binding_hash", "f" * 64), ("packaging_job_id", "not-a-job"),
+    ("state", "unknown"), ("cleanup_verified", 1), ("packaging_success", True),
+    ("extra", "unapproved"),
+])
+async def test_invalid_host_observation_cannot_release_any_capacity(build, field, value):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    with pytest.raises(jobs.ImageBuildConflict):
+        await observe(build, row, execution_observation(issued, **{field: value}))
+    async with build[0].acquire() as conn:
+        saved = await conn.fetchrow("SELECT * FROM coding_image_build_jobs")
+        assert saved["execution_released_at"] is None and saved["storage_released_at"] is None
+        assert saved["host_job_id"] is None and saved["host_observation_hash"] is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_host_job_is_not_absence_or_redispatch_authority(build):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    saved = await observe(build, row, {"claim_id": str(row["id"]), "state": "unknown",
+                                      "cleanup_verified": False})
+    assert saved["execution_released_at"] is None and saved["status"] == "dispatched"
+    assert saved["dispatch_token"] == issued["dispatch_token"] and await dispatch(build, row) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["run_delete", "revoke", "expired"])
+async def test_orphan_or_expired_jobs_still_reconcile_but_cannot_publish(build, change, monkeypatch):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    async with build[0].acquire() as conn:
+        if change == "run_delete":
+            await conn.execute("DELETE FROM coding_runs WHERE id=$1", build[1].run_id)
+        elif change == "revoke":
+            await deploy.revoke_target(build[0], build[1].target_id, user_id="alice")
+        else:
+            await conn.execute("UPDATE coding_validation_claims SET encrypted_result=NULL")
+            from app.coding import image_output_store
+            monkeypatch.setattr(image_output_store.time, "time",
+                                lambda: build[1].output_expires_at.timestamp() + 100)
+    saved = await observe(build, row, execution_observation(issued))
+    assert saved["execution_released_at"] is not None and saved["storage_released_at"] is None
+    assert saved["result_hash"] is None and saved["status"] == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_late_container_observation_reholds_cpu_and_blocks_stale_result(build):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    result = receipt(build, issued)
+    await jobs.record_result(build[0], row["id"], user_id="alice", lease_owner="worker-one", result=result)
+    await observe(build, row, execution_observation(issued))
+    saved = await observe(build, row, execution_observation(issued, state="cleanup_uncertain"))
+    assert saved["status"] == "uncertain" and saved["execution_released_at"] is None
+    with pytest.raises(jobs.ImageBuildConflict, match="unreconciled"):
+        await jobs.record_result(build[0], row["id"], user_id="alice", lease_owner="worker-one", result=result)
+    await observe(build, row, execution_observation(issued))
+    saved = await jobs.record_result(build[0], row["id"], user_id="alice", lease_owner="worker-one", result=result)
+    assert saved["status"] == "finished"
+
+
+@pytest.mark.asyncio
+async def test_host_job_identity_immutable_and_tenant_scoped(build):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    await observe(build, row, execution_observation(issued, state="running"))
+    with pytest.raises(jobs.ImageBuildConflict, match="binding"):
+        await observe(build, row, execution_observation(issued, packaging_job_id="c" * 32))
+    with pytest.raises(jobs.ImageBuildConflict, match="this user"):
+        await observe(build, row, execution_observation(issued), user_id="mallory")
+
+
+@pytest.mark.asyncio
+async def test_observation_event_failure_rolls_back_resource_release(build, monkeypatch):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+
+    async def fail(*args):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(jobs, "_event", fail)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await observe(build, row, execution_observation(issued))
+    async with build[0].acquire() as conn:
+        assert await conn.fetchval("SELECT execution_released_at IS NULL FROM coding_image_build_jobs")
+
+
+@pytest.mark.asyncio
+async def test_undispatched_build_cannot_acquire_cleanup_observation(build):
+    row = await reserve(build)
+    with pytest.raises(jobs.ImageBuildConflict, match="undispatched"):
+        await observe(build, row, {"claim_id": str(row["id"]), "state": "unknown", "cleanup_verified": False})
+
+
+@pytest.mark.asyncio
+async def test_observation_migration_downgrade_refuses_live_host_obligations(build, monkeypatch):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    await observe(build, row, execution_observation(issued))
+    migration = importlib.import_module("migrations.versions.022_image_host_observations")
+    statements = []
+
+    class Capture:
+        @staticmethod
+        def execute(sql):
+            statements.append(sql)
+
+    monkeypatch.setattr(migration, "op", Capture)
+    migration.downgrade()
+    async with build[0].acquire() as conn:
+        with pytest.raises(Exception, match="reconcile image host"):
+            await conn.execute(statements[0])
+    await jobs.release_resources(build[0], row["id"], user_id="alice", evidence_hash="a" * 64,
+                                 dispatch_token=issued["dispatch_token"])
+    async with build[0].acquire() as conn:
+        await conn.execute(statements[0])
+        await conn.execute(migration.SCHEMA_SQL)
+
+
+@pytest.mark.asyncio
+async def test_recovery_reads_registered_pinned_host_without_redispatch(build, monkeypatch):
+    from app.coding import validation_transport as transport
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    calls = []
+
+    def command(host):
+        calls.append(("pin", host.server_uuid))
+        return [], {}
+
+    async def observation(host, job_id):
+        calls.append(("observe", job_id))
+        return execution_observation(issued)
+
+    monkeypatch.setattr(transport, "command", command)
+    monkeypatch.setattr(transport, "observe", observation)
+    saved = await jobs.recover_execution(build[0], row["id"], user_id="alice", host=build[2])
+    assert saved["execution_released_at"] and saved["storage_released_at"] is None
+    assert calls == [("pin", build[2].server_uuid), ("observe", str(row["id"]))]
+    assert await dispatch(build, row) is None
+
+
+@pytest.mark.asyncio
+async def test_wrong_recovery_host_rejected_before_transport(build, monkeypatch):
+    from app.coding import validation_transport as transport
+    row = await reserve(build)
+    await dispatch(build, row)
+
+    def forbidden(host):
+        pytest.fail("Wrong-host recovery contacted transport")
+
+    monkeypatch.setattr(transport, "command", forbidden)
+    with pytest.raises(jobs.ImageBuildConflict, match="registered image host"):
+        await jobs.recover_execution(build[0], row["id"], user_id="alice",
+                                     host=SimpleNamespace(server_uuid="wrong-host", project_id=build[2].project_id))
+
+
+@pytest.mark.asyncio
+async def test_transport_uncertainty_never_frees_image_execution(build, monkeypatch):
+    from app.coding import validation_transport as transport
+    row = await reserve(build)
+    await dispatch(build, row)
+
+    async def fail(host, job_id):
+        raise transport.ValidationTransportError("host_transport_uncertain")
+
+    monkeypatch.setattr(transport, "command", lambda host: ([], {}))
+    monkeypatch.setattr(transport, "observe", fail)
+    with pytest.raises(transport.ValidationTransportError, match="uncertain"):
+        await jobs.recover_execution(build[0], row["id"], user_id="alice", host=build[2])
+    async with build[0].acquire() as conn:
+        assert await conn.fetchval("SELECT execution_released_at IS NULL FROM coding_image_build_jobs")
+
+
+@pytest.mark.asyncio
+async def test_late_execution_after_retirement_reopens_obligations_not_dispatch(build):
+    row = await reserve(build)
+    issued = await dispatch(build, row)
+    await observe(build, row, execution_observation(issued, state="cleanup_uncertain"))
+    await jobs.release_resources(build[0], row["id"], user_id="alice", evidence_hash="a" * 64,
+                                 dispatch_token=issued["dispatch_token"])
+    # Even identical earlier evidence must re-hold resources after retirement if
+    # the authenticated host now sees a late container; no dispatch token is renewed.
+    saved = await observe(build, row, execution_observation(issued, state="cleanup_uncertain"))
+    assert saved["status"] == "uncertain" and saved["execution_released_at"] is None
+    assert saved["storage_released_at"] is None and saved["dispatch_token"] == issued["dispatch_token"]
+    assert await dispatch(build, row) is None
+    await observe(build, row, execution_observation(issued))
+    await jobs.release_resources(build[0], row["id"], user_id="alice", evidence_hash="c" * 64,
+                                 dispatch_token=issued["dispatch_token"])

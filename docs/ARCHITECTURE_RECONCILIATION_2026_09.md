@@ -279,3 +279,13 @@ job ledger. The worker CLI fails closed on an unenforced environment. Its guest-
 checks are not authenticated host/container proof: gVisor launcher/journal integration,
 per-job mounted persistence, process reaping, result transport and live activation are
 still required. Output removal explicitly does not release execution authority by itself.
+
+The next local checkpoint shares validation and packaging intent in one host journal
+and reaper, preserving legacy validation jobs and consumed dispatch identities. New
+migration 022 records exact packaging-host identity and sanitized cleanup observations.
+Registered-target/pinned-IAP recovery reconstructs the original binding without granting
+another dispatch. A cleaned worker frees CPU/memory only; output disk remains held.
+Late process observations reopen obligations, including after retirement. Cleanup
+survives deletion/revocation/expiry but cannot prove successful assembly or publication.
+This is local implementation, not a VM-installed packaging launcher or production
+migration; per-job mounts, actual gVisor execution and authenticated receipts remain open.

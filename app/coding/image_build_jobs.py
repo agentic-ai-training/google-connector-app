@@ -128,15 +128,32 @@ async def _admit(conn, request, target, *, exclude=None):
     )
 
 
-def _request(row):
+def _request(row, *, cleanup=False):
     request = ImageBuildRequest.model_validate(deployment._json(row["request"]))
     if (deployment.fingerprint(request) != row["request_hash"]
-            or row["run_id"] != request.run_id or row["target_id"] != request.target_id
+            or (row["run_id"] != request.run_id and not (cleanup and row["run_id"] is None))
+            or row["target_id"] != request.target_id
             or row["validation_claim_id"] != request.validation_claim_id
             or row["planned_end_at"] != request.planned_end_at
             or row["output_expires_at"] != request.output_expires_at):
         raise ImageBuildConflict("immutable image-build request changed or was deleted")
     return request
+
+
+def _worker_binding(row, request, target, validation_job_id, token, *, cleanup=False):
+    from app.coding.image_output_store import verify_binding
+    return verify_binding({
+        "version": 1, "build_job_id": str(row["id"]), "dispatch_token": str(token),
+        "request_hash": row["request_hash"], "source_hash": request.source_hash,
+        "validation_claim_id": str(request.validation_claim_id),
+        "validation_job_id": validation_job_id, "profile": request.profile,
+        "artifact_sha256": request.artifact_sha256, "base_manifest_digest": request.base_manifest_digest,
+        "runtime_policy_hash": request.runtime_policy_hash, "timeout_seconds": request.timeout_seconds,
+        "execution_deadline_unix": int(request.planned_end_at.timestamp()),
+        "output_expires_at_unix": int(request.output_expires_at.timestamp()),
+        "target_hash": request.target_hash, "server_uuid": target.server_uuid,
+        "project_id": target.project_id,
+    }, allow_expired=cleanup)
 
 
 async def _owned(conn, job_id, user_id, *, cleanup=False):
@@ -214,19 +231,7 @@ async def claim_dispatch(pool, job_id, *, user_id, lease_owner):
             "dispatched_at=now(),heartbeat_at=now(),updated_at=now() WHERE id=$1", job_id, token, lease_owner,
         )
         await _event(conn, job_id, "dispatch_intent")
-        from app.coding.image_output_store import verify_binding
-        binding = verify_binding({
-            "version": 1, "build_job_id": str(job_id), "dispatch_token": str(token),
-            "request_hash": row["request_hash"], "source_hash": request.source_hash,
-            "validation_claim_id": str(request.validation_claim_id),
-            "validation_job_id": artifact["validation_job_id"], "profile": request.profile,
-            "artifact_sha256": request.artifact_sha256, "base_manifest_digest": request.base_manifest_digest,
-            "runtime_policy_hash": request.runtime_policy_hash, "timeout_seconds": request.timeout_seconds,
-            "execution_deadline_unix": int(request.planned_end_at.timestamp()),
-            "output_expires_at_unix": int(request.output_expires_at.timestamp()),
-            "target_hash": request.target_hash, "server_uuid": target.server_uuid,
-            "project_id": target.project_id,
-        })
+        binding = _worker_binding(row, request, target, artifact["validation_job_id"], token)
         return {"build_job_id": job_id, "dispatch_token": token, "request_hash": row["request_hash"],
                 "request": request, "artifact": artifact, "server_uuid": target.server_uuid,
                 "worker_binding": binding}
@@ -235,6 +240,98 @@ async def claim_dispatch(pool, job_id, *, user_id, lease_owner):
 def _dispatch(row, token, owner):
     if row["dispatch_token"] != token or row["worker_owner"] != owner:
         raise ImageBuildConflict("image worker dispatch identity changed")
+
+
+async def reconcile_execution_observation(pool, job_id, *, user_id, observation):
+    """Internal authenticated HOST-journal evidence, not a guest/model assertion.
+
+    The caller must pin/authenticate the transport to the registered server. Exact
+    fingerprints prevent cross-job replay; they do not authenticate the caller.
+    Process termination alone never proves packaging success or output removal.
+    Recovery remains possible after run deletion/revocation/retention expiry.
+    """
+    if not isinstance(observation, dict):
+        raise ImageBuildConflict("invalid image execution observation")
+    async with pool.acquire() as conn, conn.transaction():
+        row, target_row = await _owned(conn, job_id, user_id, cleanup=True)
+        request = _request(row, cleanup=True)
+        target = _target_config(target_row, request)
+        if row["project_id"] != target.project_id or row["pool_id"] != target.capacity_pool_id:
+            raise ImageBuildConflict("image job host identity changed")
+        if row["dispatch_token"] is None:
+            raise ImageBuildConflict("undispatched image job has no host observation")
+        if observation == {"claim_id": str(job_id), "state": "unknown", "cleanup_verified": False}:
+            return dict(row)  # Not-found cannot free capacity or authorize redispatch.
+        required = {"claim_id", "packaging_job_id", "purpose", "request_hash", "binding_hash",
+                    "state", "cleanup_verified", "packaging_success"}
+        state = observation.get("state")
+        host_job_id = observation.get("packaging_job_id")
+        if (set(observation) != required or observation.get("claim_id") != str(job_id)
+                or observation.get("purpose") != "image_packaging"
+                or observation.get("request_hash") != row["request_hash"]
+                or not isinstance(host_job_id, str) or len(host_job_id) != 32
+                or any(c not in "0123456789abcdef" for c in host_job_id)
+                or not isinstance(state, str) or state not in {"creating", "running", "cleanup_uncertain", "cleaned"}
+                or type(observation["cleanup_verified"]) is not bool
+                or observation["cleanup_verified"] != (state == "cleaned")
+                or observation["packaging_success"] is not None
+                or (row["host_job_id"] and row["host_job_id"] != host_job_id)):
+            raise ImageBuildConflict("image host observation binding mismatch")
+        validation_job_id = await conn.fetchval(
+            "SELECT host_job_id FROM coding_validation_claims WHERE id=$1 AND user_id=$2",
+            request.validation_claim_id, user_id,
+        )
+        expected = _worker_binding(row, request, target, validation_job_id,
+                                   row["dispatch_token"], cleanup=True)
+        expected_hash = hashlib.sha256(json.dumps(expected, sort_keys=True,
+                                                  separators=(",", ":")).encode()).hexdigest()
+        if observation["binding_hash"] != expected_hash:
+            raise ImageBuildConflict("image host observation dispatch changed")
+        collision = await conn.fetchval(
+            "SELECT id FROM coding_image_build_jobs WHERE pool_id=$1 AND host_job_id=$2 AND id<>$3",
+            row["pool_id"], host_job_id, job_id,
+        )
+        if collision:
+            raise ImageBuildConflict("host job belongs to another image dispatch")
+        digest = hashlib.sha256(json.dumps(observation, sort_keys=True,
+                                           separators=(",", ":")).encode()).hexdigest()
+        if (row["host_observation_hash"] == digest
+                and (row["execution_released_at"] is not None) == observation["cleanup_verified"]
+                and (row["status"] != "retired" or observation["cleanup_verified"])):
+            return dict(row)
+        updated = await conn.fetchrow(
+            "UPDATE coding_image_build_jobs SET host_job_id=$2,host_observation_hash=$3,host_observed_at=now(),"
+            "execution_released_at=CASE WHEN $4 THEN COALESCE(execution_released_at,now()) ELSE NULL END,"
+            "storage_released_at=CASE WHEN NOT $4 THEN NULL ELSE storage_released_at END,"
+            "status=CASE WHEN status='retired' AND $4 THEN 'retired' "
+            "WHEN NOT $4 OR result_hash IS NULL THEN 'uncertain' ELSE status END,"
+            "updated_at=now() WHERE id=$1 RETURNING *",
+            job_id, host_job_id, digest, observation["cleanup_verified"],
+        )
+        await _event(conn, job_id, "execution_cleanup_observed" if observation["cleanup_verified"]
+                     else "execution_presence_observed")
+        return dict(updated)
+
+
+async def recover_execution(pool, job_id, *, user_id, host):
+    """Read-only pinned IAP/SSH recovery; never launch or reassign a lost worker.
+
+    Provider failures propagate as transport uncertainty without releasing capacity.
+    The remote journal is operator-owned and must be the same host used by dispatch.
+    No caller-supplied observation or remote shell command enters this path.
+    """
+    from app.coding import validation_transport as transport
+    async with pool.acquire() as conn, conn.transaction():
+        row, target_row = await _owned(conn, job_id, user_id, cleanup=True)
+        request = _request(row, cleanup=True)
+        target = _target_config(target_row, request)
+        if target.server_uuid != host.server_uuid or target.project_id != host.project_id:
+            raise ImageBuildConflict("recovery transport is not the registered image host")
+        if row["dispatch_token"] is None:
+            raise ImageBuildConflict("undispatched image job has no host observation")
+    transport.command(host)  # Protected operator credentials and exact SSH pin.
+    observation = await transport.observe(host, str(job_id))
+    return await reconcile_execution_observation(pool, job_id, user_id=user_id, observation=observation)
 
 
 async def heartbeat(pool, job_id, *, user_id, dispatch_token, lease_owner):
@@ -266,7 +363,10 @@ async def record_result(pool, job_id, *, user_id, lease_owner, result: ImageBuil
         if row["result_hash"]:
             if row["result_hash"] != digest:
                 raise ImageBuildConflict("image result is immutable")
-            return dict(row)
+            if row["execution_released_at"] is None:
+                raise ImageBuildConflict("image host execution remains unreconciled")
+            if row["status"] == "finished":
+                return dict(row)
         now = datetime.now(timezone.utc)
         if (row["status"] not in {"dispatched", "uncertain"} or now >= request.output_expires_at
                 or not row["dispatched_at"] <= result.completed_at <= min(now, request.planned_end_at)):

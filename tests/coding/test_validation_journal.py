@@ -1,5 +1,9 @@
 import json
+import hashlib
+import sqlite3
+import time
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -20,7 +24,7 @@ class Engine:
         self.containers[CID] = {
             "Name": "/" + job["name"], "Image": job["image"],
             "Config": {"Labels": {
-                "gca.purpose": "validation", "gca.scope": scope, "gca.job": job["id"],
+                "gca.purpose": job.get("purpose", "validation"), "gca.scope": scope, "gca.job": job["id"],
             }}, **changes,
         }
 
@@ -189,3 +193,95 @@ def test_journal_never_contains_source_or_output_and_files_are_private(state):
         fields = [row[1] for row in journal.db.execute("PRAGMA table_info(jobs)")]
         assert not {"source", "request", "stdout", "stderr", "credentials"}.intersection(fields)
     assert Path(directory / "jobs.sqlite3").stat().st_mode & 0o077 == 0
+
+
+def packaging_binding():
+    return {"build_job_id": str(uuid4()), "request_hash": "d" * 64,
+            "execution_deadline_unix": int(time.time()) + 120}
+
+
+def test_legacy_journal_upgrade_preserves_live_slot(state):
+    directory, _ = state
+    db = sqlite3.connect(directory / "jobs.sqlite3")
+    db.execute("CREATE TABLE jobs(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,image TEXT NOT NULL,"
+               "profile TEXT NOT NULL,deadline INTEGER NOT NULL,state TEXT NOT NULL,"
+               "container_id TEXT,updated_at INTEGER NOT NULL)")
+    db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)",
+               ("c" * 32, "gca-validation-" + "c" * 32, IMAGE, "python_compile", 123, "creating", None, 1))
+    db.commit()
+    db.close()
+    with runner.Journal(directory) as journal:
+        assert journal.db.execute("SELECT purpose FROM jobs").fetchone()[0] == "validation"
+        with pytest.raises(runner.IsolationError, match="unreconciled"):
+            journal.begin("image_packaging", IMAGE, 20, packaging_binding(), purpose="image_packaging")
+
+
+def test_packaging_and_validation_share_crash_persistent_slot_and_claim_tombstone(state):
+    directory, engine = state
+    binding = packaging_binding()
+    with runner.Journal(directory) as journal:
+        job = journal.begin("image_packaging", IMAGE, 20, binding, purpose="image_packaging")
+        assert job["name"] == "gca-packaging-" + job["id"]
+    with runner.Journal(directory) as journal:
+        with pytest.raises(runner.IsolationError, match="unreconciled"):
+            journal.begin("python_compile", IMAGE, 20)
+        engine.add(job, journal.scope)
+        expire(journal, job)
+        assert journal.reap()["cleaned_job_ids"] == [job["id"]]
+        observation = journal.observe_claim(binding["build_job_id"])
+        assert observation == {"claim_id": binding["build_job_id"], "packaging_job_id": job["id"],
+                               "purpose": "image_packaging", "request_hash": binding["request_hash"],
+                               "binding_hash": hashlib.sha256(json.dumps(
+                                   binding, sort_keys=True, separators=(",", ":"),
+                               ).encode()).hexdigest(), "state": "cleaned", "cleanup_verified": True,
+                               "packaging_success": None}
+        # Process absence says nothing about whether an image was built.
+        assert observation["packaging_success"] is None
+        with pytest.raises(runner.IsolationError, match="consumed"):
+            journal.begin("python_compile", IMAGE, 20, {"claim_id": binding["build_job_id"],
+                                                       "request_hash": "e" * 64,
+                                                       "deadline": int(time.time()) + 100})
+        assert journal.begin("python_compile", IMAGE, 20)["purpose"] == "validation"
+
+
+@pytest.mark.parametrize("mismatch", ["image", "scope", "job", "purpose"])
+def test_packaging_reaper_requires_exact_identity(state, mismatch):
+    directory, engine = state
+    with runner.Journal(directory) as journal:
+        job = journal.begin("image_packaging", IMAGE, 20, packaging_binding(), purpose="image_packaging")
+        expire(journal, job)
+        engine.add(job, journal.scope)
+        if mismatch == "image":
+            engine.containers[CID]["Image"] = "sha256:" + "f" * 64
+        else:
+            engine.containers[CID]["Config"]["Labels"]["gca." + mismatch] = "validation"
+        assert journal.reap()["uncertain_job_ids"] == [job["id"]]
+        assert not engine.removed
+
+
+def test_late_packaging_container_revokes_cleanup_observation_and_is_reaped(state):
+    directory, engine = state
+    binding = packaging_binding()
+    with runner.Journal(directory) as journal:
+        job = journal.begin("image_packaging", IMAGE, 20, binding, purpose="image_packaging")
+        expire(journal, job)
+        journal.cleanup(job)
+        engine.add(job, journal.scope)
+        assert journal.observe_claim(binding["build_job_id"])["cleanup_verified"] is False
+        assert journal.reap()["cleaned_job_ids"] == [job["id"]]
+        assert journal.observe_claim(binding["build_job_id"])["cleanup_verified"] is True
+
+
+@pytest.mark.parametrize("binding,purpose,profile", [
+    ({"claim_id": str(uuid4()), "build_job_id": str(uuid4())}, "validation", "python_compile"),
+    ({"build_job_id": str(uuid4())}, "validation", "python_compile"),
+    ({"claim_id": str(uuid4())}, "image_packaging", "image_packaging"),
+    (None, "image_packaging", "image_packaging"),
+    ({"build_job_id": "bad"}, "image_packaging", "image_packaging"),
+    ({"build_job_id": str(uuid4())}, "image_packaging", "python_compile"),
+])
+def test_wrong_purpose_or_claim_rejected_before_intent(state, binding, purpose, profile):
+    with runner.Journal(state[0]) as journal:
+        with pytest.raises(runner.IsolationError):
+            journal.begin(profile, IMAGE, 20, binding, purpose=purpose)
+        assert journal.db.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0

@@ -2363,6 +2363,21 @@ changes become production evidence.
   Local verification: all 501 coding tests passed with real loopback PostgreSQL and
   no skips; targeted Flake8/Bandit and diff checks passed. No production schema,
   host bundle, service, resource or model-provider call was changed in this checkpoint.
+  The following local checkpoint unifies validation/packaging host intent in one
+  SQLite journal/slot and purpose-aware identity/reaper. Legacy journal rows keep
+  validation meaning; consumed claims cannot be replayed across purposes. Migration
+  022 records immutable packaging host identity and sanitized observation evidence.
+  Registered-target/pinned-IAP cleanup-only recovery reconstructs the original job
+  binding and remains possible after deletion/revocation/expiry. Worker removal frees
+  CPU/memory, not retained-output disk; late execution reopens resource obligations
+  without a second dispatch. Actual gVisor packaging launch/per-job mounts, image
+  receipt transfer, publication/signing and production activation are still open;
+  keep this overall story unchecked. No production migration or VM bundle update
+  has occurred for this checkpoint.
+  Verification: 537 coding tests passed with real loopback PostgreSQL and no skips;
+  the full disposable Alembic 022 -> 002 -> 022 round trip, targeted Flake8/Bandit
+  and diff checks passed. Existing user-owned model/configuration/architecture edits
+  were preserved and not included in this checkpoint.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

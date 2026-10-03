@@ -41,6 +41,8 @@ async def prepared(db):
         await conn.execute(results_schema.SCHEMA_SQL)
         image_schema = importlib.import_module("migrations.versions.021_image_build_jobs")
         await conn.execute(image_schema.SCHEMA_SQL)
+        observation_schema = importlib.import_module("migrations.versions.022_image_host_observations")
+        await conn.execute(observation_schema.SCHEMA_SQL)
     target = deploy.RegisteredTarget(
         target_id="test-target", base_url="http://127.0.0.1:18000", team_id=0,
         inventory_secret_ref="test/inventory", configuration_secret_ref="test/configuration",
