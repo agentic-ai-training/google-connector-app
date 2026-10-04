@@ -2971,3 +2971,36 @@ after all required termination evidence. Failure or unknown identity keeps the
 resource obligation. A later contradictory observation reopens it rather than
 inventing another execution attempt. This is **evidence-based resource release**,
 not a retry policy or a model prediction.
+
+<a id="dictionary-runtime-versus-guest-privileges"></a>
+## Native runtime privileges versus guest capabilities
+
+The native runtime is not the application running inside its emulated Linux system.
+Our live probe found guest `CapEff=0`, but native `CapEff=000000000008001f`, with
+native seccomp 2 and no-new-privileges 1. The zero-native-capability acceptance
+check rejected it. This does not prove that the guest gained those privileges.
+Nor does it justify accepting that bitmask without verifying isolation.
+
+Linux capabilities are bit sets. Integer bit operations can decode them cheaply:
+
+```python
+def capability_bits(mask: int, width: int = 64) -> list[int]:
+    if type(mask) is not int or not 0 <= mask < 1 << width:
+        raise ValueError("bounded unsigned capability mask required")
+    return [bit for bit in range(width) if mask & (1 << bit)]
+
+assert capability_bits(0x8001F) == [0, 1, 2, 3, 4, 19]
+```
+
+Decoding takes `O(width)` time and `O(k)` output space for `k` set bits. With a
+fixed 64-bit width the work is bounded. Interpretation is a security question:
+the process's user namespace and UID mapping determine where those capabilities
+apply. Its mount namespace, syscall filter and runtime role further constrain
+authority. A bitmask without these bindings is insufficient evidence.
+
+An appropriate runtime profile must bind the pinned executable/release, process
+role, native namespaces/mappings, permitted capability/filter envelope, resource
+group and helper lifetime. The current profile remains rejected pending that
+proof; it must not silently become `allow whatever the last probe observed`.
+See [gVisor's native security architecture](https://gvisor.dev/docs/architecture_guide/intro/)
+and [its filesystem/Directfs tradeoff](https://gvisor.dev/docs/user_guide/filesystem/).

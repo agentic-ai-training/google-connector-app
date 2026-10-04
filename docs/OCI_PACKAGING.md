@@ -473,3 +473,25 @@ Verification: 156 targeted readiness/launcher/journal tests and all 669 coding
 tests passed; the full suite used real loopback PostgreSQL with disposable schemas
 and no skips. Targeted Flake8/Bandit passed. These results include simulated native
 kernel/mount/Docker decisions, not live resource enforcement.
+
+### Subsequent live native checkpoint
+
+The readiness bundle is now installed/read-back verified, and the fixed native
+aggregate group is prepared: one CPU, 3 GiB, zero swap and 128 tasks. A fixed
+nonsensitive Python sleeper was observed live under the exact systemd scope and
+removed with native helper/group cleanup verified. However, the native runtime's
+capability mask was `000000000008001f`, not zero, despite `Seccomp=2` and
+`NoNewPrivs=1`; the readiness verifier rejected it. The guest's zero capabilities
+and the native runtime's privileges are not interchangeable facts. gVisor documents
+isolated native namespaces and additional filesystem capabilities for Directfs.
+Before any change to acceptance, prove the pinned runtime's namespace/mapping,
+role-specific capability/filter, helper membership and immutable binary profile.
+Do not simply permit the observed mask. See
+[gVisor filesystem isolation](https://gvisor.dev/docs/user_guide/filesystem/) and
+[its security architecture](https://gvisor.dev/docs/architecture_guide/intro/).
+
+Group setup itself is an operator-only fixed command, defaulting to inspection;
+exact snapshot, idle journal and native read-back are mandatory. A single atomically
+published unit allows interrupted setup to be inspected and rolled forward. It
+cannot start generated code, approve images, publish or alter cloud resource size.
+The native probe's `production_packaging_activated=false` remains mandatory.

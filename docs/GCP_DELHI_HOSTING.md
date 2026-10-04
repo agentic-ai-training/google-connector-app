@@ -1,5 +1,19 @@
 # Delhi generated-application host — approved provisioning runbook
 
+## Latest packaging-isolation checkpoint — 4 October 2026
+
+The protected native-readiness bundle (`88e1ff7`) is installed and independently
+read-back verified. The operator-only packaging aggregate is prepared and its
+native kernel limits verified at one CPU, 3 GiB memory, no swap and 128 tasks.
+This restricts a subgroup of the existing VM; it does not resize the VM, extend
+its fixed STOP, create a cloud resource or enroll paid deployment capacity.
+The synthetic native sleeper ran and cleaned up, but readiness was rejected
+because its native capability mask differs from the current zero-capability
+contract. Namespace/runtime-role verification is still required. No private
+packaging, runtime image approval, generated Service or production schema was
+activated. Synthetic validation/replay/cleanup passed after installation; six
+Coolify containers remained healthy. See [exact hashes and native evidence](HOST_BUNDLE_OPERATIONS.md).
+
 ## Status and spending authority
 
 Provisioned 2026-09-19; setup continued 2026-09-20. User reconfirmed INR 28,694

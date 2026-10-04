@@ -327,3 +327,13 @@ enforcement. This source revision is not installed on the VM; the native topolog
 resource group, helper coverage and readiness/termination proof remain required.
 CPU/memory limits stay at one CPU/3 GiB/no swap; the local measured-startup contract
 uses 64 worker tasks and 128 aggregate tasks, not yet activated on the VM.
+
+Subsequently, source commit `88e1ff7` was installed with independent full-bundle
+read-back. The operator-created native aggregate's CPU/memory/swap/task values were
+verified in the kernel without resizing the VM or changing its deadline. A fixed
+nonsensitive live native probe showed correct scope membership, seccomp 2 and
+no-new-privileges 1, but nonzero native runtime capabilities. The current guard
+rejected that profile; private packaging is still disabled. Native namespace,
+runtime role/capability and helper coverage need a proven contract before revising
+the check. No new resource, financial activation, production schema or generated
+application was created. See current evidence in `HOST_BUNDLE_OPERATIONS.md`.

@@ -78,6 +78,63 @@ using a bypass flag.
 
 ## Live evidence — 4 October 2026
 
+The first installation below is historical. A subsequent independently verified
+installation of native-readiness source commit `88e1ff7` now has installation ID
+`ae6f134da749435bb178f4662ef6c309b484d1782aae69b0f311775b74fb8a52`
+and snapshot
+`40d602f17cd77e24d9e0f608f97387c0c68de920ffda757c15cc2b7f961cbcf1`.
+The unchanged four support-file hashes remain as listed below. New installed hashes:
+
+| Updated file | Installed SHA-256 |
+| --- | --- |
+| isolated_validation.py | 8409c9ac73408d206999159ef8eef27adeda22301a0ed7ce25872512a3f1fe2c |
+| image_packaging_worker.py | 63348b5ba411601969becb5d4162d8d0967fdd1b5c2cbaec8b4cb2c818c560ea |
+| isolated_packaging.py | ee42fc7880f4427d5b0cfab2c608550886545a06d11eb83bbbe485f7aa66f22c |
+
+The fixed operator resource-group setup is now applied and independently read back:
+`cpu.max=100000 100000`, `memory.max=3221225472`, `memory.swap.max=0`,
+`pids.max=128`, with an empty controller leaf. Unit hash:
+`8336d6b4413c4eb1ff2d833396475abd0123e60f1869e39e51f062c88b03901e`;
+read-back snapshot:
+`4a995a283e04bbd6ebcb92c75688c79aefd5144d6138b34ef8776e4dd934b3e0`.
+The operator CLI is `scripts/prepare_packaging_group.py`: default inspection, apply
+only with the fresh exact snapshot, occupied/foreign state refused, interrupted
+unit setup inspected before a reviewed roll-forward. It uses the existing exclusive
+host journal slot. It neither changes VM sizing/deadline nor approves private work.
+
+A nonsensitive native sleeper then ran under the aggregate and cleaned up. Native
+seccomp was 2 and no-new-privileges 1, but `CapEff=000000000008001f`, so the current
+zero-native-capability verifier correctly **rejected this profile**. This is negative
+readiness evidence, not a packaging success. The native runtime namespace/capability
+contract still needs verification; do not replace the zero test with an unchecked
+allowlist. All six Coolify containers stayed healthy, with zero unresolved host jobs
+or validation leftovers after cleanup. Private packaging is not activated.
+After this bundle update, the nonsensitive Python transport probe again passed
+compilation, replay rejection and bound cleanup observation using the exact
+approved local image ID. The initial CLI attempts with a relative operator path
+and repository-qualified image reference were rejected; no unresolved host job
+remained before the corrected fixed-ID probe. Do not treat those rejected attempts
+as runtime success or retry an uncertain execution without journal inspection.
+
+Operator commands (not model tools):
+
+```sh
+python -m scripts.prepare_packaging_group \
+  --operator-config .gca-local/validation-transport.json
+# Review snapshot and idle-journal/kernel state before a fixed apply.
+python -m scripts.prepare_packaging_group \
+  --operator-config .gca-local/validation-transport.json \
+  --apply --expected-snapshot-hash "$FRESH_GROUP_SNAPSHOT"
+python -m scripts.probe_packaging_native \
+  --operator-config .gca-local/validation-transport.json
+```
+
+The native probe's negative readiness outcome is expected with the current
+contract; successful execution/cleanup must not be mistaken for positive security
+acceptance. No private input or mounted artifact is used by this fixed probe.
+
+### Historical first seven-file installation
+
 Installed on the existing `gca-coolify-delhi-01` VM without a new resource, policy
 change or production admission activation. Installation ID:
 `ec87d7d8e3db1fd9f51a912bd9e0a501e6a953cedfa2eef10c9cfc8a0a4a77d2`.

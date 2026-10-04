@@ -2432,6 +2432,27 @@ changes become production evidence.
   The suite includes preserved user-owned provider work, which is not part of this
   implementation commit. No production schema, VM bundle, policy, resource or
   model-provider call was changed by this local checkpoint.
+  The next live checkpoint installed commit `88e1ff7` on the existing host with
+  independent full-bundle read-back and prepared the fixed aggregate group under
+  an idle-journal/exact-snapshot operator gate. Kernel read-back confirmed one CPU,
+  3 GiB, no swap and 128 tasks. The nonsensitive native probe ran and cleaned up,
+  but native CapEff was 000000000008001f (seccomp 2, no-new-privileges 1); the
+  current zero-capability guard rejected it. Native namespace/role/capability and
+  helper-profile verification is the next prerequisite, not an unchecked mask
+  bypass. Six Coolify containers remained healthy, with no unresolved host jobs
+  or validation leftovers. Private admission, runtime approvals, funded deployment
+  and generated-app/Chat proof remain open. The VM size/deadline and protected
+  Vertex/reserve budgets were not changed; keep this overall story unchecked.
+  Local verification of group preparation/native diagnostics: all 688 coding tests
+  passed with real loopback PostgreSQL and no skips; 19 new targeted operator/probe
+  tests, Flake8, Bandit and diff checks passed. Runtime/systemd decisions are
+  simulated locally; the negative native-capability observation and actual kernel
+  group read-back above are separately live. Source/documentation updates preserve
+  that distinction and do not claim end-to-end packaging success.
+  The post-install fixed-ID synthetic transport probe passed compilation, replay
+  rejection and bound cleanup. Earlier rejected CLI input forms were corrected
+  only after an independent idle-journal observation; they do not supply runtime
+  evidence or authorize replay of an uncertain consumed claim.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.
