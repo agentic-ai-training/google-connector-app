@@ -2892,3 +2892,39 @@ release counts prevent the rollback store becoming an unbounded data structure.
 Old-bundle rollback must also consider **semantic compatibility**: packaging history
 can require cleanup methods absent from the old bundle even if its hashes match.
 See [the operational implementation and live evidence](HOST_BUNDLE_OPERATIONS.md).
+
+<a id="dictionary-host-guest-enforcement-evidence"></a>
+## Host versus guest enforcement evidence and readiness barriers
+
+A sandbox implements a virtual system interface. Its `/proc` and cgroup files need
+not expose the native host kernel's state. Our live gVisor probe showed unavailable
+guest cgroup limit files and virtual `Seccomp=0`, even with configured Docker limits.
+A guest's missing file cannot prove either host safety or host failure. Conversely,
+Docker configuration alone cannot prove the running process has those limits.
+
+```text
+configured limits -> launch fixed worker -> native host verification
+                                             |
+                                    job-bound readiness proof
+                                             |
+                               worker may consume private input
+                                             |
+                         bounded execution -> exact cleanup proof
+```
+
+A **readiness barrier** is a synchronization point, not another model prompt. Its
+consumer waits only within a fixed deadline. The producer is the trusted host;
+proof identity must bind the exact job, dispatch, runtime profile and expiry. The
+read-only per-job mount prevents a worker from inventing its own readiness. A
+matching hash is binding, not authentication: host origin and verified mount/control
+authority must be established independently. This project has identified the needed
+barrier but has not implemented or live-proven it yet.
+
+The producer/consumer state machine is `starting -> verified -> released`, with
+`failed` and `expired` terminal paths. A stale or cross-job proof cannot transition
+to `released`. This prevents a **time-of-check/time-of-use** gap where private input
+is consumed before the process's controls are established. Verification must concern
+a live native process; an exited `PID=0` is not a valid process handle. Parent resource
+budgets must include runtime helpers as well as the application. Our 16-task startup
+failure versus 64-task success illustrates why measured runtime overhead matters.
+See [observations and pending implementation](OCI_PACKAGING.md).

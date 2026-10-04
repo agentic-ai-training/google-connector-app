@@ -2402,6 +2402,20 @@ changes become production evidence.
   No new cloud resource, model call, production migration, funded activation or app
   deployment occurred. Packaging policy/cgroup preparation, runtime/toolchain approval,
   full image pipeline and generated-app/Chat proof remain open; keep this story unchecked.
+  The next live nonsensitive environment probe found a concrete runtime-contract
+  mismatch: the 16-task sandbox failed before Python startup; a 64-task comparison
+  ran, but guest cgroup files were unavailable and virtual Seccomp was 0. Both
+  probes had verified cleanup; the worker's current enforcement function rejected
+  the real guest. This is NOT a successful packaging proof. Implement live native
+  host process/cgroup verification plus a bounded, readonly, exact-dispatch readiness
+  handshake before guest private-input consumption. Keep model assertions, missing
+  files and Docker configuration alone insufficient. Do not activate a weakened
+  guard. The fixed diagnostic script has separate negative/startup/connection-loss
+  regression cases. See `docs/OCI_PACKAGING.md` for observations and acceptance gates.
+  All 624 local coding tests passed with real loopback PostgreSQL and no skips;
+  targeted Flake8/Bandit/diff checks passed. Probe results explicitly deny native
+  enforcement verification and production activation. No host bundle, production
+  policy or task limit was changed by this diagnostic checkpoint.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

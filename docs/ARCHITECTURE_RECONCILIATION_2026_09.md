@@ -307,3 +307,12 @@ No packaging policy/cgroup or runtime approval, financial enrollment, production
 migration or generated deployment was activated. The installer is a trusted operator
 path, not a Rust/model command or candidate privilege. See
 [host bundle operations](HOST_BUNDLE_OPERATIONS.md) for the exact evidence and limits.
+
+Subsequent live nonsensitive observation exposed a real runsc contract mismatch:
+the 16-task sandbox could not start, whereas 64 tasks allowed observation; guest
+cgroup files were absent and virtual Seccomp was 0. The worker correctly remains
+unactivated, but its current guest-only checks cannot support this runtime. Native
+host process/cgroup verification and a host-controlled readiness handshake must be
+implemented before private inputs are consumed. This finding does not authorize
+unapproved native execution, a guard bypass or positive evidence from configuration
+alone. Details and required runtime-wide correction are in `docs/OCI_PACKAGING.md`.

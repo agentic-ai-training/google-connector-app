@@ -377,3 +377,50 @@ shared cgroup, actual approved runtime/toolchain bases and live packaging execut
 are still absent/unproven. No private-source execution, model call, production
 migration, financial enrollment or generated deployment occurred. Installation does
 not complete the image-to-application story or authorize new spending.
+
+## Live runtime compatibility findings — 4 October 2026
+
+`scripts/probe_packaging_environment.py` runs only a fixed nonsensitive observation
+program with the approved offline Python image, keyless UID 65532, read-only root,
+no network and a read-only mount of the reviewed bundle. It uses the existing host
+journal slot and persistent intent; cleanup is verified before reporting results.
+It neither admits private packaging inputs nor changes production worker limits.
+
+The first 16-task probe failed before Python started, with gVisor sandbox startup
+ending in EOF. A controlled comparison changing only the task ceiling to 64 started
+successfully. This strongly supports an inadequate startup task allowance; it is
+not evidence that all possible workloads fit in 64 tasks. Both probes cleaned up.
+The successful observation reported virtual `CapEff=0`, `NoNewPrivs=1`, `Seccomp=0`
+and unavailable guest `memory.max`, `memory.swap.max`, `pids.max` and `cpu.max`.
+Therefore the current worker's guest-only enforcement function rejects this actual
+runsc environment. Docker's configured limits are not proof of native enforcement.
+The exited `State.Pid=0` snapshot cannot be used as a live host-process observation.
+
+The required correction remains **unimplemented**, not bypassed:
+
+1. Prepare the fixed aggregate native host resource group, with measured finite
+   sandbox/controller task allowance and unchanged CPU/memory/swap envelopes.
+2. Verify the exact running container ID, immutable image, native process identity,
+   cgroup membership/limits and privilege filter from the trusted host while alive.
+   Account for sandbox/helper processes, not just a guest's virtual PID.
+3. Keep the worker behind a bounded readiness handshake. Publish a host-controlled,
+   read-only, job/dispatch/profile/deadline-bound proof only after native verification.
+   The worker must not consume private artifact bytes before that proof.
+4. Separate gVisor virtual checks from host authority. Do not accept missing cgroup
+   files or `Seccomp=0` as a blanket success, use a guest JSON assertion as host
+   evidence, expose host cgroup mounts, or fall back to unapproved native execution.
+5. Prove startup, timeout, cancellation, forged/cross-job readiness, host verification
+   failure and cleanup through real nonsensitive probes before private activation.
+
+This is a runtime-wide correction, not a per-user-request exception. Existing
+packaging remains disabled. The probe's raw bounded diagnostics concern only its
+fixed nonsensitive program; do not reuse this output policy for private workloads.
+Official references: [gVisor compatibility](https://gvisor.dev/docs/user_guide/compatibility/)
+and [host cgroup drivers](https://gvisor.dev/docs/user_guide/systemd/).
+
+Local verification for this diagnostic checkpoint: all 624 coding tests passed with
+real loopback PostgreSQL and no skips; targeted Flake8/Bandit and diff checks passed.
+The four new probe tests cover negative guest evidence, startup failure and connection
+loss with cleanup, without pretending to prove host enforcement. CLI observation
+results explicitly carry `native_enforcement_verified=false` and
+`production_packaging_activated=false`, even when observation itself completes.
