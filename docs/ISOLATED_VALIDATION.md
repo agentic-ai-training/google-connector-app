@@ -220,6 +220,16 @@ The installed policy currently approves only the synthetic-tested Python compile
 Do not infer that pytest, Node, Java, Rust or Flutter dependencies have been provisioned.
 The VM stop deadline and cloud/model budgets were not changed.
 
+On 4 October 2026 the complete seven-file validation/packaging stdlib bundle replaced
+the two-file bundle under the idle shared host slot. Independent read-back verified
+all hashes; the old complete tree is retained. A live nonsensitive Python transport
+probe passed compilation, exact cleanup observation and same-claim replay rejection.
+All six Coolify containers remained healthy; the reaper service reported success/0;
+no validation containers remained. Policy/toolchain images, production admission,
+budgets and STOP deadline were unchanged. See [host bundle operations](HOST_BUNDLE_OPERATIONS.md)
+for current hashes and the crash-recoverable operator installation/rollback protocol.
+This does not prove live React/Spring builds or packaging execution.
+
 Useful operator checks (do not print the SQLite data into public logs):
 
 ```sh

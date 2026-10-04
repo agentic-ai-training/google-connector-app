@@ -359,3 +359,21 @@ Verification for this launcher/controller checkpoint: 601 coding tests passed wi
 real loopback PostgreSQL and no skips; targeted Flake8, Bandit and diff checks passed.
 The existing Google GenAI/Python 3.14 deprecation warning remains. No migration SQL
 changed after the prior successful disposable 022 -> 002 -> 022 round trip.
+
+## Host installation checkpoint — 4 October 2026
+
+The seven-file protected bundle is now installed on the existing Delhi VM and
+independently rehashed. This supersedes earlier statements that it is not installed.
+The new operator installer preserves a complete old-tree backup, records an external
+durable intent before staging, swaps directories under the existing host slot and
+allows identity/hash-verified rollback after interruption. It refuses old-bundle
+rollback after packaging history or staging appears. Full installation hashes,
+recovery commands and evidence are in [host bundle operations](HOST_BUNDLE_OPERATIONS.md).
+
+All 620 local coding tests pass, including actual process-death filesystem recovery.
+The live synthetic Python validation/replay/cleanup proof passed; six Coolify
+containers remain healthy and the scheduled reaper reports success. Packaging policy,
+shared cgroup, actual approved runtime/toolchain bases and live packaging execution
+are still absent/unproven. No private-source execution, model call, production
+migration, financial enrollment or generated deployment occurred. Installation does
+not complete the image-to-application story or authorize new spending.

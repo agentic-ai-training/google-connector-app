@@ -2392,6 +2392,16 @@ changes become production evidence.
   prior round-tripped 022 revision. The user-provided September billing report was
   recorded without treating credit offsets as free resource usage or current October
   accrued charges. Existing user-owned edits were preserved.
+  On 2026-10-04, the protected seven-file bundle was installed on the existing VM
+  via a crash-recoverable operator transaction and independently read-back verified.
+  The old complete tree is preserved; local tests prove abrupt-process-death recovery
+  after both directory renames and reject unsafe/obsolete rollback. All 620 coding
+  tests passed with real loopback PostgreSQL and no skips; Flake8/Bandit/diff checks
+  passed. Live nonsensitive validation/replay/cleanup passed, six Coolify containers
+  remained healthy, and the reaper reported success/0 with no validation leftovers.
+  No new cloud resource, model call, production migration, funded activation or app
+  deployment occurred. Packaging policy/cgroup preparation, runtime/toolchain approval,
+  full image pipeline and generated-app/Chat proof remain open; keep this story unchecked.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

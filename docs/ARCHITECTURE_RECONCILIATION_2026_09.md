@@ -299,3 +299,11 @@ The complete bundle, operator cgroup, actual toolchain/runtime bases and live gV
 enforcement remain uninstalled/unproven. Publication/signing, production integration,
 funded enrollment and the full application demonstration remain open. Local tests
 must not be represented as an active production image pipeline.
+
+On 4 October the protected seven-file bundle was installed/read-back verified on
+the same VM using a crash-recoverable operator transaction. Synthetic validation,
+replay rejection and cleanup passed; the six Coolify containers remained healthy.
+No packaging policy/cgroup or runtime approval, financial enrollment, production
+migration or generated deployment was activated. The installer is a trusted operator
+path, not a Rust/model command or candidate privilege. See
+[host bundle operations](HOST_BUNDLE_OPERATIONS.md) for the exact evidence and limits.

@@ -2858,3 +2858,37 @@ protected sibling source files, not workspace modules or stale `.pyc` caches.
 `python -I -B` and a cleared environment are additional defenses, not a sandbox by
 themselves. Execution isolation still requires the independently verified host and
 guest controls. Local mocked controls are tests of decision logic, not live evidence.
+
+<a id="dictionary-multi-rename-installation-transaction"></a>
+## Multi-rename installation transaction and crash windows
+
+Replacing a directory containing several modules avoids exposing an intentionally
+mixed bundle. But `rename(old, backup); rename(staged, current)` is **two** atomic
+operations, not one atomic operation. Between them the gateway path is absent.
+Failing closed during that interval is preferable to running unreviewed mixed code.
+The installer holds the same host slot as validation and persists an intent outside
+the directory being replaced. It never deletes the durable job journal.
+
+```text
+current = old      -> stage complete + intent recorded
+current = missing  -> old tree preserved at backup
+current = new      -> read-back and isolated import
+                   -> commit installation record
+
+crash at any intermediate state -> inspect actual trees -> verified old-tree restore
+```
+
+The recorded phase can lag reality if a rename completes just before process death.
+Recovery therefore verifies the **actual** old/new tree hashes and installation ID;
+it does not blindly branch on one timestamp or phase. This is an instance of write-
+ahead intent plus state reconciliation. A `finally` block cannot protect against
+`os._exit`, SIGKILL or machine loss. Tests terminate a real child process after each
+rename to prove process-death recovery. They do not prove every power-loss behavior.
+
+With `n` files totaling `B` bytes, source compilation, hashing and copying take
+`O(B)` work and the manifest requires `O(n)` entries. The filesystem rename is
+constant-size namespace work; full integrity verification is not. Bounded file and
+release counts prevent the rollback store becoming an unbounded data structure.
+Old-bundle rollback must also consider **semantic compatibility**: packaging history
+can require cleanup methods absent from the old bundle even if its hashes match.
+See [the operational implementation and live evidence](HOST_BUNDLE_OPERATIONS.md).

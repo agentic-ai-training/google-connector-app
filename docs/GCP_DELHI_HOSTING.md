@@ -318,3 +318,11 @@ and other services), and a current trial balance are still required for attribut
 funded production enrollment. Do not double-charge the net-zero credit-offset
 invoice, extrapolate this partial period as a full month, spend the protected Vertex
 allocation on hosting, or extend the fixed STOP deadline from this report.
+
+On 4 October a read-only API check confirmed the original VM ID, RUNNING status,
+e2-standard-4, no service account and the unchanged STOP deadline. The protected
+seven-file host bundle was then installed/read-back verified, followed by synthetic
+validation/replay/cleanup proof and a healthy six-container Coolify/reaper check.
+No cloud resource, paid model call, policy/toolchain approval or deployment occurred.
+This host maintenance does not provide fresh accrued billing or funded activation.
+See [host bundle operations](HOST_BUNDLE_OPERATIONS.md).
