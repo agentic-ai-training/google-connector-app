@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import stat
 import subprocess  # nosec B404
@@ -68,6 +69,8 @@ MAX_STAGING_BYTES = 2 * 1024**3
 MAX_JOB_DIRECTORIES = 8
 GUEST = "/gca"
 CGROUP_PARENT = "gcapackaging.slice"
+WORKER_TASKS = 64
+AGGREGATE_TASKS = 128  # Runtime helpers plus controller; CPU/memory stay unchanged.
 VOLUME_BYTES = 2040 * 1024**2  # Leave room for small host-owned job metadata.
 STORAGE_COMMANDS = {"mkfs": "/usr/sbin/mke2fs", "mount": "/usr/bin/mount", "umount": "/usr/bin/umount"}
 
@@ -145,7 +148,7 @@ def require_host_limits():
         controller = root / "controller"
         occupants = (controller / "cgroup.procs").read_text().split()
         if (not 0 < memory <= 3 * 1024**3 or swap != 0 or not 0 < quota <= period
-                or not 0 < tasks <= 64 or any(value != str(os.getpid()) for value in occupants)):
+                or not 0 < tasks <= AGGREGATE_TASKS or any(value != str(os.getpid()) for value in occupants)):
             raise PackagingHostError("shared packaging host limits or ownership differ")
         (controller / "cgroup.procs").write_text(str(os.getpid()))
         membership = Path("/proc/self/cgroup").read_text().strip()
@@ -268,6 +271,7 @@ def prepare(journal, job, policy, binding, reference, artifact, runtime_policy, 
     for path in (inputs, output, workspace):
         _worker_directory(path)
     _write(inputs / "runtime-policy.json", runtime_policy, worker=True)
+    _write(inputs / "dispatch.json", oci.canonical(binding), worker=True)
     header = oci.canonical({"operation": "assemble", "binding": binding, "reference": reference,
                             "archive_bytes": len(artifact)}) + b"\n"
     if len(header) > 16384:
@@ -315,7 +319,7 @@ def create_arguments(journal, job, mounts):
                  "--label=gca.job=" + job["id"], "--network=none", "--read-only",
                  "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--user=65532:65532",
                  "--ipc=private", "--cgroupns=private",
-                 "--memory=3g", "--memory-swap=3g", "--cpus=1", "--pids-limit=16",
+                 "--memory=3g", "--memory-swap=3g", "--cpus=1", "--pids-limit=" + str(WORKER_TASKS),
                  "--cgroup-parent=" + CGROUP_PARENT,
                  "--ulimit=nofile=64:64", "--log-driver=none", "--entrypoint=/usr/bin/env"]
     for source, destination, readonly in mounts:
@@ -326,7 +330,8 @@ def create_arguments(journal, job, mounts):
                       "python3", "-I", "-B", GUEST + "/bundle/image_packaging_worker.py",
                       "--runtime-policy", GUEST + "/input/runtime-policy.json", "--output-root",
                       GUEST + "/output", "--workspace", GUEST + "/workspace", "--request-file",
-                      GUEST + "/input/request.frame"])
+                      GUEST + "/input/request.frame", "--dispatch-file", GUEST + "/input/dispatch.json",
+                      "--host-proof", GUEST + "/input/host-proof.json"])
     return arguments
 
 
@@ -348,15 +353,157 @@ def verify_container(journal, job, container_id, mounts):
             or host.get("CapAdd") or host.get("CapDrop") != ["ALL"]
             or host.get("SecurityOpt") != ["no-new-privileges:true"]
             or host.get("Memory") != 3 * 1024**3 or host.get("MemorySwap") != 3 * 1024**3
-            or host.get("NanoCpus") != 1_000_000_000 or host.get("PidsLimit") != 16
+            or host.get("NanoCpus") != 1_000_000_000 or host.get("PidsLimit") != WORKER_TASKS
             or host.get("CgroupParent") != CGROUP_PARENT
             or host.get("Ulimits") != [{"Name": "nofile", "Hard": 64, "Soft": 64}]
+            or host.get("RestartPolicy", {}).get("Name") not in {"", "no"}
+            or host.get("RestartPolicy", {}).get("MaximumRetryCount") != 0
             or host.get("LogConfig", {}).get("Type") != "none"
+            or spec["Config"].get("Healthcheck") is not None
             or spec["Config"].get("Entrypoint") != ["/usr/bin/env"]
             or spec["Config"].get("OpenStdin") is not False or spec["Config"].get("Tty") is not False
             or spec["Config"].get("Cmd") != create_arguments(journal, job, mounts)[
                 create_arguments(journal, job, mounts).index(job["image"]) + 1:]):
         raise PackagingHostError("packaging container enforcement or mounts differ")
+    return spec
+
+
+def _native_text(path, maximum=65536):
+    # Fixed kernel paths below /proc or /sys only. Never read process environments
+    # or return raw native process command lines to a model/controller client.
+    with path.open("rb") as stream:
+        body = stream.read(maximum + 1)
+    if len(body) > maximum:
+        raise PackagingHostError("native enforcement observation exceeds bound")
+    return body.decode("ascii").strip()
+
+
+def _start_ticks(pid):
+    body = _native_text(Path("/proc") / str(pid) / "stat")
+    return int(body.rsplit(")", 1)[1].split()[19])
+
+
+def native_helpers(container_id):
+    if not isinstance(container_id, str) or not re.fullmatch(r"[0-9a-f]{64}", container_id):
+        raise PackagingHostError("native helper container identity is invalid")
+    inventory = [path for path in Path("/proc").iterdir() if path.name.isdecimal()]
+    if len(inventory) > 4096:
+        raise PackagingHostError("native helper inventory exceeds bound")
+    result = []
+    for process in inventory:
+        try:
+            if os.readlink(process / "exe") != "/usr/bin/runsc":
+                continue
+            arguments = _native_text(process / "cmdline").split("\x00")
+            membership = _native_text(process / "cgroup")
+            if container_id in arguments or ("/docker-" + container_id + ".scope") in membership:
+                result.append((int(process.name), membership))
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return result
+
+
+def require_native_cleanup(container_id):
+    """Docker absence alone cannot release capacity while native helpers survive."""
+    if native_helpers(container_id):
+        raise PackagingHostError("native runtime helpers remain after container removal")
+    events = Path("/sys/fs/cgroup") / CGROUP_PARENT / ("docker-" + container_id + ".scope/cgroup.events")
+    try:
+        values = dict(line.split() for line in _native_text(events).splitlines())
+    except FileNotFoundError:
+        return
+    if values.get("populated") != "0":
+        raise PackagingHostError("native container resource group remains populated")
+
+
+def verify_native_worker(spec, binding):
+    """Observe the live native kernel, not the guest's emulated /proc/cgroup.
+
+    Fixed systemd topology only. Different runtime/driver layouts need an operator
+    profile and real proof; they are never accepted via a guessed path or JSON flag.
+    """
+    container_id = spec.get("Id")
+    state = spec.get("State", {})
+    pid = state.get("Pid")
+    if (not isinstance(container_id, str) or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+            or state.get("Running") is not True or type(pid) is not int or not 1 < pid < 2**31):
+        raise PackagingHostError("native worker is not a live exact container")
+    identity = "/" + CGROUP_PARENT + "/docker-" + container_id + ".scope"
+    if not callable(getattr(os, "pidfd_open", None)):
+        raise PackagingHostError("native process handles are unavailable on this host")
+    descriptor = os.pidfd_open(pid, 0)
+    try:
+        initial = _start_ticks(pid)
+        poller = select.poll()
+        poller.register(descriptor, select.POLLIN)
+        status = dict(line.split(":", 1) for line in _native_text(Path("/proc") / str(pid) / "status").splitlines()
+                      if ":" in line)
+        membership = _native_text(Path("/proc") / str(pid) / "cgroup")
+        if (membership != "0::" + identity or int(status["CapEff"].strip(), 16) != 0
+                or status["NoNewPrivs"].strip() != "1" or status["Seccomp"].strip() != "2"):
+            raise PackagingHostError("native sandbox ownership or privilege filter differs")
+        group = Path("/sys/fs/cgroup") / identity.lstrip("/")
+        memory = int(_native_text(group / "memory.max"))
+        swap = int(_native_text(group / "memory.swap.max"))
+        quota, period = map(int, _native_text(group / "cpu.max").split())
+        tasks = int(_native_text(group / "pids.max"))
+        parent = group.parent
+        parent_memory = int(_native_text(parent / "memory.max"))
+        parent_swap = int(_native_text(parent / "memory.swap.max"))
+        parent_quota, parent_period = map(int, _native_text(parent / "cpu.max").split())
+        parent_tasks = int(_native_text(parent / "pids.max"))
+        if (not 0 < memory <= 3 * 1024**3 or swap != 0 or not 0 < quota <= period
+                or not 0 < tasks <= WORKER_TASKS or not 0 < parent_memory <= 3 * 1024**3
+                or parent_swap != 0 or not 0 < parent_quota <= parent_period
+                or not 0 < parent_tasks <= AGGREGATE_TASKS):
+            raise PackagingHostError("native worker or aggregate resource limits differ")
+        # Every runsc helper with this exact container ID must also be covered by
+        # the aggregate. No cmdline is emitted or stored in the receipt.
+        helpers = []
+        for helper_pid, helper_group in native_helpers(container_id):
+            if not helper_group.startswith("0::/" + CGROUP_PARENT + "/") or "\n" in helper_group:
+                raise PackagingHostError("native runtime helper is outside aggregate resource limits")
+            helpers.append(helper_pid)
+        if not helpers or _start_ticks(pid) != initial or poller.poll(0):
+            raise PackagingHostError("native runtime identity expired or helpers were not observed")
+        now = int(time.time())
+        if now >= binding["execution_deadline_unix"]:
+            raise PackagingHostError("native readiness authority expired")
+        return dict(version=1, runtime="runsc", binding_hash=hashlib.sha256(oci.canonical(binding)).hexdigest(),
+                    container_id=container_id, native_pid=pid, native_start_ticks=initial, native_cgroup=identity,
+                    memory_max=memory, swap_max=swap, cpu_quota=quota, cpu_period=period, tasks_max=tasks,
+                    aggregate_memory_max=parent_memory, aggregate_swap_max=parent_swap,
+                    aggregate_cpu_quota=parent_quota, aggregate_cpu_period=parent_period,
+                    aggregate_tasks_max=parent_tasks, native_seccomp=2, native_cap_eff=0,
+                    native_no_new_privs=1, helper_pids=sorted(helpers), observed_at_unix=now,
+                    expires_at_unix=binding["execution_deadline_unix"])
+    except (OSError, ValueError, KeyError, IndexError) as error:
+        raise PackagingHostError("native enforcement evidence unavailable") from error
+    finally:
+        os.close(descriptor)
+
+
+def publish_readiness(journal, job, container_id, mounts, binding, inputs, child):
+    deadline = min(time.monotonic() + 10, time.monotonic() +
+                   max(0, binding["execution_deadline_unix"] - time.time()))
+    while time.monotonic() < deadline and child.poll() is None:
+        spec = verify_container(journal, job, container_id, mounts)
+        if spec.get("State", {}).get("Running") is True:
+            proof = verify_native_worker(spec, binding)
+            again = verify_container(journal, job, container_id, mounts)
+            if (again.get("State", {}).get("Running") is not True
+                    or again["State"].get("Pid") != proof["native_pid"]):
+                raise PackagingHostError("native worker changed before readiness publication")
+            pending = inputs / "host-proof.pending"
+            final = inputs / "host-proof.json"
+            if final.exists() or final.is_symlink():
+                raise PackagingHostError("readiness was already published")
+            _write(pending, oci.canonical(proof), worker=True)
+            os.rename(pending, final)
+            _sync(inputs)
+            return
+        time.sleep(0.1)
+    raise PackagingHostError("native worker did not become ready within its deadline")
 
 
 def _takeover(directory):
@@ -528,7 +675,7 @@ def assemble(journal, policy, binding, validation_binding, reference):
         if base.approved_manifest_digest != binding["base_manifest_digest"]:
             raise PackagingHostError("runtime base differs from dispatch")
         isolation.ensure_toolchain_image(policy["image_id"])
-        _, mounts = prepare(journal, job, policy, binding, reference, artifact, runtime_policy, base)
+        directory, mounts = prepare(journal, job, policy, binding, reference, artifact, runtime_policy, base)
         create_attempted = True
         container_id = isolation.docker(*create_arguments(journal, job, mounts)).decode().strip()
         if not re.fullmatch(r"[a-f0-9]{64}", container_id):
@@ -539,10 +686,14 @@ def assemble(journal, policy, binding, validation_binding, reference):
         remaining = min(binding["timeout_seconds"], binding["execution_deadline_unix"] - int(time.time()))
         if remaining < 1:
             raise PackagingHostError("packaging authority expired before start")
-        result = isolation.execute_bounded(["start", "-a", container_id], remaining, output_limit=16384)
+        result = isolation.execute_bounded(
+            ["start", "-a", container_id], remaining, output_limit=16384,
+            on_started=lambda child: publish_readiness(journal, job, container_id, mounts, binding,
+                                                       directory / "work/input", child),
+        )
     finally:
         try:
-            journal.cleanup(job, create_confirmed=create_confirmed or not create_attempted)
+            journal.cleanup(job, create_confirmed=create_confirmed, create_not_attempted=not create_attempted)
         except (isolation.IsolationError, OSError, ValueError, subprocess.TimeoutExpired):
             journal.record(job, "cleanup_uncertain")
             raise PackagingHostError("packaging worker cleanup remains uncertain") from None

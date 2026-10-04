@@ -58,6 +58,9 @@ def state(tmp_path, monkeypatch):
     tmp_path.chmod(0o700)
     engine = Engine()
     monkeypatch.setattr(runner, "docker", engine)
+    from app.coding import isolated_packaging
+    # This fixture proves journal transitions only, not native Linux enforcement.
+    monkeypatch.setattr(isolated_packaging, "require_native_cleanup", lambda container_id: None)
     return tmp_path, engine
 
 
@@ -265,7 +268,7 @@ def test_late_packaging_container_revokes_cleanup_observation_and_is_reaped(stat
     with runner.Journal(directory) as journal:
         job = journal.begin("image_packaging", IMAGE, 20, binding, purpose="image_packaging")
         expire(journal, job)
-        journal.cleanup(job)
+        journal.cleanup(job, create_not_attempted=True)
         engine.add(job, journal.scope)
         assert journal.observe_claim(binding["build_job_id"])["cleanup_verified"] is False
         assert journal.reap()["cleaned_job_ids"] == [job["id"]]

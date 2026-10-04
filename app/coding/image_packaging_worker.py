@@ -64,35 +64,100 @@ SAFE_ENV = {"PATH", "HOME", "CI", "LANG", "LC_ALL", "TZ", "HOSTNAME", "PYTHONUNB
             "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8"}
 
 
-def require_enforcement():
-    """Guest-side checks are additional evidence, not a replacement for host inspection."""
+def _keyless_guard():
     if sys.platform != "linux" or os.geteuid() != 65532 or set(os.environ) - SAFE_ENV:
         raise PackagingWorkerError("keyless Linux worker environment is required")
+
+
+def require_enforcement(*, binding=None, proof_path=None, workspace=None):
+    """Guest-side checks are additional evidence, not a replacement for host inspection."""
+    _keyless_guard()
     try:
         status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines()
                       if ":" in line)
-        if (int(status["CapEff"].strip(), 16) != 0 or status["NoNewPrivs"].strip() != "1"
-                or status["Seccomp"].strip() != "2"):
+        if int(status["CapEff"].strip(), 16) != 0 or status["NoNewPrivs"].strip() != "1":
             raise PackagingWorkerError("worker capabilities/privilege filter differ")
-        cgroup = Path("/sys/fs/cgroup")
-        memory = int((cgroup / "memory.max").read_text().strip())
-        swap = int((cgroup / "memory.swap.max").read_text().strip())
-        tasks = int((cgroup / "pids.max").read_text().strip())
-        quota, period = map(int, (cgroup / "cpu.max").read_text().split())
-        if not (0 < memory <= 3 * 1024**3 and swap == 0 and 0 < tasks <= 16 and 0 < quota <= period):
-            raise PackagingWorkerError("worker resource limits differ")
         if {path.name for path in Path("/sys/class/net").iterdir()} != {"lo"}:
             raise PackagingWorkerError("worker network must be isolated")
         mounts = [line.split() for line in Path("/proc/self/mountinfo").read_text().splitlines()]
         root = [fields for fields in mounts if len(fields) > 6 and fields[4] == "/"]
         if len(root) != 1 or "ro" not in root[0][5].split(","):
             raise PackagingWorkerError("worker root must be read-only")
+        if proof_path is None:
+            # Native-only legacy guard. Missing virtual cgroups is NOT success.
+            if status["Seccomp"].strip() != "2":
+                raise PackagingWorkerError("native worker privilege filter differs")
+            cgroup = Path("/sys/fs/cgroup")
+            memory = int((cgroup / "memory.max").read_text().strip())
+            swap = int((cgroup / "memory.swap.max").read_text().strip())
+            tasks = int((cgroup / "pids.max").read_text().strip())
+            quota, period = map(int, (cgroup / "cpu.max").read_text().split())
+            if not (0 < memory <= 3 * 1024**3 and swap == 0 and 0 < tasks <= 16 and 0 < quota <= period):
+                raise PackagingWorkerError("worker resource limits differ")
+        else:
+            if (proof_path != Path("/gca/input/host-proof.json") or workspace != Path("/gca/workspace")
+                    or status["Seccomp"].strip() != "0"):
+                raise PackagingWorkerError("unsupported host-proof runtime envelope")
+            inputs = [fields for fields in mounts if len(fields) > 6 and fields[4] == "/gca/input"]
+            if len(inputs) != 1 or "ro" not in inputs[0][5].split(","):
+                raise PackagingWorkerError("host readiness input is not read-only")
+            wait_for_host_proof(binding, proof_path, workspace)
     except (KeyError, ValueError, OSError) as error:
         raise PackagingWorkerError("worker enforcement evidence unavailable") from error
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     resource.setrlimit(resource.RLIMIT_FSIZE, (outputs.MAX_OUTPUT_BYTES, outputs.MAX_OUTPUT_BYTES))
     resource.setrlimit(resource.RLIMIT_CPU, (900, 901))
+
+
+def verify_host_proof(binding, proof):
+    """Binding/type validation, not cryptographic authentication of arbitrary JSON.
+
+    Origin is the fixed host gateway's verified read-only per-job mount, backed by
+    an operator-private filesystem. Never accept this document from a public API,
+    a model message or a writable workspace as authority.
+    """
+    fields = {"version", "runtime", "binding_hash", "container_id", "native_pid", "native_start_ticks",
+              "native_cgroup", "memory_max", "swap_max", "cpu_quota", "cpu_period", "tasks_max",
+              "aggregate_memory_max", "aggregate_swap_max", "aggregate_cpu_quota", "aggregate_cpu_period",
+              "aggregate_tasks_max", "native_seccomp", "native_cap_eff", "native_no_new_privs",
+              "helper_pids", "observed_at_unix", "expires_at_unix"}
+    numbers = fields - {"runtime", "binding_hash", "container_id", "native_cgroup", "helper_pids"}
+    if (not isinstance(proof, dict) or set(proof) != fields
+            or any(type(proof[name]) is not int for name in numbers)
+            or proof["version"] != 1 or proof["runtime"] != "runsc"
+            or proof["binding_hash"] != hashlib.sha256(oci.canonical(binding)).hexdigest()
+            or not isinstance(proof["container_id"], str) or not oci.DIGEST.fullmatch("sha256:" + proof["container_id"])
+            or not 1 < proof["native_pid"] < 2**31 or proof["native_start_ticks"] <= 0
+            or proof["native_cgroup"] != "/gcapackaging.slice/docker-" + proof["container_id"] + ".scope"
+            or proof["native_seccomp"] != 2 or proof["native_cap_eff"] != 0 or proof["native_no_new_privs"] != 1
+            or not 0 < proof["memory_max"] <= 3 * 1024**3 or proof["swap_max"] != 0
+            or not 0 < proof["cpu_quota"] <= proof["cpu_period"] or not 0 < proof["tasks_max"] <= 64
+            or not 0 < proof["aggregate_memory_max"] <= 3 * 1024**3 or proof["aggregate_swap_max"] != 0
+            or not 0 < proof["aggregate_cpu_quota"] <= proof["aggregate_cpu_period"]
+            or not 0 < proof["aggregate_tasks_max"] <= 128
+            or not isinstance(proof["helper_pids"], list) or not 1 <= len(proof["helper_pids"]) <= 128
+            or any(type(pid) is not int or not 1 < pid < 2**31 for pid in proof["helper_pids"])
+            or len(proof["helper_pids"]) != len(set(proof["helper_pids"]))
+            or proof["expires_at_unix"] != binding["execution_deadline_unix"]
+            or not int(time.time()) - 15 <= proof["observed_at_unix"] <= int(time.time())
+            or proof["expires_at_unix"] <= int(time.time())):
+        raise PackagingWorkerError("host readiness proof is not bound, current and enforced")
+    return proof
+
+
+def wait_for_host_proof(binding, proof_path, workspace):
+    binding = outputs.verify_binding(binding)
+    deadline = min(time.monotonic() + 12, time.monotonic() +
+                   max(0, binding["execution_deadline_unix"] - time.time()))
+    while time.monotonic() < deadline:
+        try:
+            body = runtimes._read(proof_path, 16384, workspace, private=True)
+        except FileNotFoundError:
+            time.sleep(0.1)
+            continue
+        return verify_host_proof(binding, oci._metadata(body))
+    raise PackagingWorkerError("host readiness deadline expired before private input")
 
 
 def assemble_and_retain(binding, reference, artifact: bytes, *, runtime_policy_path: Path,
@@ -123,7 +188,7 @@ def assemble_and_retain(binding, reference, artifact: bytes, *, runtime_policy_p
     return outputs.save(output_root, binding, image)
 
 
-def serve(stream, *, runtime_policy_path, output_root, workspace):
+def serve(stream, *, runtime_policy_path, output_root, workspace, expected_binding=None):
     runtimes._protected(output_root, workspace.resolve(strict=True))
     header = stream.readline(16385)
     if len(header) > 16384 or not header.endswith(b"\n"):
@@ -136,6 +201,8 @@ def serve(stream, *, runtime_policy_path, output_root, workspace):
             or not 0 < request["archive_bytes"] <= build_artifact.MAX_ARTIFACT_ARCHIVE_BYTES):
         raise PackagingWorkerError("invalid packaging operation")
     binding = outputs.verify_binding(request["binding"])
+    if expected_binding is not None and binding != expected_binding:
+        raise PackagingWorkerError("packaging frame differs from verified readiness dispatch")
     remaining = binding["execution_deadline_unix"] - int(time.time())
     if not 1 <= remaining <= 1920:
         raise PackagingWorkerError("packaging execution deadline is unavailable")
@@ -155,10 +222,22 @@ def main():
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--request-file", type=Path)
+    parser.add_argument("--dispatch-file", type=Path)
+    parser.add_argument("--host-proof", type=Path)
     args = parser.parse_args()
     try:
-        require_enforcement()
+        _keyless_guard()
         signal.alarm(45)
+        binding = None
+        if args.host_proof is not None or args.dispatch_file is not None:
+            if (args.host_proof != Path("/gca/input/host-proof.json")
+                    or args.dispatch_file != Path("/gca/input/dispatch.json")
+                    or args.request_file != Path("/gca/input/request.frame") or args.workspace != Path("/gca/workspace")):
+                raise PackagingWorkerError("unsupported fixed readiness paths")
+            # Dispatch metadata only; no private artifact or runtime base bytes.
+            binding = outputs.verify_binding(oci._metadata(runtimes._read(
+                args.dispatch_file, 16384, args.workspace, private=True)))
+        require_enforcement(binding=binding, proof_path=args.host_proof, workspace=args.workspace)
         if args.request_file is None:
             result = serve(sys.stdin.buffer, runtime_policy_path=args.runtime_policy,
                            output_root=args.output_root, workspace=args.workspace)
@@ -174,7 +253,7 @@ def main():
                         or not 1 <= info.st_size <= build_artifact.MAX_ARTIFACT_ARCHIVE_BYTES + 16384):
                     raise PackagingWorkerError("packaging frame is not private and bounded")
                 result = serve(stream, runtime_policy_path=args.runtime_policy,
-                               output_root=args.output_root, workspace=args.workspace)
+                               output_root=args.output_root, workspace=args.workspace, expected_binding=binding)
         # No body, private source, environment or provider credential is printed.
         sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
         sys.stdout.flush()

@@ -2917,8 +2917,9 @@ consumer waits only within a fixed deadline. The producer is the trusted host;
 proof identity must bind the exact job, dispatch, runtime profile and expiry. The
 read-only per-job mount prevents a worker from inventing its own readiness. A
 matching hash is binding, not authentication: host origin and verified mount/control
-authority must be established independently. This project has identified the needed
-barrier but has not implemented or live-proven it yet.
+authority must be established independently. The barrier and native-kernel checks
+are now implemented and decision-tested locally. They are not yet installed or
+live-proven on the VM; simulated observations do not prove actual enforcement.
 
 The producer/consumer state machine is `starting -> verified -> released`, with
 `failed` and `expired` terminal paths. A stale or cross-job proof cannot transition
@@ -2927,4 +2928,46 @@ is consumed before the process's controls are established. Verification must con
 a live native process; an exited `PID=0` is not a valid process handle. Parent resource
 budgets must include runtime helpers as well as the application. Our 16-task startup
 failure versus 64-task success illustrates why measured runtime overhead matters.
-See [observations and pending implementation](OCI_PACKAGING.md).
+See [observations, local implementation and pending live proof](OCI_PACKAGING.md).
+
+<a id="dictionary-native-process-handle"></a>
+## Native process handles, PID reuse and termination evidence
+
+A **PID** is a reusable integer, not permanent process identity. Between two reads,
+one process can exit and another can receive the same number: an ABA-style identity
+problem. A start-time discriminator helps detect reuse. On Linux, `os.pidfd_open`
+opens a kernel handle tied to a particular process; polling that descriptor observes
+its termination without accidentally targeting a later process with the same PID.
+
+```python
+import os
+import select
+
+def process_has_exited(pid: int) -> bool:
+    descriptor = os.pidfd_open(pid, 0)  # Linux-only; missing support must fail closed.
+    try:
+        events = select.poll()
+        events.register(descriptor, select.POLLIN)
+        return bool(events.poll(0))
+    finally:
+        os.close(descriptor)
+```
+
+This snippet alone does not prove sandbox identity or termination of descendants.
+The actual verifier also checks the exact container, native start time, privilege
+filters, native resource-group membership and limits. Runtime helpers can outlive
+the application, so cleanup must inspect those helpers and the group's populated
+state. Process absence, application success and storage removal are different facts.
+
+With `P` native processes, a bounded helper inventory costs `O(P)` observations;
+proof comparison has a fixed-size schema and constant-size control state. Polling
+one already-open handle is constant-size work, but kernel scheduling and I/O latency
+remain real. The bound prevents indefinite scans or waits. It does not provide an
+absolute response-time guarantee. Raw command lines/environments must not enter
+model context or user-visible telemetry.
+
+The durable state transition is `running -> cleanup_uncertain -> cleaned` only
+after all required termination evidence. Failure or unknown identity keeps the
+resource obligation. A later contradictory observation reopens it rather than
+inventing another execution attempt. This is **evidence-based resource release**,
+not a retry policy or a model prediction.

@@ -372,6 +372,11 @@ class Journal:
                          "--format", "{{.ID}}").decode().split()
             if ids:
                 self.record(job, "cleanup_uncertain")
+            elif job["purpose"] == "image_packaging" and job.get("container_id"):
+                try:
+                    _packaging_helper().require_native_cleanup(job["container_id"])
+                except (RuntimeError, OSError, ValueError):
+                    self.record(job, "cleanup_uncertain")
         if job["purpose"] == "image_packaging":
             return {"claim_id": claim_id, "packaging_job_id": job["id"], "purpose": job["purpose"],
                     "request_hash": job["request_hash"], "binding_hash": job["binding_hash"],
@@ -382,17 +387,29 @@ class Journal:
                 "state": job["state"], "cleanup_verified": job["state"] == "cleaned",
                 "validation_success": None}
 
-    def cleanup(self, job: dict, *, create_confirmed: bool = False):
+    def cleanup(self, job: dict, *, create_confirmed: bool = False, create_not_attempted: bool = False):
+        if type(create_not_attempted) is not bool or (create_confirmed and create_not_attempted):
+            raise IsolationError("Invalid trusted creation-state evidence")
         ids = docker("ps", "-a", "--no-trunc", "--filter", f"name=^/{job['name']}$",
                      "--format", "{{.ID}}").decode().split()
         if not ids:
-            if not create_confirmed and int(time.time()) < job["deadline"]:
+            if not create_confirmed and not create_not_attempted and int(time.time()) < job["deadline"]:
                 raise IsolationError("Create outcome remains uncertain until the job deadline")
         else:
             if len(ids) != 1 or not re.fullmatch(r"[a-f0-9]{64}", ids[0]):
                 raise IsolationError("Ambiguous sandbox identity")
             self.verify_identity(job, ids[0])
+            # Persist the exact ID before deletion: a lost rm response must not
+            # erase the native identity needed by subsequent reconciliation.
+            self.record(job, "cleanup_uncertain", ids[0])
             docker("rm", "--force", "--volumes", ids[0])
+        if job["purpose"] == "image_packaging" and not (create_not_attempted and not ids):
+            if not job.get("container_id"):
+                raise IsolationError("Packaging native identity is unknown; cleanup remains uncertain")
+            try:
+                _packaging_helper().require_native_cleanup(job["container_id"])
+            except (RuntimeError, OSError, ValueError) as error:
+                raise IsolationError("Packaging native termination is not verified") from error
         self.record(job, "cleaned")
 
     def verify_identity(self, job: dict, container_id: str):
@@ -580,7 +597,7 @@ def ensure_toolchain_image(image_id: str):
 
 
 def execute_bounded(args: list[str], timeout: float, *, binary: bool = False,
-                    output_limit: int = MAX_OUTPUT_BYTES) -> dict:
+                    output_limit: int = MAX_OUTPUT_BYTES, on_started=None) -> dict:
     child = subprocess.Popen(  # nosec B603
         [DOCKER, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=CLEAN_ENV, start_new_session=True,
@@ -589,6 +606,11 @@ def execute_bounded(args: list[str], timeout: float, *, binary: bool = False,
     deadline = time.monotonic() + timeout
     truncated = False
     try:
+        # Trusted controller hook only, never supplied through a workload frame.
+        # The deadline already includes launch/readiness; failures still kill the
+        # client and the caller's journal reconciles the actual container.
+        if on_started is not None:
+            on_started(child)
         with selectors.DefaultSelector() as selector:
             for name in output:
                 selector.register(getattr(child, name), selectors.EVENT_READ, name)

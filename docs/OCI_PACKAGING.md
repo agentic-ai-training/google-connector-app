@@ -328,8 +328,10 @@ authenticated removal receipt -> disk reservation released
 ```
 
 The root controller and guest share the operator-prepared `gcapackaging.slice`
-aggregate limit: at most one CPU, 3 GiB memory, no swap and 64 total tasks. The guest
-also has its own 16-task limit. A private fixed-size ext4 backing file bounds staging;
+aggregate limit: at most one CPU, 3 GiB memory, no swap and 128 total tasks. The
+current local worker contract permits at most 64 tasks after the measured 16-task
+startup failure. These new task limits are not yet configured/proven on the VM.
+A private fixed-size ext4 backing file bounds staging;
 normal unmount is mandatory. Busy, foreign or ambiguous mounts remain allocated.
 The reviewed source bundle is hashed and loaded from exact protected files, without
 workspace imports or cached bytecode. The controller never extracts build archives
@@ -424,3 +426,50 @@ The four new probe tests cover negative guest evidence, startup failure and conn
 loss with cleanup, without pretending to prove host enforcement. CLI observation
 results explicitly carry `native_enforcement_verified=false` and
 `production_packaging_activated=false`, even when observation itself completes.
+
+### Local native readiness implementation — 4 October 2026
+
+The launcher now starts the fixed worker behind a bounded readiness barrier. A
+trusted callback verifies its exact running container, immutable configuration,
+native PID/start-time and `pidfd`, native capabilities/no-new-privileges/seccomp,
+child and aggregate cgroup limits, and associated runsc helper membership. This
+version supports only the fixed systemd resource-group topology; a different live
+layout fails closed and needs separately verified operator integration.
+
+Only after verification does the host publish a private proof into the worker's
+read-only input mount. The proof binds the complete dispatch and deadline. The
+worker verifies metadata/proof first, then requires the frame header to match
+before reading private artifact bytes. Neither a hash nor caller-supplied JSON
+authenticates host origin. No host cgroup mount, key, shell or socket is exposed.
+
+```text
+durable intent -> fixed worker starts -> bounded wait (no artifact read)
+                         |
+                 host native observations
+                         |
+               exact-dispatch readonly proof
+                         |
+                frame binding -> artifact read -> assembly
+                         |
+             exact Docker removal + native helper/group absence
+                         |
+            execution capacity released (storage still retained)
+```
+
+Cleanup persists the exact container ID before removal. Docker absence alone is
+insufficient: surviving native helpers or a populated native group keep cleanup
+uncertain and capacity held. Lost identity also remains uncertain, except when
+the trusted launcher knows that creation was never attempted. A later observation
+of surviving helpers invalidates prior cleanup evidence. Private storage removal
+continues to require its separate authenticated proof.
+
+This checkpoint is local implementation/testing, **not installed or activated on
+the VM**. Native process/helper ABI, resource-group preparation, readiness and
+termination must still be proven with live nonsensitive workloads before admitting
+private packaging inputs. Approved Node/Java toolchains/runtime bases, financial
+enrollment, publication/signing and the generated-app/Chat demonstration remain open.
+
+Verification: 156 targeted readiness/launcher/journal tests and all 669 coding
+tests passed; the full suite used real loopback PostgreSQL with disposable schemas
+and no skips. Targeted Flake8/Bandit passed. These results include simulated native
+kernel/mount/Docker decisions, not live resource enforcement.

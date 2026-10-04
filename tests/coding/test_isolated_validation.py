@@ -17,6 +17,28 @@ IMAGE = "sha256:" + "a" * 64
 POLICY = {"version": 2, "runtime": "runsc", "images": {"python_compile": IMAGE}}
 
 
+def test_trusted_readiness_hook_runs_before_output_collection_and_is_not_a_frame_argument(monkeypatch):
+    monkeypatch.setattr(runner, 'DOCKER', sys.executable)
+    observed = []
+    result = runner.execute_bounded(['-I', '-c', 'print("synthetic-ready")'], 5,
+                                    on_started=lambda child: observed.append(child.pid))
+    assert len(observed) == 1 and result['success'] is True
+    assert result['stdout'].strip() == 'synthetic-ready'
+
+
+def test_readiness_hook_failure_terminates_only_its_owned_client_process(monkeypatch):
+    monkeypatch.setattr(runner, 'DOCKER', sys.executable)
+    observed = []
+
+    def deny(child):
+        observed.append(child)
+        raise runner.IsolationError('synthetic native verification denied')
+
+    with pytest.raises(runner.IsolationError, match='native verification denied'):
+        runner.execute_bounded(['-I', '-c', 'import time; time.sleep(10)'], 5, on_started=deny)
+    assert len(observed) == 1 and observed[0].poll() is not None
+
+
 @pytest.fixture(autouse=True)
 def journal_directory(tmp_path_factory, monkeypatch):
     directory = tmp_path_factory.mktemp("validation-journal")

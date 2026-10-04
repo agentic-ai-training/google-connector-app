@@ -316,3 +316,14 @@ host process/cgroup verification and a host-controlled readiness handshake must 
 implemented before private inputs are consumed. This finding does not authorize
 unapproved native execution, a guard bypass or positive evidence from configuration
 alone. Details and required runtime-wide correction are in `docs/OCI_PACKAGING.md`.
+
+The subsequent local implementation adds a trusted native-kernel verification
+callback and bounded readonly dispatch-bound readiness proof before worker artifact
+consumption. It also persists container identity before removal and requires native
+helper/resource-group termination before cleanup can release capacity. Unknown
+identity retains the obligation; later helper observations invalidate prior cleanup.
+Local decision tests simulate kernel/Docker observations and do not establish live
+enforcement. This source revision is not installed on the VM; the native topology,
+resource group, helper coverage and readiness/termination proof remain required.
+CPU/memory limits stay at one CPU/3 GiB/no swap; the local measured-startup contract
+uses 64 worker tasks and 128 aggregate tasks, not yet activated on the VM.

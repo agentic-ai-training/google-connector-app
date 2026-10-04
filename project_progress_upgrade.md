@@ -2416,6 +2416,22 @@ changes become production evidence.
   targeted Flake8/Bandit/diff checks passed. Probe results explicitly deny native
   enforcement verification and production activation. No host bundle, production
   policy or task limit was changed by this diagnostic checkpoint.
+  The following local checkpoint implements a trusted on-start native-kernel
+  verifier and bounded readonly exact-dispatch readiness barrier before artifact
+  consumption. Native PID/start-time/pidfd, seccomp/privileges, resource limits and
+  runsc helper membership are checked under a fixed topology. Cleanup persists
+  container identity before removal and requires native helper/group termination;
+  unknown identity and late helper observations retain/reopen resource obligations.
+  The local worker/aggregate task limits are 64/128 after the measured startup
+  failure; CPU/memory/swap remain one CPU/3 GiB/zero. This new revision is NOT
+  installed or activated on the VM. Native topology/group preparation, actual
+  readiness/termination, toolchain/runtime approval and complete image/deployment
+  proof remain open. Keep the overall story unchecked.
+  Verification of this native-readiness checkpoint: all 669 coding tests passed
+  with real loopback PostgreSQL and no skips; targeted Flake8 and Bandit passed.
+  The suite includes preserved user-owned provider work, which is not part of this
+  implementation commit. No production schema, VM bundle, policy, resource or
+  model-provider call was changed by this local checkpoint.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -47,13 +48,16 @@ class PackagingEngine(Engine):
                     mounts.append({"Type": "bind", "Source": pairs["src"], "Destination": pairs["dst"],
                                    "RW": "readonly" not in fields, "Propagation": "rprivate"})
             spec["Mounts"] = mounts
+            spec["Id"] = CID
+            spec["State"] = {"Running": True, "Pid": 4242}
             spec["Config"].update(User="65532:65532", Entrypoint=["/usr/bin/env"],
                                    Cmd=list(args[args.index(IMAGE) + 1:]), OpenStdin=False, Tty=False)
             spec["HostConfig"] = dict(Runtime="runsc", NetworkMode="none", ReadonlyRootfs=True,
                                        CapAdd=None, CapDrop=["ALL"], SecurityOpt=["no-new-privileges:true"],
                                        Memory=3 * 1024**3, MemorySwap=3 * 1024**3, NanoCpus=1_000_000_000,
-                                       PidsLimit=16, CgroupParent=host.CGROUP_PARENT,
+                                       PidsLimit=host.WORKER_TASKS, CgroupParent=host.CGROUP_PARENT,
                                        Ulimits=[{"Name": "nofile", "Hard": 64, "Soft": 64}],
+                                       RestartPolicy={"Name": "no", "MaximumRetryCount": 0},
                                        LogConfig={"Type": "none"}, Privileged=False, Devices=[],
                                        DeviceRequests=None, PidMode="", IpcMode="private", UTSMode="",
                                        CgroupnsMode="private", PortBindings={}, PublishAllPorts=False, GroupAdd=None)
@@ -111,6 +115,9 @@ def context(monkeypatch):
         monkeypatch.setattr(isolation, "ensure_toolchain_image", lambda image: None)
         monkeypatch.setattr(host.signal, "alarm", lambda timeout: None)
         monkeypatch.setattr(host, "require_host_limits", lambda: None)
+        monkeypatch.setattr(host, "require_native_cleanup", lambda container_id: None)
+        from tests.coding.test_packaging_readiness import proof_for
+        monkeypatch.setattr(host, "verify_native_worker", lambda spec, binding: proof_for(binding))
         # Privileged ownership/mount operations are simulated, never exercised on macOS.
         monkeypatch.setattr(host.os, "chown", lambda *args, **kwargs: None)
         monkeypatch.setattr(host.os, "fchown", lambda *args: None)
@@ -142,11 +149,13 @@ def context(monkeypatch):
 
         def execute(args, timeout, **kwargs):
             assert args == ["start", "-a", CID] and 0 < timeout <= 60 and kwargs["output_limit"] == 16384
+            kwargs["on_started"](SimpleNamespace(poll=lambda: None))
             job = engine.journal.db.execute("SELECT id FROM jobs WHERE purpose='image_packaging'").fetchone()[0]
             work = journal_path / "packaging-jobs" / job / "work"
             frame = (work / "input/request.frame").read_bytes()
             request, payload = frame.split(b"\n", 1)
             request = json.loads(request)
+            worker.verify_host_proof(request["binding"], json.loads((work / "input/host-proof.json").read_bytes()))
             result = worker.assemble_and_retain(
                 request["binding"], request["reference"], payload,
                 runtime_policy_path=work / "input/runtime-policy.json", output_root=work / "output",
@@ -206,6 +215,7 @@ def test_foreign_inputs_cannot_launch_a_container(context, change):
     ("Runtime", "runc"), ("ReadonlyRootfs", False), ("NetworkMode", "host"), ("Privileged", True),
     ("CgroupParent", "system.slice"), ("MemorySwap", 4 * 1024**3), ("PidsLimit", 100),
     ("Ulimits", [{"Name": "nofile", "Hard": 1024, "Soft": 1024}]),
+    ("RestartPolicy", {"Name": "always", "MaximumRetryCount": 0}),
 ])
 def test_wrong_container_enforcement_never_starts_worker(context, field, value):
     context["engine"].mutate = lambda spec: spec["HostConfig"].update({field: value})
@@ -226,6 +236,70 @@ def test_shared_mount_propagation_never_starts_worker(context):
     with pytest.raises(host.PackagingHostError, match="mounts"):
         assemble(context)
     assert context["engine"].removed == [CID]
+
+
+def test_native_readiness_failure_blocks_artifact_processing_and_preserves_cleanup(context, monkeypatch):
+    def deny(spec, binding):
+        raise host.PackagingHostError("synthetic host native verification denied")
+
+    monkeypatch.setattr(host, 'verify_native_worker', deny)
+    with pytest.raises(host.PackagingHostError, match='native verification denied'):
+        assemble(context)
+    job = context['engine'].journal.db if context['engine'].journal.db is not None else None
+    assert job is None  # Context closed; durable journal is inspected independently.
+    assert context['engine'].removed == [CID]
+    with isolation.Journal(context['journal']) as journal:
+        row = journal.db.execute("SELECT * FROM jobs WHERE purpose='image_packaging'").fetchone()
+        assert row['state'] == 'cleaned'
+        folder = context['journal'] / 'packaging-jobs' / row['id'] / 'work'
+        assert not (folder / 'input/host-proof.json').exists()
+        assert not list((folder / 'output').iterdir())
+
+
+def test_native_cleanup_failure_holds_slot_after_docker_removal(context, monkeypatch):
+    def deny(container_id):
+        assert container_id == CID
+        raise host.PackagingHostError('synthetic remaining native helper')
+
+    monkeypatch.setattr(host, 'require_native_cleanup', deny)
+    with pytest.raises(host.PackagingHostError, match='cleanup remains uncertain'):
+        assemble(context)
+    assert context['engine'].removed == [CID]
+    with isolation.Journal(context['journal']) as journal:
+        row = journal.db.execute("SELECT * FROM jobs WHERE purpose='image_packaging'").fetchone()
+        assert row['state'] == 'cleanup_uncertain' and row['container_id'] == CID
+        with pytest.raises(isolation.IsolationError, match='unreconciled'):
+            journal.require_available()
+        observation = journal.observe_claim(context['binding']['build_job_id'])
+        assert observation['cleanup_verified'] is False
+
+
+def test_late_native_helper_invalidates_prior_cleanup_evidence(context, monkeypatch):
+    assemble(context)
+
+    def deny(container_id):
+        raise host.PackagingHostError('synthetic late native helper')
+
+    monkeypatch.setattr(host, 'require_native_cleanup', deny)
+    with isolation.Journal(context['journal']) as journal:
+        observation = journal.observe_claim(context['binding']['build_job_id'])
+        assert observation['state'] == 'cleanup_uncertain'
+        assert observation['cleanup_verified'] is False
+        with pytest.raises(isolation.IsolationError, match='unreconciled'):
+            journal.require_available()
+
+
+def test_unknown_packaging_native_identity_is_not_termination_proof(context):
+    with isolation.Journal(context['journal']) as journal:
+        job = journal.begin('image_packaging', IMAGE, 60, context['binding'], purpose='image_packaging')
+        with journal.db:
+            journal.db.execute('UPDATE jobs SET deadline=0 WHERE id=?', (job['id'],))
+        job['deadline'] = 0
+        with pytest.raises(isolation.IsolationError, match='native identity is unknown'):
+            journal.cleanup(job)
+        assert job['state'] != 'cleaned'
+        journal.cleanup(job, create_not_attempted=True)
+        assert job['state'] == 'cleaned'
 
 
 def test_ambiguous_create_persists_slot_then_reaper_uses_exact_identity(context):
