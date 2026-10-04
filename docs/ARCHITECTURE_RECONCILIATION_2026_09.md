@@ -337,3 +337,19 @@ rejected that profile; private packaging is still disabled. Native namespace,
 runtime role/capability and helper coverage need a proven contract before revising
 the check. No new resource, financial activation, production schema or generated
 application was created. See current evidence in `HOST_BUNDLE_OPERATIONS.md`.
+
+The 4 October native profile correction is source-grounded, not a blanket
+capability bypass. It pins the separate Sentry/Gofer binaries, proves Systrap
+ancestry, compares the complete kernel process inventory, and preserves unknown
+processes as failed readiness/uncertain cleanup. A live diagnostic identified the
+optional unfiltered `runsc-fd-parking` sidecar. A reversible operator-only exact-hash
+transition makes that optional binary non-executable; the pinned upstream source
+explicitly supports its absence at the cost of slower teardown. Mandatory Sentry,
+Gofer and guest isolation remain unchanged. Readiness independently checks the
+exclusion so package/permission drift cannot silently restore it.
+
+A nonsensitive post-exclusion native sleeper passed complete enforcement and
+cleanup. This is not full OCI packaging or generated-app proof. Schema migrations,
+funded production pools, approved Node/Java toolchains and runtime bases,
+publication/signing, app behavior and final Chat delivery remain separate gates.
+No new cloud resource, production schema, model call or budget expansion occurred.

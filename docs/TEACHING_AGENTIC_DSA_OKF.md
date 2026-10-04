@@ -3000,7 +3000,107 @@ authority. A bitmask without these bindings is insufficient evidence.
 
 An appropriate runtime profile must bind the pinned executable/release, process
 role, native namespaces/mappings, permitted capability/filter envelope, resource
-group and helper lifetime. The current profile remains rejected pending that
+group and helper lifetime. At that checkpoint the profile remained rejected pending
 proof; it must not silently become `allow whatever the last probe observed`.
+The later pinned-role and optional-helper correction is described below.
 See [gVisor's native security architecture](https://gvisor.dev/docs/architecture_guide/intro/)
 and [its filesystem/Directfs tradeoff](https://gvisor.dev/docs/user_guide/filesystem/).
+
+<a id="dictionary-runtime-role-graph"></a>
+## Runtime role graphs, descendant proofs and complete process inventories
+
+A runtime consists of more than one executable. The pinned release on this host
+uses a Gofer, a separate Sentry binary and Systrap subprocesses. An inventory that
+checks only the executable named `runsc` misses Sentry processes. Cleanup and
+resource accounting would then be incomplete even if every listed helper passed.
+
+```text
+exact container scope
+  |-- pinned Gofer
+  `-- pinned primary Sentry
+          |-- Systrap master
+          |      `-- Systrap child
+          `-- additional bounded Systrap descendants
+```
+
+This is a directed process-parent graph. To prove a clone belongs to a particular
+Sentry, walk kernel-reported parent links until reaching that exact live Sentry.
+Use a visited set for cycle detection and a hop limit for bounded work. Merely
+calling a process `helper` or matching an executable basename proves nothing.
+
+```python
+def descends_from(pid, root_pid, parent_of, maximum=128):
+    visited = set()
+    for _ in range(maximum):
+        if pid in visited:
+            return False
+        visited.add(pid)
+        pid = parent_of(pid)  # Evidence source must be trusted, not model output.
+        if pid == root_pid:
+            return True
+        if pid <= 1:
+            return False
+    return False
+```
+
+One walk costs `O(h)` time and space for height `h`; checking `P` processes naïvely
+costs `O(P*h)`. Memoization can reduce repeated graph work, but cached kernel
+observations must never survive their process identity or observation interval.
+Our bounded inventory compares `set(scope_processes) == set(verified_helpers)`:
+that set equality detects both missing helpers and unexpected native occupants.
+The actual implementation additionally verifies package digests, live executable
+inodes, namespaces, UID/GID mappings, role-specific capability masks, seccomp,
+no-new-privileges, cgroup budgets, start times and pidfds. Empty command lines are
+accepted only for source-grounded, ancestry-verified Systrap clones—not generally.
+
+<a id="dictionary-complete-inventory-versus-allowlist"></a>
+## Complete inventory versus an allowlist-filtered inventory
+
+An allowlist answers “which objects may be accepted?” It must not answer “which
+objects exist?” Filtering an inventory by accepted executable names before checking
+completeness can erase the very unknown process that should invalidate the proof.
+Our live test exposed this with gVisor's optional FD-parking process.
+
+```python
+def verify_complete_inventory(kernel_members, discovered_members, approved):
+    actual = set(kernel_members)
+    found = set(discovered_members)
+    if actual != found:
+        raise ValueError("missing or stale inventory; no readiness")
+    if not actual.issubset(approved):
+        raise ValueError("unapproved occupant; no readiness")
+    return True
+```
+
+Set construction/equality takes expected `O(P)` time and `O(P)` space for `P`
+bounded process IDs. Equality detects missing and extra IDs; executable, kernel
+namespace and start-time verification must still prove what each ID represents.
+A PID alone is reusable and is not an immutable capability. pidfds retain process
+identity during observation; bounded retries do not extend authorization deadlines.
+
+<a id="dictionary-optional-feature-exclusion"></a>
+## Optional-feature exclusion, durable intents and runtime drift
+
+Removing an optional optimization is different from weakening a security check.
+The pinned gVisor release tolerates its parking helper being unavailable, while
+Sentry and Gofer remain mandatory. We retain the binary with its original hash but
+make it non-executable through an operator-only reversible transition.
+
+```text
+exact binary/hash/mode + idle journal + fresh snapshot
+    -> fsynced prepared intent
+    -> fixed inode mode change + fsync
+    -> independent exact read-back
+    -> committed intent
+    -> native proof before private artifact consumption
+```
+
+This is a small state machine with a write-ahead record. `prepared` is not failure
+or success: after interruption, actual filesystem state must be inspected. A stale
+request must not replay blindly; same-target reconciliation precedes reversal.
+Hashing costs `O(B)` for `B` binary bytes. Snapshot equality detects drift, but
+does not eliminate all concurrency: the implementation also takes the exclusive
+host slot and binds the opened file's device/inode before changing permissions.
+Readiness rechecks the exclusion, so restoring permissions or changing the package
+does not silently restore an unapproved process. Local tests simulate kernel/root
+observations; only live native tests establish the fixed host profile.

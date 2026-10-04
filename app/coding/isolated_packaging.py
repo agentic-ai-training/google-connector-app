@@ -65,12 +65,28 @@ class PackagingHostError(RuntimeError):
     pass
 
 
+class NativeObservationChanged(PackagingHostError):
+    """No readiness granted: a bounded retry may observe a new stable snapshot."""
+
+
 MAX_STAGING_BYTES = 2 * 1024**3
 MAX_JOB_DIRECTORIES = 8
 GUEST = "/gca"
 CGROUP_PARENT = "gcapackaging.slice"
 WORKER_TASKS = 64
 AGGREGATE_TASKS = 128  # Runtime helpers plus controller; CPU/memory stay unchanged.
+NATIVE_PROFILE = "runsc_release20260921_directfs_v2"
+# Operator-reviewed signed-APT package, not model-selected executable authority.
+NATIVE_BINARIES = {
+    "/usr/bin/runsc": ("gofer", "2eb94b58769293ce5041beecf4cbc14b173604371bfaac7cb3f3a84a28e44248", 0x4001F),
+    "/usr/bin/gvisor-bin/gvisor_sentry": (
+        "boot", "4405affdaf81675d50d8d4c89f07efe2687c16fa69082f0d88978cae1dfe6697", 0x8001F),
+}
+# Discovery is not executable approval. The optional parking sidecar must remain
+# visible to cleanup and must fail readiness unless a reviewed profile covers it.
+NATIVE_DISCOVERY_BINARIES = frozenset(NATIVE_BINARIES) | {"/usr/bin/gvisor-bin/runsc-fd-parking"}
+OPTIONAL_SIDECAR = "/usr/bin/gvisor-bin/runsc-fd-parking"
+OPTIONAL_SIDECAR_HASH = "03af90d07ea466c10ecc3e3ba839b2a59540959dd3286aea3886917cba850c11"
 VOLUME_BYTES = 2040 * 1024**2  # Leave room for small host-owned job metadata.
 STORAGE_COMMANDS = {"mkfs": "/usr/sbin/mke2fs", "mount": "/usr/bin/mount", "umount": "/usr/bin/umount"}
 
@@ -392,15 +408,123 @@ def native_helpers(container_id):
     result = []
     for process in inventory:
         try:
-            if os.readlink(process / "exe") != "/usr/bin/runsc":
+            membership = _native_text(process / "cgroup")
+            if membership == "0::/" + CGROUP_PARENT + "/docker-" + container_id + ".scope":
+                result.append((int(process.name), membership))
+                continue
+            executable = os.readlink(process / "exe")
+            if executable not in NATIVE_DISCOVERY_BINARIES:
+                continue
+            if executable == "/usr/bin/gvisor-bin/runsc-fd-parking":
+                # Its fixed argv omits the container ID. An unscoped known
+                # sidecar cannot safely be attributed or dismissed as cleaned.
+                result.append((int(process.name), membership))
                 continue
             arguments = _native_text(process / "cmdline").split("\x00")
-            membership = _native_text(process / "cgroup")
             if container_id in arguments or ("/docker-" + container_id + ".scope") in membership:
                 result.append((int(process.name), membership))
         except (FileNotFoundError, ProcessLookupError):
             continue
     return result
+
+
+def _native_binary(process, cache=None):
+    executable = os.readlink(process / "exe")
+    if executable not in NATIVE_BINARIES:
+        raise PackagingHostError("native runtime executable is not approved")
+    role, expected, capabilities = NATIVE_BINARIES[executable]
+    path = _protected(Path(executable))
+    source = path.stat()
+    live = (process / "exe").stat()
+    if (source.st_uid != 0 or source.st_mode & 0o022 or not source.st_size <= 128 * 1024**2
+            or (source.st_dev, source.st_ino) != (live.st_dev, live.st_ino)):
+        raise PackagingHostError("native executable inode differs from approved package")
+    digest = hashlib.sha256()
+    key = (executable, source.st_dev, source.st_ino, source.st_size,
+           getattr(source, "st_mtime_ns", None), getattr(source, "st_ctime_ns", None))
+    checksum = cache.get(key) if cache is not None else None
+    if checksum is None:
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        checksum = digest.hexdigest()
+        if cache is not None:
+            cache[key] = checksum
+    if checksum != expected:
+        raise PackagingHostError("native runtime package digest differs")
+    return role, capabilities
+
+
+def require_optional_sidecar_excluded():
+    """Package/permission drift must not re-enable the unfiltered host helper."""
+    path = _protected(Path(OPTIONAL_SIDECAR))
+    info = path.stat()
+    if (info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o644 or info.st_nlink != 1
+            or not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 65536):
+        raise PackagingHostError("optional native sidecar exclusion differs")
+    with path.open('rb') as stream:
+        body = stream.read(65537)
+    if len(body) > 65536 or hashlib.sha256(body).hexdigest() != OPTIONAL_SIDECAR_HASH:
+        raise PackagingHostError("optional native sidecar package differs")
+
+
+def _verify_systrap_ancestry(pid, sentry_pid, identity, cache=None):
+    visited = set()
+    current = pid
+    for _ in range(AGGREGATE_TASKS):
+        if current in visited:
+            raise PackagingHostError("native subprocess ancestry is cyclic")
+        visited.add(current)
+        process = Path("/proc") / str(current)
+        status = dict(line.split(":", 1) for line in _native_text(process / "status").splitlines() if ":" in line)
+        parent = int(status["PPid"].strip())
+        if parent == sentry_pid:
+            return
+        if parent <= 1 or _native_text(Path("/proc") / str(parent) / "cgroup") != "0::" + identity:
+            raise PackagingHostError("native subprocess is not descended from its Sentry")
+        if _native_binary(Path("/proc") / str(parent), cache)[0] != "boot":
+            raise PackagingHostError("native subprocess ancestor executable differs")
+        current = parent
+    raise PackagingHostError("native subprocess ancestry exceeds bound")
+
+
+def verify_native_profile(pid, identity, *, primary=False, sentry_pid=None, binary_cache=None):
+    """Pinned native role/namespace contract, distinct from guest CapEff=0."""
+    for name in ("user", "pid"):
+        if os.readlink(Path("/proc/self/ns") / name) != os.readlink(Path("/proc/1/ns") / name):
+            raise PackagingHostError("controller is not in the host namespace context")
+    if list(map(int, _native_text(Path("/proc/self/uid_map"), 4096).split())) != [0, 0, 4294967295]:
+        raise PackagingHostError("controller mapping is not the approved host context")
+    process = Path("/proc") / str(pid)
+    role, capabilities = _native_binary(process, binary_cache)
+    if primary and role != "boot":
+        raise PackagingHostError("primary native runtime is not the pinned Sentry")
+    arguments = _native_text(process / "cmdline").split("\x00")
+    if role not in arguments:
+        if role != "boot" or primary or any(arguments) or type(sentry_pid) is not int or sentry_pid <= 1:
+            raise PackagingHostError("native runtime role differs")
+        _verify_systrap_ancestry(pid, sentry_pid, identity, binary_cache)
+        primary_process = Path("/proc") / str(sentry_pid)
+        for name in ("user", "mnt", "net", "pid", "ipc", "uts"):
+            if os.readlink(process / "ns" / name) != os.readlink(primary_process / "ns" / name):
+                raise PackagingHostError("native subprocess namespace differs from its Sentry")
+        role = "systrap"
+    status = dict(line.split(":", 1) for line in _native_text(process / "status").splitlines() if ":" in line)
+    if (_native_text(process / "cgroup") != "0::" + identity
+            or any(int(status[key].strip(), 16) != capabilities for key in ("CapEff", "CapPrm", "CapBnd"))
+            or status["NoNewPrivs"].strip() != "1" or status["Seccomp"].strip() != "2"
+            or any(list(map(int, status[key].split())) != [0, 0, 0, 0] for key in ("Uid", "Gid"))):
+        raise PackagingHostError("native role privilege or resource membership differs")
+    for name in ("user", "mnt", "net", "pid", "ipc", "uts"):
+        if os.readlink(process / "ns" / name) == os.readlink(Path("/proc/self/ns") / name):
+            raise PackagingHostError("native runtime shares a controller namespace")
+    for name in ("uid_map", "gid_map"):
+        if list(map(int, _native_text(process / name, 4096).split())) != [0, 0, 4294967295]:
+            raise PackagingHostError("native runtime mapping is not the approved profile")
+    root, host_root = (process / "root").stat(), Path("/").stat()
+    if (root.st_dev, root.st_ino) == (host_root.st_dev, host_root.st_ino):
+        raise PackagingHostError("native runtime exposes the controller filesystem root")
+    return role, capabilities
 
 
 def require_native_cleanup(container_id):
@@ -428,20 +552,18 @@ def verify_native_worker(spec, binding):
     if (not isinstance(container_id, str) or not re.fullmatch(r"[0-9a-f]{64}", container_id)
             or state.get("Running") is not True or type(pid) is not int or not 1 < pid < 2**31):
         raise PackagingHostError("native worker is not a live exact container")
+    require_optional_sidecar_excluded()
     identity = "/" + CGROUP_PARENT + "/docker-" + container_id + ".scope"
     if not callable(getattr(os, "pidfd_open", None)):
         raise PackagingHostError("native process handles are unavailable on this host")
     descriptor = os.pidfd_open(pid, 0)
+    helper_descriptors = []
+    binary_cache = {}  # One observation only; never shared across jobs or calls.
     try:
         initial = _start_ticks(pid)
         poller = select.poll()
         poller.register(descriptor, select.POLLIN)
-        status = dict(line.split(":", 1) for line in _native_text(Path("/proc") / str(pid) / "status").splitlines()
-                      if ":" in line)
-        membership = _native_text(Path("/proc") / str(pid) / "cgroup")
-        if (membership != "0::" + identity or int(status["CapEff"].strip(), 16) != 0
-                or status["NoNewPrivs"].strip() != "1" or status["Seccomp"].strip() != "2"):
-            raise PackagingHostError("native sandbox ownership or privilege filter differs")
+        verify_native_profile(pid, identity, primary=True, binary_cache=binary_cache)
         group = Path("/sys/fs/cgroup") / identity.lstrip("/")
         memory = int(_native_text(group / "memory.max"))
         swap = int(_native_text(group / "memory.swap.max"))
@@ -457,29 +579,50 @@ def verify_native_worker(spec, binding):
                 or parent_swap != 0 or not 0 < parent_quota <= parent_period
                 or not 0 < parent_tasks <= AGGREGATE_TASKS):
             raise PackagingHostError("native worker or aggregate resource limits differ")
-        # Every runsc helper with this exact container ID must also be covered by
+        # Both package executables (Sentry and Gofer) must be covered, not just runsc.
+        # Every helper with this exact container ID must also be covered by
         # the aggregate. No cmdline is emitted or stored in the receipt.
         helpers = []
+        roles = []
         for helper_pid, helper_group in native_helpers(container_id):
-            if not helper_group.startswith("0::/" + CGROUP_PARENT + "/") or "\n" in helper_group:
+            if len(helpers) >= AGGREGATE_TASKS:
+                raise PackagingHostError("native helper inventory exceeds aggregate bound")
+            if helper_group != "0::" + identity:
                 raise PackagingHostError("native runtime helper is outside aggregate resource limits")
+            started = _start_ticks(helper_pid)
+            helper_descriptor = os.pidfd_open(helper_pid, 0)
+            helper_descriptors.append(helper_descriptor)
+            poller.register(helper_descriptor, select.POLLIN)
+            role, _ = verify_native_profile(helper_pid, identity, primary=helper_pid == pid, sentry_pid=pid,
+                                            binary_cache=binary_cache)
+            if _start_ticks(helper_pid) != started:
+                raise PackagingHostError("native helper identity changed during observation")
+            roles.append(role)
             helpers.append(helper_pid)
-        if not helpers or _start_ticks(pid) != initial or poller.poll(0):
-            raise PackagingHostError("native runtime identity expired or helpers were not observed")
+        members = list(map(int, _native_text(group / "cgroup.procs").split()))
+        if set(members) != set(helpers):
+            raise NativeObservationChanged("native scope inventory changed during observation")
+        if pid not in helpers or "gofer" not in roles:
+            raise NativeObservationChanged("native primary or Gofer was not observed")
+        if _start_ticks(pid) != initial or poller.poll(0):
+            raise NativeObservationChanged("native process identity expired during observation")
         now = int(time.time())
         if now >= binding["execution_deadline_unix"]:
             raise PackagingHostError("native readiness authority expired")
-        return dict(version=1, runtime="runsc", binding_hash=hashlib.sha256(oci.canonical(binding)).hexdigest(),
+        return dict(version=2, runtime="runsc", native_profile=NATIVE_PROFILE,
+                    binding_hash=hashlib.sha256(oci.canonical(binding)).hexdigest(),
                     container_id=container_id, native_pid=pid, native_start_ticks=initial, native_cgroup=identity,
                     memory_max=memory, swap_max=swap, cpu_quota=quota, cpu_period=period, tasks_max=tasks,
                     aggregate_memory_max=parent_memory, aggregate_swap_max=parent_swap,
                     aggregate_cpu_quota=parent_quota, aggregate_cpu_period=parent_period,
-                    aggregate_tasks_max=parent_tasks, native_seccomp=2, native_cap_eff=0,
+                    aggregate_tasks_max=parent_tasks, native_seccomp=2, native_cap_eff=0x8001F,
                     native_no_new_privs=1, helper_pids=sorted(helpers), observed_at_unix=now,
                     expires_at_unix=binding["execution_deadline_unix"])
     except (OSError, ValueError, KeyError, IndexError) as error:
         raise PackagingHostError("native enforcement evidence unavailable") from error
     finally:
+        for helper_descriptor in helper_descriptors:
+            os.close(helper_descriptor)
         os.close(descriptor)
 
 
@@ -489,7 +632,11 @@ def publish_readiness(journal, job, container_id, mounts, binding, inputs, child
     while time.monotonic() < deadline and child.poll() is None:
         spec = verify_container(journal, job, container_id, mounts)
         if spec.get("State", {}).get("Running") is True:
-            proof = verify_native_worker(spec, binding)
+            try:
+                proof = verify_native_worker(spec, binding)
+            except NativeObservationChanged:
+                time.sleep(0.1)
+                continue
             again = verify_container(journal, job, container_id, mounts)
             if (again.get("State", {}).get("Running") is not True
                     or again["State"].get("Pid") != proof["native_pid"]):

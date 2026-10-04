@@ -495,3 +495,75 @@ exact snapshot, idle journal and native read-back are mandatory. A single atomic
 published unit allows interrupted setup to be inspected and rolled forward. It
 cannot start generated code, approve images, publish or alter cloud resource size.
 The native probe's `production_packaging_activated=false` remains mandatory.
+
+### Pinned native role profile, not a capability bypass
+
+The release-20260921.0 signed-APT package was independently read back with root
+ownership/mode and binary hashes. Its split Sentry executable had been omitted
+by the old runsc-only helper scan. The local verifier now includes both executables
+and requires the entire native scope process inventory to match the observed
+helpers. Unknown executables/processes, changed package inodes/hashes, vanished
+identities, unapproved capability bits, shared host namespaces or wrong UID/GID
+mappings fail closed. The controller itself must match the host namespace context.
+
+| Native role | Exact executable | CapEff/CapPrm/CapBnd | Additional role evidence |
+| --- | --- | --- | --- |
+| Gofer | `/usr/bin/runsc` | `0x4001f` | `gofer` invocation, isolated namespaces/root |
+| Sentry | `/usr/bin/gvisor-bin/gvisor_sentry` | `0x8001f` | primary container PID, `boot` invocation |
+| Systrap clone | pinned Sentry executable | `0x8001f` | empty argv, bounded Sentry ancestry, same isolated namespaces |
+
+All roles require native seccomp 2, no-new-privileges 1, exact cgroup membership
+and approved UID/GID mapping. Each observed process has start-time/termination
+checks; live pidfds remain held through observation. The guest still requires
+CapEff zero and UID 65532. These are different security layers, not contradictory
+privilege assertions. Runtime-helper discovery and cleanup include both binaries.
+
+The source-grounded capability distinction comes from the exact release's
+[Gofer implementation](https://github.com/google/gvisor/blob/release-20260921.0/runsc/cmd/gofer.go),
+[Sentry setup](https://github.com/google/gvisor/blob/release-20260921.0/runsc/cmd/sentry/sentrycmd/boot.go)
+and [Systrap process creation](https://github.com/google/gvisor/blob/release-20260921.0/pkg/sentry/platform/systrap/subprocess_linux.go).
+The readonly proof uses schema version 2 and
+`native_profile=runsc_release20260921_directfs_v2`; old/generic/model-selected
+profiles are rejected. Binary hashes and all native observations are independently
+verified by the host, not accepted from that profile string or JSON alone.
+
+Local verification: 710 coding tests passed with real loopback PostgreSQL and no
+skips; targeted Flake8/Bandit/diff checks passed. This is not a universal sandbox
+escape proof or complete live packaging/behavioral deployment proof.
+
+### Optional sidecar exclusion and complete native inventory
+
+The subsequent live scope contained an eighth process, the signed package's
+`/usr/bin/gvisor-bin/runsc-fd-parking`. It was not a startup race: repeated native
+observations showed its broad host capability mask and seccomp 0. The guard
+withheld readiness; no private artifact was mounted. The fixed diagnostic now
+reports bounded missing-member process/thread metadata without reading environments
+or private source. Runtime discovery includes **every exact-scope occupant**, not
+only approved executable names; unknown occupants fail verification and prevent
+cleanup from being mistaken for success. Unscoped known parking helpers also retain
+cleanup uncertainty because their fixed argv cannot identify a container.
+
+The pinned release's [sandbox implementation](https://github.com/google/gvisor/blob/release-20260921.0/runsc/sandbox/sandbox.go)
+explicitly continues without the optional parking binary. Its
+[C implementation](https://github.com/google/gvisor/blob/release-20260921.0/runsc/fdparking/fdparking.c)
+holds a pidfd and disabled io_uring pin ring to accelerate teardown; it is not the
+Sentry or Gofer. We disable **only this optional optimization**, keeping its exact
+bytes intact and changing mode from 0755 to 0644 through a fixed operator workflow.
+No privileged-helper allowlist exception, Docker restart, default-runtime change,
+new VM, reduced application capability or private admission activation is involved.
+
+`scripts/prepare_packaging_runtime.py` defaults to inspection. Exclusion/restoration
+requires exact runtime hashes/inodes, an idle journal/resource group and a fresh
+snapshot. A fsynced prepared intent precedes the mode transition. Lost responses
+require independent inspection; a prepared transition must be reconciled toward
+the same target before an inverse transition. The binary is retained, not deleted.
+The native readiness verifier independently requires its pinned hash and 0644 mode;
+a package update or permission restoration cannot silently re-enable it.
+
+The first post-exclusion nonsensitive sleeper produced verified native enforcement
+and cleanup: complete seven-process inventory, role-specific capabilities, isolated
+namespaces/root, seccomp 2, no-new-privileges 1, exact cgroups and live pidfd checks.
+This proves that fixed nonsensitive profile, **not** real private OCI packaging,
+generated Node/Java toolchains, signing/publication or the complete app/Chat workflow.
+Production packaging remains inactive. See `HOST_BUNDLE_OPERATIONS.md` for hashes
+and independent read-back checkpoints.

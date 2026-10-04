@@ -2453,6 +2453,23 @@ changes become production evidence.
   rejection and bound cleanup. Earlier rejected CLI input forms were corrected
   only after an independent idle-journal observation; they do not supply runtime
   evidence or authorize replay of an uncertain consumed claim.
+  The subsequent source-grounded native profile pins the split Sentry/Gofer
+  binaries and verifies Systrap ancestry, namespaces/mappings, role privileges,
+  complete scope inventory and live process identities. A missing scope occupant
+  proved to be the optional unfiltered FD-parking sidecar, not a transient startup
+  race. A fixed operator-only, exact-hash, idle-journal, crash-reconcilable transition
+  retained this optional binary but made it non-executable. The pinned upstream
+  runtime tolerates its absence; no mandatory application/runtime security check
+  was weakened. Readiness independently rechecks exclusion against package/mode
+  drift. Unknown occupants and unscoped known sidecars prevent false cleanup.
+  Latest protected bundle installation/read-back and a positive nonsensitive
+  native sleeper proof are recorded in `docs/HOST_BUNDLE_OPERATIONS.md`. All 731
+  coding tests passed with real loopback PostgreSQL and no skips; targeted Flake8
+  and Bandit passed. The complete private artifact/barrier and image pipeline,
+  approved Node/Java toolchains/runtime bases, funded production enrollment,
+  publication/signing and generated-app/Chat proof remain open. Keep the overall
+  story unchecked. No production migration, new cloud resource, model call, VM
+  sizing/deadline change or budget expansion occurred.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.

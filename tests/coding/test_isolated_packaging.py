@@ -256,6 +256,38 @@ def test_native_readiness_failure_blocks_artifact_processing_and_preserves_clean
         assert not list((folder / 'output').iterdir())
 
 
+def test_changing_native_snapshot_is_reobserved_before_private_processing(context, monkeypatch):
+    from tests.coding.test_packaging_readiness import proof_for
+    calls = []
+
+    def verify(spec, binding):
+        calls.append(spec['Id'])
+        if len(calls) == 1:
+            raise host.NativeObservationChanged('synthetic startup inventory changed')
+        return proof_for(binding)
+
+    monkeypatch.setattr(host, 'verify_native_worker', verify)
+    assert assemble(context)['execution_cleanup_verified'] is True
+    assert calls == [CID, CID]
+
+
+def test_changing_native_snapshot_never_extends_readiness_deadline(context, monkeypatch):
+    def changing(spec, binding):
+        raise host.NativeObservationChanged('synthetic permanently unstable inventory')
+
+    clock = iter([100.0, 100.0, 100.0, 111.0])
+    monkeypatch.setattr(host.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(host.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(host, 'verify_native_worker', changing)
+    with pytest.raises(host.PackagingHostError, match='within its deadline'):
+        assemble(context)
+    with isolation.Journal(context['journal']) as journal:
+        row = journal.db.execute("SELECT * FROM jobs WHERE purpose='image_packaging'").fetchone()
+        inputs = context['journal'] / 'packaging-jobs' / row['id'] / 'work/input'
+        assert not (inputs / 'host-proof.json').exists()
+        assert row['state'] == 'cleaned'
+
+
 def test_native_cleanup_failure_holds_slot_after_docker_removal(context, monkeypatch):
     def deny(container_id):
         assert container_id == CID

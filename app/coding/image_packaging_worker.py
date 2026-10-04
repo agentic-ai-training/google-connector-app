@@ -117,20 +117,21 @@ def verify_host_proof(binding, proof):
     an operator-private filesystem. Never accept this document from a public API,
     a model message or a writable workspace as authority.
     """
-    fields = {"version", "runtime", "binding_hash", "container_id", "native_pid", "native_start_ticks",
+    fields = {"version", "runtime", "native_profile", "binding_hash", "container_id", "native_pid", "native_start_ticks",
               "native_cgroup", "memory_max", "swap_max", "cpu_quota", "cpu_period", "tasks_max",
               "aggregate_memory_max", "aggregate_swap_max", "aggregate_cpu_quota", "aggregate_cpu_period",
               "aggregate_tasks_max", "native_seccomp", "native_cap_eff", "native_no_new_privs",
               "helper_pids", "observed_at_unix", "expires_at_unix"}
-    numbers = fields - {"runtime", "binding_hash", "container_id", "native_cgroup", "helper_pids"}
+    numbers = fields - {"runtime", "native_profile", "binding_hash", "container_id", "native_cgroup", "helper_pids"}
     if (not isinstance(proof, dict) or set(proof) != fields
             or any(type(proof[name]) is not int for name in numbers)
-            or proof["version"] != 1 or proof["runtime"] != "runsc"
+            or proof["version"] != 2 or proof["runtime"] != "runsc"
+            or proof["native_profile"] != "runsc_release20260921_directfs_v2"
             or proof["binding_hash"] != hashlib.sha256(oci.canonical(binding)).hexdigest()
             or not isinstance(proof["container_id"], str) or not oci.DIGEST.fullmatch("sha256:" + proof["container_id"])
             or not 1 < proof["native_pid"] < 2**31 or proof["native_start_ticks"] <= 0
             or proof["native_cgroup"] != "/gcapackaging.slice/docker-" + proof["container_id"] + ".scope"
-            or proof["native_seccomp"] != 2 or proof["native_cap_eff"] != 0 or proof["native_no_new_privs"] != 1
+            or proof["native_seccomp"] != 2 or proof["native_cap_eff"] != 0x8001F or proof["native_no_new_privs"] != 1
             or not 0 < proof["memory_max"] <= 3 * 1024**3 or proof["swap_max"] != 0
             or not 0 < proof["cpu_quota"] <= proof["cpu_period"] or not 0 < proof["tasks_max"] <= 64
             or not 0 < proof["aggregate_memory_max"] <= 3 * 1024**3 or proof["aggregate_swap_max"] != 0

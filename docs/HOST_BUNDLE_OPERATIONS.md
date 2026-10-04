@@ -76,7 +76,68 @@ exists. Restoring an old bundle after packaging could remove cleanup capability.
 That state requires a reviewed forward-compatible repair, not deleting records or
 using a bypass flag.
 
-## Live evidence — 4 October 2026
+## Current live evidence — 4 October 2026
+
+Latest independently read-back verified installation:
+`9bdec0e235d9cc16ef66795026da59ed674513e6cccbfcd14bdf7ef111f9748f`.
+Snapshot: `da50f4cb709f2efaa395aa4a261ae54cf8632fc299ec034a261e13f914335e7d`.
+All seven file hashes were checked; updated native-profile files are:
+
+| File | Installed SHA-256 |
+| --- | --- |
+| isolated_packaging.py | 3a6b4bf85c43aeb3eb993c250bb9e00c3c9217ab29427481846015b82c47900c |
+| image_packaging_worker.py | c4f3a440f24335d104273fc337252935355fbd64fd6d52e1babd1cb00e7b08e9 |
+| isolated_validation.py | 8409c9ac73408d206999159ef8eef27adeda22301a0ed7ce25872512a3f1fe2c |
+
+The signed runtime's pinned Sentry and Gofer profiles now cover their separate
+executables and ancestry-verified Systrap clones. Native scope discovery includes
+unknown occupants rather than filtering them out. A fixed nonsensitive diagnostic
+identified an optional `runsc-fd-parking` process with broad capabilities and seccomp
+0. Its presence caused rejection, not acceptance. The upstream pinned source permits
+this optional optimization to be unavailable; the operator retained its exact bytes
+and excluded execution by changing 0755 to 0644. Mandatory native/guest guards remain.
+
+Parking binary SHA-256:
+`03af90d07ea466c10ecc3e3ba839b2a59540959dd3286aea3886917cba850c11`.
+Independent exclusion snapshot:
+`835d7dd941b98357913dad6c8809fd3650dc46f58158c4e783e640815e0be806`.
+The prepared/committed intent is protected at the existing journal state's
+`optional-sidecar.json`. No binary was deleted, Docker restarted, default runtime
+changed or cloud resource created. The readiness verifier independently requires
+the pinned parking binary to remain 0644; restoring it blocks private readiness.
+
+```sh
+python -m scripts.prepare_packaging_runtime \
+  --operator-config .gca-local/validation-transport.json
+# Review exact package hashes and a fresh idle-state snapshot before changing mode.
+python -m scripts.prepare_packaging_runtime \
+  --operator-config .gca-local/validation-transport.json \
+  --exclude --expected-snapshot-hash "$FRESH_RUNTIME_SNAPSHOT"
+# Restoration is operator-only, requires a new snapshot and blocks readiness.
+python -m scripts.prepare_packaging_runtime \
+  --operator-config .gca-local/validation-transport.json \
+  --restore --expected-snapshot-hash "$FRESH_RUNTIME_SNAPSHOT"
+```
+
+An uncertain response requires read-back before retry. A prepared transition must
+reconcile toward its same target; no opposite blind operation is permitted.
+No generated source, model key or private artifact is admitted by these commands.
+The first post-exclusion nonsensitive native sleeper passed complete enforcement
+and cleanup, with seven verified process identities. Full private artifact/barrier,
+OCI packaging, Node/Java runtime approval, deployment behavior and Chat proof remain
+open. Production packaging remains inactive. The final probe after installing the
+mandatory exclusion check also passed enforcement and cleanup in one observation:
+exact container `ef4dc965863a6b8a528a3b5e9332a17e447c0ed7bd89434e287437c678da535d`,
+seven scope/helper identities, no missing member, production activation false.
+Post-probe read-only health reported zero unresolved host jobs, zero validation
+leftovers, and all six Coolify containers healthy.
+
+Verification: all **731 coding tests** passed with real loopback PostgreSQL and no
+skips. Operator transition tests use real file/SQLite transactions but simulated
+root/kernel observations. Flake8 and Bandit passed. These are not universal sandbox
+escape proofs. The following checkpoints are historical, not current failures.
+
+## Earlier live evidence — 4 October 2026
 
 The first installation below is historical. A subsequent independently verified
 installation of native-readiness source commit `88e1ff7` now has installation ID
@@ -129,8 +190,8 @@ python -m scripts.probe_packaging_native \
   --operator-config .gca-local/validation-transport.json
 ```
 
-The native probe's negative readiness outcome is expected with the current
-contract; successful execution/cleanup must not be mistaken for positive security
+The native probe's negative readiness outcome was expected at that historical
+checkpoint; successful execution/cleanup must not be mistaken for positive security
 acceptance. No private input or mounted artifact is used by this fixed probe.
 
 ### Historical first seven-file installation

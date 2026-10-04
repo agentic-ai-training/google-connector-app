@@ -340,3 +340,16 @@ validation/replay/cleanup proof and a healthy six-container Coolify/reaper check
 No cloud resource, paid model call, policy/toolchain approval or deployment occurred.
 This host maintenance does not provide fresh accrued billing or funded activation.
 See [host bundle operations](HOST_BUNDLE_OPERATIONS.md).
+
+The subsequent native isolation check identified the signed release's optional
+unfiltered FD-parking helper. The fixed operator transition retained its exact
+binary bytes and made that optional optimization non-executable, with protected
+prepared/committed intent and independent read-back. Sentry, Gofer, mandatory
+security checks, VM size/deadline and Docker's default runtime were preserved.
+The latest bundle also independently verifies this exclusion before readiness.
+The final fixed nonsensitive native probe passed enforcement and cleanup with all
+seven scope processes covered, and no private artifact/model key/generated code.
+Afterward, read-only health showed zero unresolved host jobs, zero validation
+leftovers and all six Coolify containers healthy. Local verification passed 731
+coding tests against real loopback PostgreSQL, without skips. This does not approve
+private packaging, a financial pool, production migrations or a generated deployment.
