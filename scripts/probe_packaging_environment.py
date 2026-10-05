@@ -19,7 +19,7 @@ import json,pathlib,runpy
 modules=runpy.run_path('/usr/local/libexec/gca/isolated_validation.py')
 policy=modules['load_policy'](pathlib.Path('/etc/gca-validation/policy.json'),None)
 image=policy['images']['python_compile']
-guest="""import json,pathlib,runpy
+guest="""import json,pathlib,runpy,socket
 p=pathlib.Path('/proc/self/status')
 status=dict(line.split(':',1) for line in p.read_text().splitlines() if ':' in line)
 values={}
@@ -32,7 +32,12 @@ try:
  passed=True
 except RuntimeError:
  passed=False
-print(json.dumps({'virtual_proc':{key:status.get(key,'unavailable').strip() for key in ('CapEff','NoNewPrivs','Seccomp')},'guest_cgroup':values,'worker_enforcement_passed':passed},sort_keys=True))
+network={}
+try: network['sysfs_interfaces']=sorted(x.name for x in pathlib.Path('/sys/class/net').iterdir())
+except FileNotFoundError: network['sysfs_interfaces']='unavailable'
+network['proc_interfaces']=sorted(line.split(':',1)[0].strip() for line in pathlib.Path('/proc/net/dev').read_text().splitlines() if ':' in line)
+network['socket_interfaces']=socket.if_nameindex()
+print(json.dumps({'virtual_proc':{key:status.get(key,'unavailable').strip() for key in ('CapEff','NoNewPrivs','Seccomp')},'guest_cgroup':values,'guest_network':network,'worker_enforcement_passed':passed},sort_keys=True))
 """
 with modules['Journal'](pathlib.Path(policy['state_directory'])) as journal:
  modules['ensure_toolchain_image'](image)

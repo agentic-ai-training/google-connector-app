@@ -208,5 +208,129 @@ def test_public_receipt_does_not_trust_client_passed_boolean(host):
     with pytest.raises(RuntimeError):
         verify(host.request, {"operation": "apply", "passed": True})
     assert payload(SimpleNamespace(apply=False, rollback=None)) == {"operation": "probe"}
+
+
+def obsolete_copy(host):
+    first = bundle.operate(host.request)
+    current = bundle.operate({'operation': 'probe'})
+    second_request = {**host.request, 'expected_snapshot_hash': current['snapshot_hash'],
+                      'files': {**host.request['files'], 'build_artifact.py':
+                                host.request['files']['build_artifact.py'] + '\n# operator revision\n'}}
+    second = bundle.operate(second_request)
+    probe = bundle.operate({'operation': 'probe'})
+    return first['installation_id'], second['installation_id'], {
+        'operation': 'retire', 'installation_id': first['installation_id'],
+        'expected_snapshot_hash': probe['snapshot_hash'],
+        'expected_retention_hash': probe['retention_hash']}
+
+
+def test_retirement_preserves_active_predecessor_and_data_journal(host):
+    obsolete, latest, request = obsolete_copy(host)
+    active = bundle.snapshot(host.root)
+    predecessor = host.releases / (latest + '.previous')
+    before = bundle.snapshot(predecessor)
+    database = (host.state / 'jobs.sqlite3').read_bytes()
+    receipt = bundle.operate(request)
+    assert verify(request, receipt)['retired'] is True
+    assert not (host.releases / (obsolete + '.previous')).exists()
+    assert bundle.snapshot(host.root) == active
+    assert bundle.snapshot(predecessor) == before
+    assert (host.state / 'jobs.sqlite3').read_bytes() == database
+    probe = bundle.operate({'operation': 'probe'})
+    assert probe['retention_inventory']['entry_count'] == 2
+    assert probe['retirement_pending'] == []
+    # A lost response is reconciled using a new read-only snapshot, not a stale request.
+    assert bundle.operate({**request, 'expected_retention_hash': probe['retention_hash']}) == receipt
+    with pytest.raises(bundle.BundleError, match='retention snapshot changed'):
+        bundle.operate(request)
+
+
+@pytest.mark.parametrize('kind', ['latest', 'active_changed', 'retention_changed', 'foreign_file', 'symlink'])
+def test_retirement_rejects_unreviewed_state(host, kind):
+    obsolete, latest, request = obsolete_copy(host)
+    if kind == 'latest':
+        request['installation_id'] = latest
+    elif kind == 'active_changed':
+        request['expected_snapshot_hash'] = '0' * 64
+    elif kind == 'retention_changed':
+        request['expected_retention_hash'] = '0' * 64
+    elif kind == 'foreign_file':
+        (host.releases / (obsolete + '.previous') / 'user-data.txt').write_text('preserve\n')
+    else:
+        (host.releases / (obsolete + '.previous') / 'foreign').symlink_to(host.root)
+    with pytest.raises(bundle.BundleError):
+        bundle.operate(request)
+    assert (host.releases / (obsolete + '.previous')).exists()
+
+
+def test_interrupted_retirement_reconciles_only_exact_remaining_files(host, monkeypatch):
+    obsolete, latest, request = obsolete_copy(host)
+    real_unlink = Path.unlink
+    target = host.releases / (obsolete + '.previous')
+
+    def interrupt(path, *args, **kwargs):
+        result = real_unlink(path, *args, **kwargs)
+        if path.parent == target:
+            raise InterruptedError('operator terminated after unlink')
+        return result
+
+    monkeypatch.setattr(Path, 'unlink', interrupt)
+    with pytest.raises(InterruptedError):
+        bundle.operate(request)
+    monkeypatch.setattr(Path, 'unlink', real_unlink)
+    probe = bundle.operate({'operation': 'probe'})
+    assert probe['retirement_pending'] == [obsolete]
+    assert probe['retention_inventory']['copies'][obsolete]['file_count'] == 1
+    with pytest.raises(bundle.BundleError, match='reconciliation'):
+        bundle.operate({'operation': 'rollback', 'installation_id': latest})
+    with pytest.raises(bundle.BundleError, match='reconciliation'):
+        bundle.operate({**host.request, 'expected_snapshot_hash': probe['snapshot_hash']})
+    request['expected_retention_hash'] = probe['retention_hash']
+    assert bundle.operate(request)['retired']
+    assert not target.exists()
+
+
+def test_committed_retirement_refuses_reappeared_directory(host):
+    obsolete, _, request = obsolete_copy(host)
+    bundle.operate(request)
+    (host.releases / (obsolete + '.previous')).mkdir(mode=0o700)
+    with pytest.raises(bundle.BundleError, match='reappeared'):
+        bundle.operate({'operation': 'probe'})
+
+
+def test_abrupt_retirement_process_death_keeps_durable_intent(host):
+    obsolete, latest, request = obsolete_copy(host)
+    program = '\n'.join([
+        'import json,os,pathlib,sys',
+        "namespace={'__name__':'controlled_operator_retirement_crash'}",
+        'exec(compile(pathlib.Path(' + repr(str(Path(bundle.__file__))) +
+        ").read_bytes(),'reviewed_operator','exec'),namespace)",
+        "namespace['ROOT']=pathlib.Path(" + repr(str(host.root)) + ')',
+        "namespace['RELEASES']=pathlib.Path(" + repr(str(host.releases)) + ')',
+        "namespace['POLICY']=pathlib.Path(" + repr(str(bundle.POLICY)) + ')',
+        'original=pathlib.Path.unlink',
+        'def terminate(path,*args,**kwargs):',
+        '    original(path,*args,**kwargs)',
+        '    if path.parent==pathlib.Path(' + repr(str(host.releases / (obsolete + '.previous'))) + '):',
+        '        os._exit(97)',
+        'pathlib.Path.unlink=terminate',
+        "namespace['operate'](json.load(sys.stdin))",
+    ])
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', program],  # nosec B603
+                            input=json.dumps(request).encode(), capture_output=True, timeout=10,
+                            env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
+    assert result.returncode == 97
+    probe = bundle.operate({'operation': 'probe'})
+    assert probe['retirement_pending'] == [obsolete]
+    assert (host.releases / (latest + '.previous')).exists()
+    assert bundle.operate({**request, 'expected_retention_hash': probe['retention_hash']})['retired']
+
+
+def test_retirement_cli_payload_requires_both_fresh_fingerprints(host):
+    obsolete, _, request = obsolete_copy(host)
+    args = SimpleNamespace(apply=False, rollback=None, retire=obsolete,
+                           expected_snapshot_hash=request['expected_snapshot_hash'],
+                           expected_retention_hash=request['expected_retention_hash'])
+    assert payload(args) == request
     assert hashlib.sha256(json.dumps(host.old, sort_keys=True, separators=(",", ":")).encode()).hexdigest() == (
         host.request["expected_snapshot_hash"])

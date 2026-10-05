@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,54 @@ from app.coding import image_packaging_worker as worker, image_output_store as o
 from app.coding import oci_packager as oci
 from tests.coding.test_oci_packager import case
 from tests.coding.test_runtime_image_store import write_store
+
+
+def fake_network(monkeypatch, *, sysfs, proc=('lo',), sockets=((1, 'lo'),)):
+    real_iterdir, real_open = Path.iterdir, Path.open
+
+    def iterdir(path):
+        if str(path) == '/sys/class/net':
+            if sysfs is None:
+                raise FileNotFoundError('fixed missing sysfs')
+            return iter(SimpleNamespace(name=name) for name in sysfs)
+        return real_iterdir(path)
+
+    def open_path(path, *args, **kwargs):
+        if str(path) == '/proc/net/dev':
+            return io.StringIO('Inter-| Receive\n face | bytes\n' +
+                               '\n'.join(name + ': 0 0 0 0' for name in proc))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'iterdir', iterdir)
+    monkeypatch.setattr(Path, 'open', open_path)
+    monkeypatch.setattr(worker.socket, 'if_nameindex', lambda: list(sockets))
+
+
+def test_proof_backed_loopback_without_sysfs_requires_proc_and_socket_evidence(monkeypatch):
+    fake_network(monkeypatch, sysfs=None)
+    worker.require_guest_network(proof_backed=True)
+    with pytest.raises(worker.PackagingWorkerError, match='sysfs evidence unavailable'):
+        worker.require_guest_network()
+
+
+@pytest.mark.parametrize('sysfs,proc,sockets', [
+    (('lo', 'eth0'), ('lo',), ((1, 'lo'),)),
+    (None, ('lo', 'eth0'), ((1, 'lo'),)),
+    (None, ('lo',), ((1, 'lo'), (2, 'eth0'))),
+    (None, (), ((1, 'lo'),)),
+    (None, ('lo',), ()),
+    (None, ('lo', 'lo'), ((1, 'lo'),)),
+    (None, ('lo',), ((0, 'lo'),)),
+])
+def test_any_nonloopback_missing_or_conflicting_evidence_rejects(monkeypatch, sysfs, proc, sockets):
+    fake_network(monkeypatch, sysfs=sysfs, proc=proc, sockets=sockets)
+    with pytest.raises(worker.PackagingWorkerError, match='network must be isolated'):
+        worker.require_guest_network(proof_backed=True)
+
+
+def test_native_guest_requires_all_three_loopback_observations(monkeypatch):
+    fake_network(monkeypatch, sysfs=('lo',))
+    worker.require_guest_network()
 
 
 @pytest.fixture
@@ -53,6 +102,32 @@ def test_real_assembly_reaches_durable_image_store(context):
     assert result["evidence"]["generated_code_executed"] is False
     assert "execution_cleanup_verified" not in result
     assert b"private source" not in oci.canonical(result)
+
+
+def test_failure_stage_is_visible_but_exception_content_is_not(monkeypatch, capsys):
+    monkeypatch.setattr(worker.sys, 'argv', ['worker', '--runtime-policy', '/fixed/policy',
+                                           '--output-root', '/fixed/output', '--workspace', '/fixed/workspace'])
+    monkeypatch.setattr(worker, '_keyless_guard', lambda: None)
+    monkeypatch.setattr(worker.signal, 'alarm', lambda seconds: None)
+
+    def reject(**kwargs):
+        kwargs['on_phase']('guest_privileges')
+        raise worker.PackagingWorkerError('PRIVATE_CONTENT_SENTINEL_DO_NOT_PUBLISH')
+
+    monkeypatch.setattr(worker, 'require_enforcement', reject)
+    assert worker.main() == 1
+    output = capsys.readouterr().out
+    assert 'PRIVATE_CONTENT_SENTINEL' not in output
+    assert json.loads(output) == {'packaging_state': 'failed', 'failure_stage': 'guest_privileges',
+                                 'failure_category': 'PackagingWorkerError', 'private_details_omitted': True}
+
+
+def test_real_assembly_reports_only_fixed_stage_labels(context):
+    phases = []
+    output, policy, workspace, body, reference, binding = context
+    worker.assemble_and_retain(binding, reference, body, runtime_policy_path=policy,
+                              output_root=output, workspace=workspace, on_phase=phases.append)
+    assert phases == ['artifact_lineage', 'runtime_policy', 'runtime_base', 'oci_assembly', 'durable_output_store']
 
 
 @pytest.mark.parametrize("change", ["payload", "reference", "policy", "base"])

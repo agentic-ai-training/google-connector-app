@@ -59,7 +59,7 @@ def sync(path):
         os.close(fd)
 
 
-def snapshot(root):
+def snapshot(root, *, allow_incomplete=False):
     safe(root)
     result = {}
     for path in sorted(root.iterdir()):
@@ -80,9 +80,102 @@ def snapshot(root):
             result[path.name] = {"hash": digest(path.read_bytes()), "mode": stat.S_IMODE(path.stat().st_mode)}
         else:
             raise BundleError("unknown object in operator bundle")
-    if not {"isolated_validation.py", "build_artifact.py"} <= set(result):
+    if not allow_incomplete and not {"isolated_validation.py", "build_artifact.py"} <= set(result):
         raise BundleError("previous validation bundle is incomplete")
     return result
+
+
+def retirements(state):
+    path = state / 'bundle-retirements.json'
+    if not path.exists():
+        return {}
+    safe(path, private=True)
+    if path.stat().st_size > 65536:
+        raise BundleError('bundle retirement audit exceeds bound')
+    result = json.loads(path.read_bytes())
+    if not isinstance(result, dict) or len(result) > 32:
+        raise BundleError('bundle retirement audit differs')
+    for identity, item in result.items():
+        if (not re.fullmatch(r'[a-f0-9]{64}', identity) or not isinstance(item, dict)
+                or set(item) != {'phase', 'files'} or item['phase'] not in {'prepared', 'committed'}
+                or not isinstance(item['files'], dict) or not 2 <= len(item['files']) <= 23
+                or not {'isolated_validation.py', 'build_artifact.py'} <= set(item['files'])):
+            raise BundleError('bundle retirement audit differs')
+        for name, metadata in item['files'].items():
+            if (name not in NAMES and not re.fullmatch(r'__pycache__/[a-z_]+\.cpython-[0-9]+(?:\.opt-[0-9])?\.pyc', name)):
+                raise BundleError('bundle retirement filename differs')
+            if (not isinstance(metadata, dict) or set(metadata) != {'hash', 'mode'}
+                    or not isinstance(metadata['hash'], str) or not re.fullmatch(r'[a-f0-9]{64}', metadata['hash'])
+                    or type(metadata['mode']) is not int or not 0 <= metadata['mode'] <= 0o7777):
+                raise BundleError('bundle retirement file evidence differs')
+    return result
+
+
+def retention_inventory(existing, audit):
+    result = {}
+    entries = list(RELEASES.iterdir()) if RELEASES.exists() else []
+    if len(entries) > 32:
+        raise BundleError('operator retention inventory exceeds bound')
+    for path in entries:
+        safe(path)
+        if path.name == 'transaction.json' and path.is_file():
+            continue
+        if not path.is_dir() or not re.fullmatch(r'[a-f0-9]{64}\.previous', path.name):
+            raise BundleError('untracked retention object requires review')
+        identity = path.name.removesuffix('.previous')
+        if audit.get(identity, {}).get('phase') == 'committed':
+            raise BundleError('retired bundle unexpectedly reappeared')
+        pending = audit.get(identity, {}).get('phase') == 'prepared'
+        tree = snapshot(path, allow_incomplete=pending)
+        if pending and any(audit[identity]['files'].get(name) != item for name, item in tree.items()):
+            raise BundleError('interrupted retirement has foreign remaining files')
+        result[identity] = {'snapshot_hash': digest(canonical(tree)), 'file_count': len(tree),
+                            'retirement_pending': pending,
+                            'retireable': bool(existing and identity != existing['id'])}
+    return {'entry_count': len(entries), 'copies': result}
+
+
+def retire(request, state, existing, audit, current, inventory):
+    identity = request['installation_id']
+    if (not isinstance(identity, str) or not re.fullmatch(r'[a-f0-9]{64}', identity)
+            or existing is None or identity == existing['id']):
+        raise BundleError('current installation predecessor cannot be retired')
+    if request['expected_retention_hash'] != digest(canonical(inventory)):
+        raise BundleError('operator retention snapshot changed')
+    if any(item['phase'] == 'prepared' and key != identity for key, item in audit.items()):
+        raise BundleError('prior bundle retirement needs reconciliation')
+    target = RELEASES / (identity + '.previous')
+    item = audit.get(identity)
+    if item is None:
+        if len(audit) >= 32 or identity not in inventory['copies']:
+            raise BundleError('retirement identity absent or audit capacity exhausted')
+        item = {'phase': 'prepared', 'files': snapshot(target)}
+        audit[identity] = item
+        if len(canonical(audit)) > 65536:
+            raise BundleError('bundle retirement audit exceeds bound')
+        write(state / 'bundle-retirements.json', canonical(audit))
+    if target.exists() or target.is_symlink():
+        tree = snapshot(target, allow_incomplete=True)
+        if any(item['files'].get(name) != metadata for name, metadata in tree.items()):
+            raise BundleError('obsolete bundle changed before retirement')
+        for name in sorted(tree):
+            path = safe(target / name)
+            path.unlink()
+            sync(path.parent)
+        cache = target / '__pycache__'
+        if cache.exists():
+            safe(cache)
+            cache.rmdir()
+            sync(target)
+        target.rmdir()
+        sync(RELEASES)
+    if snapshot(ROOT) != current:
+        raise BundleError('active bundle changed during retirement')
+    item['phase'] = 'committed'
+    write(state / 'bundle-retirements.json', canonical(audit))
+    return {'operation': 'retire', 'installation_id': identity, 'retired': True,
+            'active_bundle_preserved': True, 'data_journal_changed': False,
+            'snapshot_hash': digest(canonical(current)), 'journal_idle': True}
 
 
 def write(path, body, mode=0o600):
@@ -173,6 +266,8 @@ def probe_import(directory):
 def locked_operation(request, state):
     existing = record() if RELEASES.exists() else None
     if request["operation"] == "rollback":
+        if any(item['phase'] == 'prepared' for item in retirements(state).values()):
+            raise BundleError('bundle retirement needs reconciliation before rollback')
         if existing is None or request["installation_id"] != existing["id"]:
             raise BundleError("rollback installation identity differs")
         return restore(existing)
@@ -187,12 +282,20 @@ def locked_operation(request, state):
         raise BundleError("interrupted installation requires explicit rollback")
     current = snapshot(ROOT)
     fingerprint = digest(canonical(current))
+    audit = retirements(state)
+    inventory = retention_inventory(existing, audit)
     if request["operation"] == "probe":
         return {"operation": "probe", "journal_idle": True, "snapshot_hash": fingerprint,
                 "hashes": {name: value["hash"] for name, value in current.items()},
-                "last_installation": existing["id"] if existing else None}
+                "last_installation": existing["id"] if existing else None,
+                "retention_hash": digest(canonical(inventory)), "retention_inventory": inventory,
+                "retirement_pending": [key for key, item in audit.items() if item['phase'] == 'prepared']}
     if request["expected_snapshot_hash"] != fingerprint:
         raise BundleError("operator bundle changed since review")
+    if request['operation'] == 'retire':
+        return retire(request, state, existing, audit, current, inventory)
+    if any(item['phase'] == 'prepared' for item in audit.values()):
+        raise BundleError('bundle retirement needs reconciliation before installation')
     files = request["files"]
     if not isinstance(files, dict) or set(files) != set(NAMES):
         raise BundleError("exact seven-file reviewed bundle required")
@@ -243,10 +346,11 @@ def locked_operation(request, state):
 
 
 def operate(request):
-    if not isinstance(request, dict) or request.get("operation") not in {"probe", "apply", "rollback"}:
+    if not isinstance(request, dict) or request.get("operation") not in {"probe", "apply", "rollback", "retire"}:
         raise BundleError("invalid operator bundle operation")
     fields = {"probe": {"operation"}, "apply": {"operation", "expected_snapshot_hash", "files"},
-              "rollback": {"operation", "installation_id"}}[request["operation"]]
+              "rollback": {"operation", "installation_id"},
+              "retire": {"operation", "installation_id", "expected_snapshot_hash", "expected_retention_hash"}}[request["operation"]]
     if set(request) != fields:
         raise BundleError("invalid operator installation envelope")
     safe(ROOT.parent)

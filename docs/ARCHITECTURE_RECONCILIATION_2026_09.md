@@ -353,3 +353,17 @@ cleanup. This is not full OCI packaging or generated-app proof. Schema migration
 funded production pools, approved Node/Java toolchains and runtime bases,
 publication/signing, app behavior and final Chat delivery remain separate gates.
 No new cloud resource, production schema, model call or budget expansion occurred.
+
+On 5 October the next real component proof passed: fixed synthetic artifact/base
+through the isolated worker's job-bound readiness barrier, OCI assembly, durable
+output storage, independent host rehash, native termination and normal temporary
+ext4 filesystem removal. A privacy-safe stage label located the prior failure at
+the guest's missing `/sys/class/net`. The corrected runtime-specific check requires
+both proc and socket enumeration to agree on loopback-only; a native worker still
+requires sysfs and the host's network/namespace enforcement remains mandatory.
+The protected operator installer now supports explicit exact-hash retirement of
+obsolete rollback source copies, with durable intent and crash recovery. It never
+prunes automatically or deletes job/artifact/deployment data, and preserves the
+latest predecessor. See `HOST_BUNDLE_OPERATIONS.md` for read-back identities and
+negative/positive evidence. Real React/Spring toolchains/runtime bases, funded
+production dispatch, registry/signing and generated-app/Chat proof remain open.

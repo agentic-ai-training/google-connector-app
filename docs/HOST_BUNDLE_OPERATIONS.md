@@ -76,7 +76,85 @@ exists. Restoring an old bundle after packaging could remove cleanup capability.
 That state requires a reviewed forward-compatible repair, not deleting records or
 using a bypass flag.
 
-## Current live evidence — 4 October 2026
+## Explicit retirement of obsolete rollback copies
+
+The eight-entry release limit is unchanged. It includes `transaction.json`;
+installation never silently prunes. A probe now returns `retention_inventory` and
+its `retention_hash`. Only an explicitly reviewed obsolete `<id>.previous` tree
+may be retired, and never the latest installation's predecessor.
+
+```sh
+python -m scripts.install_packaging_bundle \
+  --operator-config .gca-local/validation-transport.json
+# Review both fingerprints, the obsolete tree and the preserved latest predecessor.
+python -m scripts.install_packaging_bundle \
+  --operator-config .gca-local/validation-transport.json \
+  --retire "$REVIEWED_OBSOLETE_INSTALLATION_ID" \
+  --expected-snapshot-hash "$FRESH_ACTIVE_SNAPSHOT" \
+  --expected-retention-hash "$FRESH_RETENTION_SNAPSHOT"
+```
+
+The protected `bundle-retirements.json` audit records the exact filenames, modes
+and content hashes before deletion. Files and directory changes are fsynced;
+process death leaves a prepared intent. Probe and reconcile that same identity
+using fresh fingerprints; do not install or roll back over a pending retirement.
+Unknown/reappeared objects fail closed. Active source, its latest predecessor,
+job journals, artifacts and deployment data are not retirement targets. Local
+tests include abrupt process death immediately after a real unlink.
+
+## Current live evidence — 5 October 2026
+
+Latest independently read-back verified installation:
+`c11d29d43f04bf580bfbfb458a6db4f10dcc9e41231f697893d3de688520403e`.
+Snapshot: `54783b15e1516d27190346dcb363d59194d6b8f6d3ee7592bad485fce99a93d6`.
+Worker SHA-256: `d093497377186121e6fca3ac9a4392b2c1c5d83cb245f7efc8479882a655b59f`.
+The six other file hashes remain as in the 4 October evidence below. The current
+predecessor is retained. Obsolete code copies `ec87d7d8...` and `ae6f134d...` were
+explicitly inspected/retired; independent probes showed an unchanged active tree
+and no pending retirement. No journal or artifact data was deleted by retirement.
+
+A fixed nonsensitive pipeline first failed at `guest_network`: this pinned guest
+omits `/sys/class/net`, while `/proc/net/dev` and socket interface enumeration both
+report only loopback. The corrected guard requires these two matching observations;
+missing sysfs is allowed only on the mandatory verified host-proof path. Native
+workers still require sysfs. Any non-loopback, missing or conflicting enumeration
+fails. Docker `NetworkMode=none`, native namespace/process identity, read-only root,
+zero guest capabilities and the job-bound readiness barrier remain mandatory.
+See [gVisor networking](https://gvisor.dev/docs/user_guide/networking/).
+
+```sh
+# Default is idle-state inspection only.
+python -m scripts.probe_packaging_pipeline \
+  --operator-config .gca-local/validation-transport.json
+# Fixed synthetic source/base only; not a model tool or production dispatch.
+python -m scripts.probe_packaging_pipeline \
+  --operator-config .gca-local/validation-transport.json --run
+```
+
+The fresh live test passed native readiness, the actual worker barrier, OCI
+assembly, durable output storage and independent host rehash. Archive size: 10,240
+bytes; SHA-256 `591b47ec49f03d75726394e907eaa7538bfd20507a4869f949c43edf8ec0ad53`.
+Exact worker/native cleanup and normal temporary ext4 volume removal passed.
+Independent health: zero unresolved jobs, zero sandbox containers, zero packaging
+staging entries; all six Coolify containers healthy.
+
+This is **synthetic assembly proof**, not approved Nginx/Java runtime execution,
+React/Spring compilation, authenticated production dispatch, signing/publication,
+application deployment or final Chat delivery. The fake base contains no executable
+application runtime. There were no model calls, new cloud resources, production
+migrations, funding activation, VM sizing/deadline changes or budget expansion.
+Production packaging remains inactive. Worker error output now includes only a
+fixed stage and exception class, never the private error message or artifact body.
+
+Verification: **766 coding tests passed** with real loopback PostgreSQL and no
+skips. Targeted Flake8, Bandit and `git diff --check` passed. One dependency
+deprecation warning remains in the user-owned Vertex-provider test. These results
+cover this coding subsystem, not the entire original project completion audit.
+The synthetic probe's fault tests also ensure an execution/observation exception
+cleans its storage only after exact termination is confirmed; uncertain helpers
+leave the cleanup obligation held.
+
+## Earlier live evidence — 4 October 2026: native-profile checkpoint
 
 Latest independently read-back verified installation:
 `9bdec0e235d9cc16ef66795026da59ed674513e6cccbfcd14bdf7ef111f9748f`.

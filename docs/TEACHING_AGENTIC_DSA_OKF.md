@@ -3104,3 +3104,89 @@ host slot and binds the opened file's device/inode before changing permissions.
 Readiness rechecks the exclusion, so restoring permissions or changing the package
 does not silently restore an unapproved process. Local tests simulate kernel/root
 observations; only live native tests establish the fixed host profile.
+
+<a id="dictionary-obsolete-copy-retirement"></a>
+## Audited retirement, partial sets and crash recovery
+
+Bounded rollback storage eventually fills. Increasing the bound forever is not
+resource governance; silently deleting the oldest directory is not safe recovery.
+The operator must identify a reviewed obsolete **code copy**, distinct from the
+active code, latest predecessor and durable job/artifact data.
+
+```text
+exact active + retention snapshots
+             |
+operator selects obsolete identity (never latest predecessor)
+             |
+fsync prepared audit: original file set, hashes, modes
+             |
+unlink one verified file -> fsync parent -> next file
+             |                       process dies
+             |                            |
+             |                  probe remaining subset
+             |                            |
+             +--------- explicit same-identity reconciliation
+             |
+remove empty known directories -> fsync -> committed audit
+```
+
+The important DSA operation is **subset validation**, not blind deletion. Let
+`original` be a dictionary from relative filename to immutable hash/mode evidence,
+and `remaining` the current observed dictionary. During an interrupted retirement,
+every remaining entry must equal its prepared entry. Missing entries mean deletion
+may already have happened; new or modified entries mean stop and investigate.
+
+```python
+def validate_remaining(original: dict, remaining: dict) -> None:
+    for name, evidence in remaining.items():
+        if original.get(name) != evidence:
+            raise ValueError("unknown or changed remaining file")
+```
+
+Hash-map membership/equality is expected `O(1)` per entry, so matching `n` entries
+is `O(n)`. Computing content hashes is `O(B)` for `B` total bytes. Deterministic
+sorting before unlink is `O(n log n)` and audit space is `O(n)`, bounded in the real
+installer. These costs are tiny relative to a model-generated repair and make the
+operation reproducible. The sample does not implement filesystem safety: real code
+also rejects symlinks/hardlinks, validates ownership/mode, serializes with the shared
+host lock, verifies fresh snapshots and fsyncs the audit before changing files.
+
+The state machine is `unseen -> prepared -> committed`. `prepared` persists across
+process death and blocks unrelated installation/rollback. A committed copy that
+unexpectedly reappears is not silently deleted again. This illustrates why an
+idempotent API must reconcile **observed state**, not merely return an old success.
+`fsync` improves crash durability but is not a distributed transaction or an
+universal guarantee against faulty storage. Tests include real subprocess death
+after unlink; live read-back separately proves the operator-host result.
+
+<a id="dictionary-runtime-compatible-evidence"></a>
+## Runtime-compatible observations are not weaker invariants
+
+An invariant is the property we require; an observation is one representation
+used to test it. Example invariant: **no external network interface in the guest**.
+Native Linux commonly represents interfaces under `/sys/class/net`, but the pinned
+gVisor guest in this project omitted that directory. Treating this absence as
+success would be unsafe; treating the directory as the invariant would reject a
+correctly isolated implementation unnecessarily.
+
+```text
+host: exact Docker network-none + native namespace/runtime identity
+                         |
+guest: proc interface list == [lo] AND socket enumeration == [lo]
+                         |
+sysfs present: must also be loopback-only
+sysfs absent: allowed only with mandatory bound host proof
+                         |
+read-only job-bound readiness barrier -> consume private artifact
+```
+
+This is **representation adaptation with independent evidence**, not a fallback
+that ignores an error. Missing proc/socket data, mismatched lists, duplicate
+interfaces or any non-loopback interface still fail. Native workers without the
+host-proof path still require sysfs. No network connection needs to be attempted
+to enumerate interfaces, and no LLM decides whether to waive isolation.
+The actual live fixed synthetic artifact passed this path on 5 October, then host
+rehash and full cleanup. That proves this component, not every generated runtime,
+arbitrary network policy, sandbox escape resistance or full deployment correctness.
+See [host evidence](HOST_BUNDLE_OPERATIONS.md) and
+[gVisor's netstack](https://gvisor.dev/docs/user_guide/networking/).

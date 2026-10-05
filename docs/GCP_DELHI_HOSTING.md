@@ -1,18 +1,26 @@
 # Delhi generated-application host — approved provisioning runbook
 
-## Latest packaging-isolation checkpoint — 4 October 2026
+## Latest packaging-isolation checkpoint — 5 October 2026
 
-The protected native-readiness bundle (`88e1ff7`) is installed and independently
-read-back verified. The operator-only packaging aggregate is prepared and its
-native kernel limits verified at one CPU, 3 GiB memory, no swap and 128 tasks.
-This restricts a subgroup of the existing VM; it does not resize the VM, extend
-its fixed STOP, create a cloud resource or enroll paid deployment capacity.
-The synthetic native sleeper ran and cleaned up, but readiness was rejected
-because its native capability mask differs from the current zero-capability
-contract. Namespace/runtime-role verification is still required. No private
-packaging, runtime image approval, generated Service or production schema was
-activated. Synthetic validation/replay/cleanup passed after installation; six
-Coolify containers remained healthy. See [exact hashes and native evidence](HOST_BUNDLE_OPERATIONS.md).
+The protected native-role/readiness and guest-network bundle is installed and
+independently read-back verified. Native kernel limits remain one CPU, 3 GiB
+memory, no swap, 64 worker tasks and 128 aggregate tasks. The pinned Sentry/Gofer
+and ancestry-verified Systrap profile passed complete native inventory checks.
+The optional FD-parking optimization remains hash-pinned and non-executable.
+A fixed nonsensitive assembly test passed the worker's actual readiness barrier,
+OCI assembly/output storage, host rehash, native cleanup and temporary ext4
+filesystem removal. The guest network check now accounts for the observed missing
+sysfs directory while requiring independent proc/socket loopback-only evidence.
+Explicit audited retirement freed obsolete code copies without deleting data or
+the current rollback predecessor. All six Coolify containers remained healthy;
+no unresolved jobs, sandbox containers or packaging staging entries remained.
+
+This is synthetic component proof, not generated React/Spring compilation or
+runtime approval, production dispatch, signed publication, generated Service
+deployment or final Chat delivery. No production schema, new cloud resource,
+model call, budget expansion, VM resize or STOP extension occurred. Current
+October accrued charges and a fresh credit balance still need reconciliation
+before funded production enrollment. See [exact hashes and evidence](HOST_BUNDLE_OPERATIONS.md).
 
 ## Status and spending authority
 

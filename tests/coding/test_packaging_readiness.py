@@ -9,7 +9,7 @@ import pytest
 
 from app.coding import isolated_packaging as host, image_packaging_worker as worker
 from app.coding import oci_packager as oci
-from tests.coding.test_image_packaging_worker import context as context_fixture
+from tests.coding.test_image_packaging_worker import context as context_fixture, fake_network
 
 context = context_fixture
 CID = 'b' * 64
@@ -70,7 +70,6 @@ def test_gvisor_guard_requires_readonly_host_barrier_not_virtual_cgroups(context
     monkeypatch.setattr(worker, 'wait_for_host_proof', lambda *args: checked.append(args))
     monkeypatch.setattr(worker.resource, 'setrlimit', lambda *args: None)
     original_read = Path.read_text
-    original_iter = Path.iterdir
 
     def read(path, *args, **kwargs):
         if path == Path('/proc/self/status'):
@@ -83,8 +82,7 @@ def test_gvisor_guard_requires_readonly_host_barrier_not_virtual_cgroups(context
         return original_read(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, 'read_text', read)
-    monkeypatch.setattr(Path, 'iterdir', lambda path: iter([Path('/sys/class/net/lo')])
-                        if path == Path('/sys/class/net') else original_iter(path))
+    fake_network(monkeypatch, sysfs=('lo',))
     proof_path = None if case == 'native_only' else Path('/gca/input/host-proof.json')
     if case == 'wrong_path':
         proof_path = Path('/gca/workspace/forged-proof.json')

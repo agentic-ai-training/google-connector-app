@@ -1,7 +1,9 @@
 # Validated artifact to immutable image
 
-Status, 3 October 2026: internal assembly and private retrieval are implemented
-locally. This is not an activated production builder or a completed deployment.
+Status, 5 October 2026: internal assembly/private retrieval and durable job/transport
+components are implemented. The real isolated worker/readiness/output/cleanup path
+passed a fixed nonsensitive live assembly test on the existing VM. This is not an
+activated production builder, approved executable runtime or completed deployment.
 
 ```text
 Four tenant/source-bound validations
@@ -27,7 +29,7 @@ Fixed non-executing OCI assembler
                  |
 Measured layer/config/image-manifest digests + build evidence
                  |
-OCI layout archive (LOCAL COMPONENT)
+OCI layout archive (local component + live synthetic assembly proof)
                  |
 ----- not yet activated/proven below this line -----
 Scoped registry publication and exact readback
@@ -105,11 +107,14 @@ and local mocked proofs must not be described as a live generated-image build.
 | Host transfer alarm | 45 seconds |
 | Client transfer timeout | 120 seconds |
 
-Assembly still needs a dedicated keyless worker with enforced CPU/memory/storage/time
-limits and activation of durable build-job ownership before production use. In-process thread
-cancellation does not stop CPU work; it is not equivalent to an isolated worker.
-No runtime base has been enrolled on the VM, no image published, no signing key
-installed and no generated Service started by this component.
+The dedicated keyless worker now has fixed CPU/memory/storage/time guards and a
+host-bound readiness barrier; actual live synthetic assembly and cleanup passed.
+Activation of funded durable build-job ownership and authenticated production
+dispatch still remains. In-process thread cancellation does not stop CPU work;
+it is not equivalent to an isolated worker. No executable runtime base has been
+enrolled on the VM, no image published, no signing key installed and no generated
+Service started by this component. The synthetic base contains only test data.
+See [operator evidence and commands](HOST_BUNDLE_OPERATIONS.md).
 
 ## Remaining integration and proof
 

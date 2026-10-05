@@ -2470,6 +2470,24 @@ changes become production evidence.
   publication/signing and generated-app/Chat proof remain open. Keep the overall
   story unchecked. No production migration, new cloud resource, model call, VM
   sizing/deadline change or budget expansion occurred.
+  On 2026-10-05 the actual fixed synthetic packaging pipeline passed the verified
+  host readiness barrier, guest checks, OCI assembly, durable output storage,
+  independent archive rehash, native cleanup and normal ext4 job-volume removal.
+  This followed an evidence-driven correction for absent guest network sysfs:
+  matching proc/socket loopback-only observations are mandatory; host network
+  isolation and native worker sysfs checks are unchanged. The operator installer
+  now supports explicit audited retirement of obsolete code copies under fresh
+  active/retention fingerprints, preserving the latest predecessor and all data.
+  Abrupt process-death retirement recovery is tested. Independent live health found
+  zero unresolved jobs/containers/staging and six healthy Coolify containers.
+  The synthetic base contains no executable runtime. Real Node/Java offline builds,
+  approved runtime bases, funded production enrollment, authenticated dispatch,
+  publication/signing and generated-app behavior/Chat proof remain open. Keep the
+  overall story unchecked; no production schema, model call, cloud resource,
+  budget expansion or deadline change occurred. Evidence: `HOST_BUNDLE_OPERATIONS.md`.
+  Verification for this checkpoint: 766 coding tests passed using real loopback
+  PostgreSQL with no skips; targeted Flake8/Bandit and diff checks passed. Production
+  migrations remain unapplied. This subsystem result is not full goal completion.
   Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
   downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
   passed. No production migration, private-source remote run or paid model call occurred.
