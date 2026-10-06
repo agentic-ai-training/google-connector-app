@@ -7,6 +7,12 @@ See `GCP_DELHI_HOSTING.md` and the resumed checkpoint in `project_progress_upgra
 On 27 September, the existing host gained a verified gVisor validation boundary.
 Typed Rust-to-keyless-launcher integration is local, not production-activated;
 see `ISOLATED_VALIDATION.md`. Source copies alone are not OS sandboxes.
+On 6 October, local import-maintenance state was added to the shared host journal:
+crash-persistent reservations block both validation and packaging and bundle mutation.
+Read-only inspection remains available; expiry cannot clear an uncertain image load.
+This is not live image enrollment or approval. Protected transfer/reconciliation,
+real Node/Java gVisor proofs, verified publication and funded activation remain open;
+see `OFFLINE_TOOLCHAINS.md` for the exact state machine and evidence boundary.
 
 ## Sources and precedence
 

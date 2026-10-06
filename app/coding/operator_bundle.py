@@ -368,16 +368,31 @@ def operate(request):
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         database = safe(state / "jobs.sqlite3", private=True)
+        pending_imports = False
         with sqlite3.connect("file:" + str(database) + "?mode=ro", uri=True) as connection:
             if connection.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
                 raise BundleError("unreconciled host job prevents installation or rollback")
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='toolchain_imports'").fetchone():
+                # Read-only observer; never expire/delete maintenance on controller
+                # loss. Old bundles lack this barrier, so rollback after any import
+                # history requires a forward-compatible operator review.
+                imports = connection.execute("SELECT phase FROM toolchain_imports LIMIT 9").fetchall()
+                pending_imports = len(imports) > 8 or any(row[0] != "cancelled" for row in imports)
+                if pending_imports and request["operation"] != "probe":
+                    raise BundleError("unreconciled toolchain import prevents bundle mutation")
+                if request["operation"] == "rollback" and imports:
+                    raise BundleError("toolchain import history requires forward-compatible rollback review")
             columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
             if request["operation"] == "rollback" and "purpose" in columns:
                 if connection.execute("SELECT 1 FROM jobs WHERE purpose='image_packaging' LIMIT 1").fetchone():
                     raise BundleError("packaging history requires a forward-compatible rollback review")
         if request["operation"] == "rollback" and (state / "packaging-jobs").exists():
             raise BundleError("retained packaging staging prevents old-bundle rollback")
-        return locked_operation(request, state)
+        result = locked_operation(request, state)
+        if request["operation"] == "probe":
+            result["toolchain_import_pending"] = pending_imports
+            result["journal_idle"] = not pending_imports
+        return result
     finally:
         os.close(lock)
 

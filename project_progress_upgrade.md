@@ -2582,6 +2582,17 @@ changes become production evidence.
   overrides. This is operator-only custody inspection, not image import, build
   provenance, role approval or host execution. Protected durable import/enrollment
   and the four-profile live gVisor proof are still required; nothing is marked complete.
+  The next 2026-10-06 checkpoint adds a local crash-persistent toolchain import
+  reservation to the existing flock/SQLite host journal. Validation and packaging
+  share its exclusion; importer death, expired allocation or ambiguous load does not
+  clear the reservation. Pre-load cancellation, exact-idempotent observations,
+  fingerprint/phase corruption rejection, bounded retention and read-only bundle
+  inspection are covered by real SQLite/flock and process-death tests. Bundle
+  mutation is blocked during maintenance and old-launcher rollback after import
+  history requires review. This is not an actual image transfer/load, publication
+  controller, role approval or Node/Java host proof. The reserved proof-pending
+  phase deliberately has no release API yet. All those live requirements remain
+  unchecked, and no maintenance reservation was created on the VM.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

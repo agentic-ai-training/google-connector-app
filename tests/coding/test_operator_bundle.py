@@ -56,6 +56,29 @@ def test_full_bundle_swap_preserves_old_tree_and_idempotent_receipt(host):
     assert len(list(host.releases.iterdir())) == 2
 
 
+@pytest.mark.parametrize("phase", ["prepared", "archive_verified", "load_started",
+                                 "load_uncertain", "loaded", "proof_pending", "unknown"])
+def test_pending_import_blocks_bundle_changes_but_remains_probeable(host, phase):
+    with sqlite3.connect(host.state / "jobs.sqlite3") as connection:
+        connection.execute("CREATE TABLE toolchain_imports(id TEXT,phase TEXT)")
+        connection.execute("INSERT INTO toolchain_imports VALUES('fixed-intent',?)", (phase,))
+    observed = bundle.operate({"operation": "probe"})
+    assert observed["toolchain_import_pending"] is True and observed["journal_idle"] is False
+    with pytest.raises(bundle.BundleError, match="toolchain import"):
+        bundle.operate(host.request)
+    assert bundle.snapshot(host.root) == host.old
+
+
+def test_cancelled_import_allows_forward_update_but_not_old_bundle_rollback(host):
+    with sqlite3.connect(host.state / "jobs.sqlite3") as connection:
+        connection.execute("CREATE TABLE toolchain_imports(id TEXT,phase TEXT)")
+        connection.execute("INSERT INTO toolchain_imports VALUES('fixed-intent','cancelled')")
+    result = bundle.operate(host.request)
+    assert bundle.operate({"operation": "probe"})["toolchain_import_pending"] is False
+    with pytest.raises(bundle.BundleError, match="forward-compatible"):
+        bundle.operate({"operation": "rollback", "installation_id": result["installation_id"]})
+
+
 def test_explicit_rollback_restores_whole_original_tree(host):
     result = bundle.operate(host.request)
     rollback = {"operation": "rollback", "installation_id": result["installation_id"]}

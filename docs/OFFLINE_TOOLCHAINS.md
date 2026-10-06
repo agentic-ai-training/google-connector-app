@@ -19,7 +19,7 @@ review public specs + immutable AMD64 bases + exact build contexts
                        |
      local Docker proof (NOT Linux/gVisor enforcement proof)
                        |
-  protected image export + host enrollment/read-back [pending]
+  protected image export + durable import reservation [local; live import pending]
                        |
         live Linux/gVisor four-profile proof [pending]
                        |
@@ -37,6 +37,54 @@ Maven catalog rejects entities, alternate repositories, executable plugin config
 extra dependencies, duplicated fields and extra build authority. Dependency changes
 require a new reviewed recipe and fresh offline proof. This is not an arbitrary-POM
 execution service.
+
+## Crash-persistent import reservation — local implementation, 6 October
+
+The existing `isolated_validation.Journal` now reserves toolchain maintenance under
+the **same flock and SQLite database** as validation and packaging. This prevents a
+lost SSH/controller process from releasing host capacity merely by dying. The
+reservation records a canonical intent fingerprint: role, VM instance ID, immutable
+image ID, archive byte count/hash, reviewed recipe hash, prior policy/registry hashes,
+and the fixed host stop. There are no caller-selected paths, commands or credentials.
+
+```text
+prepared -> archive_verified -> load_started -> loaded -> proof_pending
+   |              |                 |
+   +-> cancelled  +-> cancelled     +-> load_uncertain -> loaded
+                                                    |
+                                  validation/packaging remain blocked
+
+proof_pending --X--> publication/approval [controller not implemented yet]
+```
+
+Cancellation is permitted only before a load starts. Timeout/expiry never clears
+uncertain load state; an exact same-intent retry returns the existing reservation,
+not permission to invoke Docker again. Observations use compare-and-set phases and
+bounded SHA-256 evidence references. These references record custody, **not** proof
+that a trusted verifier ran. There are at most eight retained import intents and
+sixteen observations per intent, with no automatic pruning.
+
+The bundle operator can inspect pending maintenance but cannot apply, retire or
+roll back a bundle through it. Even cancelled import history prevents rollback to
+an older launcher without a forward-compatible review. Existing job cleanup is
+still legal; maintenance does not acquire a second independent capacity pool.
+
+Actual `os._exit` tests cover abrupt controller death at four phases. Additional
+tests cover shared ownership, duplicate observations, intent corruption, both job
+purposes, fixed-stop expiry, cancellation restrictions and retention exhaustion.
+This ledger is **local source/test evidence only**. It does not upload or load an
+image, grant role approval, publish a registry, reserve money or dispatch production
+work. Do not create a live reservation until the protected transfer/reconciliation,
+four-profile host proof and verified publication controller are complete; there is
+intentionally no release-from-proof-pending API yet.
+
+Verification at this checkpoint: 869 coding tests passed against the verified
+loopback PostgreSQL database without skips. After the final prepared-intent
+fingerprint hardening, the 89 focused import/journal/bundle tests passed again.
+Targeted Flake8, Bandit and `git diff --check` passed. Bandit reported only existing
+unused suppression warnings; the user-owned Vertex test retains the google-genai
+deprecation warning. No trusted CI, live import or full-project acceptance proof is
+implied by these subsystem results.
 
 ## Fixed catalogs
 

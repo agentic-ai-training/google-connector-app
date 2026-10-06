@@ -3314,3 +3314,63 @@ image graph; neither digest namespace should silently replace the other.
 The actual React and Spring streams were checked on 6 October without large local
 output files. That prepares custody for protected host import; it does not complete
 the original deployment goal. See [exact evidence](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-crash-persistent-maintenance"></a>
+## Maintenance reservations, compare-and-set and uncertain side effects
+
+An **ephemeral lock** proves a process currently owns a resource. A **durable
+reservation** proves that an unfinished operation still owes reconciliation after
+that process dies. These are different facts. Our host uses a shared `flock` for
+live ownership and a bounded SQLite import ledger for persistent exclusion:
+
+```text
+owner alive: flock held + durable prepared intent
+                         |
+                  persist load_started
+                         |
+                     Docker load
+                         |
+owner dies: flock released, load outcome possibly unknown
+                         |
+               durable intent STILL occupies slot
+                         |
+         reconcile exact import; do not retry blindly
+```
+
+**Write-ahead intent** means recording the obligation *before* the external side
+effect. SQLite's FULL-synchronous transaction is the durability boundary, not a
+Python variable or a log line. It does not turn SQLite and Docker into one atomic
+transaction. The gap between them is represented explicitly as `load_uncertain`.
+
+**Compare-and-set (CAS)** permits a transition only from the version/phase actually
+observed. A Python sketch of the principle is:
+
+```python
+def transition(connection, identity, expected, next_phase):
+    with connection:
+        changed = connection.execute(
+            'UPDATE operations SET phase=? WHERE id=? AND phase=?',
+            (next_phase, identity, expected),
+        ).rowcount
+        if changed != 1:
+            raise RuntimeError('Inspect current state; stale transition rejected')
+```
+
+This is a teaching sketch, not sufficient production authority. Our implementation
+also checks the finite-state graph, canonical intent hash, bounded observation
+history, exact retry evidence, stop time and the shared lock. An unchanged exact
+observation retry is idempotent; another Docker invocation is not thereby authorized.
+
+**Reconciliation** observes an external operation and resolves its obligation.
+**Cancellation** is allowed only while no load has started. Expiration prevents
+starting new work but cannot erase unknown side effects. A loaded image still needs
+trusted tests and verified policy/registry publication; a SHA-256 observation alone
+does not prove either. The current local ledger deliberately stops at `proof_pending`
+until that publication controller exists. It grants no image approval or financial
+authority. See [state machine and limitations](OFFLINE_TOOLCHAINS.md).
+
+The history has a fixed maximum of eight intents and sixteen observations each,
+so validation is O(N×H), bounded independently of request traffic. Canonical JSON
+fingerprints make changed image/role/host/archive/policy inputs a different intent.
+Actual subprocess `os._exit` tests reopen SQLite and demonstrate that controller
+death does not clear the reservation. Mocked success cannot establish this property.

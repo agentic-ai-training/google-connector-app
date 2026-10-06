@@ -69,6 +69,17 @@ MAX_ARCHIVE_BYTES = MAX_SOURCE_BYTES + MAX_SOURCE_ENTRIES * 1024 + 10240
 DOCKER = "/usr/bin/docker"
 TOOLCHAIN_REGISTRY = Path("/etc/gca-validation/toolchain-registry.json")
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
+IMPORT_PHASES = {
+    "prepared": {"archive_verified", "cancelled"},
+    "archive_verified": {"load_started", "cancelled"},
+    "load_started": {"load_uncertain", "loaded"},
+    "load_uncertain": {"loaded"},
+    "loaded": {"proof_pending"},
+    # Release is deliberately unavailable until a verified publication controller
+    # exists. An image load or client-supplied digest is NOT role approval.
+    "proof_pending": set(), "cancelled": set(),
+}
+MAX_TOOLCHAIN_IMPORTS = 8
 
 
 class IsolationError(RuntimeError):
@@ -260,6 +271,9 @@ class Journal:
                     claim_id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,
                     binding_hash TEXT NOT NULL,job_id TEXT NOT NULL UNIQUE);
                 CREATE INDEX IF NOT EXISTS jobs_deadline ON jobs(state,deadline);
+                CREATE TABLE IF NOT EXISTS toolchain_imports(
+                    id TEXT PRIMARY KEY,intent TEXT NOT NULL,phase TEXT NOT NULL,
+                    observations TEXT NOT NULL,updated_at INTEGER NOT NULL);
             """)
             # Preserve old jobs as validation work. Different purposes share ONE
             # slot and reaper, never independent locks that can overcommit the host.
@@ -286,11 +300,129 @@ class Journal:
         self.db = self.lock = None
 
     def require_available(self, binding: dict | None = None):
+        if any(row["phase"] != "cancelled" for row in self.toolchain_imports()):
+            raise IsolationError("Host slot held by an unreconciled toolchain import")
         if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
                                        (self.binding_claim(binding),)).fetchone():
             raise IsolationError("Dispatch claim already consumed; reconcile instead of replaying")
         if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
             raise IsolationError("Validation slot held by an unreconciled job")
+
+    @staticmethod
+    def import_intent(value):
+        """Fixed operator intent only: no paths, shell, credentials or approval flag."""
+        fields = {"version", "role", "host_instance_id", "image_id", "archive_sha256",
+                  "archive_bytes", "recipe_sha256", "policy_sha256", "registry_sha256",
+                  "stop_unix"}
+        if (not isinstance(value, dict) or set(value) != fields
+                or type(value["version"]) is not int or value["version"] != 1
+                or not isinstance(value["role"], str) or value["role"] not in {"react", "spring"}
+                or not isinstance(value["host_instance_id"], str)
+                or not re.fullmatch(r"[1-9][0-9]{0,19}", value["host_instance_id"])
+                or not isinstance(value["image_id"], str)
+                or not re.fullmatch(r"sha256:[a-f0-9]{64}", value["image_id"])
+                or type(value["archive_bytes"]) is not int
+                or not 1024 <= value["archive_bytes"] <= 512 * 1024 * 1024
+                or type(value["stop_unix"]) is not int or value["stop_unix"] <= 0):
+            raise IsolationError("Toolchain import intent differs from bounded contract")
+        for field in ("archive_sha256", "recipe_sha256", "policy_sha256", "registry_sha256"):
+            if not isinstance(value[field], str) or not re.fullmatch(r"[a-f0-9]{64}", value[field]):
+                raise IsolationError("Toolchain import custody fingerprint is invalid")
+        body = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return body, hashlib.sha256(body.encode()).hexdigest()
+
+    def toolchain_imports(self):
+        rows = self.db.execute("SELECT * FROM toolchain_imports ORDER BY id LIMIT 9").fetchall()
+        if len(rows) > MAX_TOOLCHAIN_IMPORTS:
+            raise IsolationError("Toolchain import history requires operator review")
+        result = []
+        for row in rows:
+            if (not isinstance(row["intent"], str) or len(row["intent"]) > 2048
+                    or not isinstance(row["observations"], str) or len(row["observations"]) > 8192
+                    or row["phase"] not in IMPORT_PHASES):
+                raise IsolationError("Toolchain import journal is invalid")
+            try:
+                intent = json.loads(row["intent"])
+                body, identity = self.import_intent(intent)
+                observations = json.loads(row["observations"])
+            except (ValueError, TypeError) as error:
+                raise IsolationError("Toolchain import journal is invalid") from error
+            if (row["id"] != identity or row["intent"] != body
+                    or not isinstance(observations, list) or not 1 <= len(observations) <= 16):
+                raise IsolationError("Toolchain import journal fingerprint differs")
+            previous = None
+            for item in observations:
+                if (not isinstance(item, dict) or set(item) != {"phase", "evidence_sha256", "at"}
+                        or not isinstance(item["phase"], str)
+                        or type(item["at"]) is not int or item["at"] < 0
+                        or (previous is None and item["phase"] != "prepared")
+                        or (previous is not None and item["phase"] not in IMPORT_PHASES[previous])
+                        or not isinstance(item["evidence_sha256"], str)
+                        or not re.fullmatch(r"[a-f0-9]{64}", item["evidence_sha256"])):
+                    raise IsolationError("Toolchain import journal transition differs")
+                previous = item["phase"]
+            if (observations[0]["evidence_sha256"] != identity or previous != row["phase"]
+                    or row["updated_at"] != observations[-1]["at"]):
+                raise IsolationError("Toolchain import journal phase differs")
+            result.append({"id": identity, "intent": intent, "phase": previous,
+                           "observations": observations, "image_approved": False})
+        if sum(item["phase"] != "cancelled" for item in result) > 1:
+            raise IsolationError("Toolchain import journal has overlapping maintenance")
+        return result
+
+    def begin_toolchain_import(self, intent):
+        """Durable pre-side-effect reservation under the SAME host flock as jobs.
+
+        A matching retry returns intent, not permission to replay docker load.
+        Fixed-target/policy/registry read-back is the trusted controller's job.
+        """
+        body, identity = self.import_intent(intent)
+        existing = self.toolchain_imports()
+        for item in existing:
+            if item["id"] == identity:
+                return item
+        self.require_available()
+        if len(existing) >= MAX_TOOLCHAIN_IMPORTS:
+            raise IsolationError("Toolchain import history requires operator review")
+        now = int(time.time())
+        if intent["stop_unix"] <= now:
+            raise IsolationError("Toolchain import host allocation expired")
+        observations = [{"phase": "prepared", "evidence_sha256": identity, "at": now}]
+        with self.db:
+            self.db.execute("INSERT INTO toolchain_imports VALUES(?,?,?,?,?)",
+                            (identity, body, "prepared", json.dumps(observations), now))
+        return next(item for item in self.toolchain_imports() if item["id"] == identity)
+
+    def record_toolchain_import(self, identity, expected_phase, phase, evidence_sha256):
+        """CAS observation by trusted maintenance code, never workload authority.
+
+        Expiry does not clear ambiguous imports. Reconciliation remains legal but
+        starting a new Docker load after the fixed host stop is prohibited.
+        """
+        if (not isinstance(expected_phase, str) or not isinstance(phase, str)
+                or not isinstance(evidence_sha256, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", evidence_sha256)):
+            raise IsolationError("Toolchain observation fingerprint is invalid")
+        item = next((row for row in self.toolchain_imports() if row["id"] == identity), None)
+        if item is None or expected_phase not in IMPORT_PHASES or phase not in IMPORT_PHASES[expected_phase]:
+            raise IsolationError("Toolchain import transition is not permitted")
+        history = item["observations"]
+        if (len(history) > 1 and item["phase"] == phase and history[-2]["phase"] == expected_phase
+                and history[-1]["evidence_sha256"] == evidence_sha256):
+            return item
+        if item["phase"] != expected_phase or len(history) >= 16:
+            raise IsolationError("Toolchain import phase changed; inspect before retry")
+        now = int(time.time())
+        if phase == "load_started" and item["intent"]["stop_unix"] <= now:
+            raise IsolationError("Toolchain import host allocation expired")
+        history.append({"phase": phase, "evidence_sha256": evidence_sha256, "at": now})
+        with self.db:
+            changed = self.db.execute(
+                "UPDATE toolchain_imports SET phase=?,observations=?,updated_at=? WHERE id=? AND phase=?",
+                (phase, json.dumps(history), now, identity, expected_phase)).rowcount
+            if changed != 1:
+                raise IsolationError("Toolchain import phase changed; inspect before retry")
+        return next(row for row in self.toolchain_imports() if row["id"] == identity)
 
     @staticmethod
     def binding_claim(binding):
