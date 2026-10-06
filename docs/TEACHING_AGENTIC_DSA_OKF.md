@@ -3190,3 +3190,68 @@ rehash and full cleanup. That proves this component, not every generated runtime
 arbitrary network policy, sandbox escape resistance or full deployment correctness.
 See [host evidence](HOST_BUNDLE_OPERATIONS.md) and
 [gVisor's netstack](https://gvisor.dev/docs/user_guide/networking/).
+
+<a id="dictionary-offline-dependency-closure"></a>
+## Dependency closure, lazy edges and offline proof
+
+A build dependency graph is a directed graph G=(V,E): vertices represent tools,
+libraries and plugin providers; A -> B means A needs B. The closure of roots is
+every reachable dependency. Breadth-first traversal with a queue and visited set
+costs O(|V|+|E|) time and O(|V|) memory:
+
+```python
+from collections import deque
+
+def closure(roots, dependencies):
+    seen = set(roots)
+    pending = deque(seen)
+    while pending:
+        for item in dependencies.get(pending.popleft(), ()):
+            if item not in seen:
+                seen.add(item)
+                pending.append(item)
+    return seen
+```
+
+Lazy edges are selected only when a compiler/test plugin detects a framework or
+platform. Here Maven go-offline completed, but an actual offline JUnit test could
+not resolve surefire-junit-platform:3.5.6. The declared graph missed a dynamically
+selected edge. Seeding a fixed public test then rerunning real test/package commands
+with network none provided behavioral evidence for this specific role, not arbitrary
+projects or plugins. A lockfile pins versions/integrity; it does not prove every
+platform artifact is cached or that the program is correct.
+
+```text
+declared graph -> acquisition cache -> real test triggers lazy provider edge
+                                            |
+                              seed reviewed missing dependency
+                                            |
+                          offline positive + deliberate negative
+                                            |
+                        separate gVisor + generated-app proof
+```
+
+BFS explains reachability; it does not replace real command execution. See
+[measured role evidence](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-execution-permission-and-isolation"></a>
+## Execution permission versus the isolation boundary
+
+Noexec is a mount policy, not a complete sandbox: interpreters may read and execute
+source without executing that source file directly. Conversely, exec on a bounded
+keyless sandbox mount does not grant host execution, privileged UID, network,
+deployment credentials or Docker access. Tests exposed workspace binary execution
+and tmp JNI loading failures caused by Docker's tmpfs defaults.
+
+```text
+reviewed source -> disposable workspace -> compile/test -> verify output
+                          |
+              internal exec,nosuid,nodev tmpfs
+                          |
+        runtime/net/capability/memory/deadline boundaries
+```
+
+The current launcher source corrects these internal mounts only. Host-backed
+packaging storage remains noexec. Different storage purposes require different
+policies; blindly copying flags across layers is not a security design. Local Docker
+proof must not be described as the existing VM's Linux/gVisor enforcement proof.

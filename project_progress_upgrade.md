@@ -2559,6 +2559,17 @@ changes become production evidence.
   provenance before start. Low-level deployment dispatch now defaults to requiring
   passing validation; an explicit bypass remains only for isolated ledger tests.
   This item stays unchecked.
+  On 2026-10-06, reviewed fixed public React/Node and Spring/Java dependency recipes
+  passed actual local AMD64 Docker offline tests/build/package and deliberate failing
+  tests. Maven's missing dynamic JUnit provider was reproduced and seeded using only
+  a fixed public fixture. The source launcher fixes implicit tmpfs noexec for
+  sandbox-local binaries/JNI while retaining all other restrictions and packaging's
+  noexec storage. Catalog guards reject executable/duplicate/unreviewed dependency
+  authority. 804 coding tests passed against local PostgreSQL, without skips.
+  This is not VM installation, Linux/gVisor proof, central funded approval or
+  generated login-app proof. Protected image export/enrollment, runtime bases,
+  complete host proofs and cross-language/database scope remain open. See
+  `docs/OFFLINE_TOOLCHAINS.md`; this item remains unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

@@ -201,6 +201,8 @@ def test_validator_copies_snapshot_without_host_mount_or_credentials(tmp_path, m
     assert "--runtime=runsc" in create
     assert "--network=none" in create
     assert "--pull=never" in create
+    assert "--tmpfs=/workspace:rw,nosuid,nodev,exec,size=256m,mode=1777" in create
+    assert "--tmpfs=/tmp:rw,nosuid,nodev,exec,size=64m,mode=1777" in create
     assert not any(item.startswith(("--mount", "--volume")) for item in create)
     assert {item for item in create if item.startswith("--env=")} == {
         "--env=HOME=/tmp", "--env=CI=true",

@@ -782,8 +782,15 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             "--user=65532:65532", "--memory=1g", "--memory-swap=1g",
             "--cpus=1", "--pids-limit=128", "--ulimit=nofile=256:256",
-            "--tmpfs=/workspace:rw,nosuid,nodev,size=256m,mode=1777",
-            "--tmpfs=/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+            # Tests/builds intentionally execute binaries/native modules produced
+            # inside this disposable sandbox. Docker otherwise defaults tmpfs to
+            # noexec; that breaks Node/Rust and can block JNI/native test loading.
+            # This is not a host bind mount or packaging's private noexec volume.
+            "--tmpfs=/workspace:rw,nosuid,nodev,exec,size=256m,mode=1777",
+            # JVM/native tooling extracts transient libraries here. Only these
+            # sandbox-internal tmpfs mounts permit execution; nosuid/nodev,
+            # memory limits, keylessness and gVisor remain the security boundary.
+            "--tmpfs=/tmp:rw,nosuid,nodev,exec,size=64m,mode=1777",
             "--env=HOME=/tmp", "--env=CI=true", "--log-driver=none",
             "--entrypoint=/bin/sh", policy["images"][profile], "-ec",
             f'remaining=$(({job["deadline"]} - $(date +%s))); '

@@ -64,7 +64,10 @@ separate capability verification; Linux proof is not macOS proof.
   and must prevent concurrent writers. Secret scanning and source consent are still
   required: a filename filter cannot find every credential embedded in source.
 - One CPU, 1 GiB memory, no extra swap, 128 PIDs, 256 open files. `/workspace` is a
-  256 MiB tmpfs and `/tmp` a 64 MiB tmpfs, charged to that memory limit.
+  256 MiB tmpfs and `/tmp` a 64 MiB tmpfs, charged to that memory limit. The current
+  launcher source marks these disposable internal mounts `exec,nosuid,nodev` for
+  test binaries/JNI. Packaging's host-backed volumes remain `noexec`. The 6 October
+  source correction is not installed on the VM; see [offline toolchains](OFFLINE_TOOLCHAINS.md).
 - No network, Docker socket, host bind mounts, persistent volumes, privileges or caps.
 - Fixed profile commands, no dependency downloads. Images must already contain needed
   tools/dependencies. Isolated Git diff is unsupported because Git metadata is excluded.

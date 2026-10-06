@@ -367,3 +367,14 @@ prunes automatically or deletes job/artifact/deployment data, and preserves the
 latest predecessor. See `HOST_BUNDLE_OPERATIONS.md` for read-back identities and
 negative/positive evidence. Real React/Spring toolchains/runtime bases, funded
 production dispatch, registry/signing and generated-app/Chat proof remain open.
+
+On 6 October, fixed public React/Spring catalogs passed real local AMD64 Docker
+offline positive/negative tests and build/package checks. Maven go-offline's dynamic
+test-provider gap was reproduced and seeded using only public reviewed fixtures.
+The validator source permits execution on bounded internal tmpfs for binaries/JNI;
+read-only root, non-root user, network none, zero caps and gVisor are preserved.
+Host-backed packaging storage remains noexec. The source change is not VM-installed,
+and local Docker is not gVisor proof. Protected export/enrollment, native four-profile
+validation, financial activation, signing/publication and full app/Chat proof remain
+open. See [offline toolchains](OFFLINE_TOOLCHAINS.md). No cloud/model spending or
+production activation occurred. The original goal remains incomplete.
