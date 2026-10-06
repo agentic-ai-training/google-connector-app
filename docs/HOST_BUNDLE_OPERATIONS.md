@@ -10,7 +10,7 @@ resource groups, enroll financial capacity, run generated code or deploy apps.
 ```text
 read-only probe: exact old-tree hash + idle host journal
         |
-review seven source files; compile and test locally
+review all eleven source files; compile and test locally
         |
 apply with observed old-tree hash
         |
@@ -43,6 +43,20 @@ this workflow does not silently prune old releases.
 
 ## Commands
 
+The current eleven-file installation is
+`529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
+independently read-back snapshot:
+`c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+It adds the reviewed catalog, archive inspector, staging and fixed operator gateway.
+The installed gateway's default probe verified the original public metadata identity,
+zero imports and unchanged policy/registry; the bound Python/replay/cleanup regression
+passed. This does not approve Node/Java roles or execute an imported image.
+
+The eleven-file source passed 967 coding tests with verified loopback PostgreSQL
+and no skips, plus Flake8, Bandit and whitespace checks. Bandit only reported unused
+suppression warnings; the existing user-owned Vertex test retains its dependency
+deprecation warning. These are local tests, not trusted CI or full-goal acceptance.
+
 Use the existing private operator configuration; never paste its keys into chat.
 From the project root:
 
@@ -61,7 +75,10 @@ python -m scripts.install_packaging_bundle \
   --apply --expected-snapshot-hash "$OBSERVED_SNAPSHOT_HASH"
 ```
 
-Only seven explicit known filenames are accepted. A lost response does **not**
+Only eleven explicit known filenames are accepted for a new installation. Saved
+transactions accept either the exact historical seven-file inventory or the exact
+current inventory, with typed hash/mode evidence and a rederived transaction ID.
+Arbitrary partial inventories are not compatible transactions. A lost response does **not**
 authorize blind retry. Probe again; if it reports `interrupted=true`, recover the
 exact installation:
 
@@ -82,7 +99,7 @@ The 6 October journal-barrier rollout is separately read-back verified as instal
 Only `isolated_validation.py` changed among the seven installed files. A pending
 toolchain-import reservation now blocks validation/packaging and bundle mutations
 but remains read-only probeable. Old-launcher rollback after import history requires
-a forward-compatible review. The newer archive-staging library is local only, not
+a forward-compatible review. At that checkpoint the archive-staging library was local only, not
 an untracked extra file in the installed bundle. See `OFFLINE_TOOLCHAINS.md` for the
 source hashes, test/live evidence and unfinished transfer/publication controller.
 

@@ -24,6 +24,37 @@ before importing incurred costs or authorizing new paid resources.
 
 ## Authority
 
+### Newer operator billing evidence — received 6 October 2026
+
+The project-filtered report requested by the operator covers **19 September–5 October**
+(actual), with **19 September–6 October** separately forecast. The current reported
+credit is ₹22,011.16 out of ₹28,693.88, implying **₹6,682.72 total credit consumed**.
+The actual report credits/other savings total ₹6,664.35, leaving an **₹18.37 unexplained
+difference** against the all-time balance decrease. Do not assign that difference to
+a service or silently treat the forecast ₹7,374.87 as incurred charges.
+
+Only rows 1–10 of 16 were supplied. Known nonzero usage rows:
+
+| SKU | Usage cost |
+| --- | ---: |
+| Balanced PD Capacity in Delhi (54.18 GiB-month) | ₹616.26 |
+| Network Analyzer Resource Hours (140) | ₹14.74 |
+| Internet to Google Cloud Performance Resource Hours (139) | ₹10.64 |
+| Topology and Google Cloud Performance Resource Hours (139) | ₹14.63 |
+| Carrier Peering outbound, APAC | ₹0.04 |
+
+These displayed positive rows total **₹656.31**. Listed ingress, Ubuntu licensing
+and Standard VM external IP rows show zero usage cost. CPU/RAM and any other rows
+11–16 remain missing; exact SKU reconciliation/import remains pending. This evidence
+advances the date and credit-balance checkpoint, not a provider-verified complete
+charge export or migration-016 admission grant. Trial credit offsets explain zero
+payable without implying zero consumption.
+
+Protecting ₹8,500 Vertex and ₹6,000 future reserve leaves **₹7,511.16** of the
+reported remaining credit outside those envelopes. That is a balance observation,
+not new spending permission, a guaranteed full-term hosting forecast, or a second
+host reservation. The ₹14,000 hosting ceiling and fixed STOP remain unchanged.
+
 The approved initial envelope is INR 14,000 hosting, INR 8,500 combined Vertex
 training/evaluation/inference, and INR 6,000 protected future reserve. All values
 are integer paise. The hosting deadline is pinned at enrollment, not extended on

@@ -1,4 +1,4 @@
-"""Operator-only reviewed seven-file rollout over existing pinned IAP transport.
+"""Operator-only reviewed complete-bundle rollout over existing pinned IAP transport.
 
 Default probes only. Neither apply nor rollback changes policy, toolchains, resource
 limits, sudoers, cloud resources or model routes. Not callable by generated code.

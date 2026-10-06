@@ -72,11 +72,80 @@ still legal; maintenance does not acquire a second independent capacity pool.
 Actual `os._exit` tests cover abrupt controller death at four phases. Additional
 tests cover shared ownership, duplicate observations, intent corruption, both job
 purposes, fixed-stop expiry, cancellation restrictions and retention exhaustion.
-This ledger is **local source/test evidence only**. It does not upload or load an
+At the original ledger checkpoint this was **local source/test evidence only**. It does not upload or load an
 image, grant role approval, publish a registry, reserve money or dispatch production
-work. Do not create a live reservation until the protected transfer/reconciliation,
-four-profile host proof and verified publication controller are complete; there is
+work. The reviewed custody-only controller below can reserve, transfer, reconcile
+and explicitly cancel a never-started load, retaining its archive and audit history.
+Do not advance a live reservation to loading until the protected load/reconciliation,
+four-profile host proof and verified publication controller are complete. There is
 intentionally no release-from-proof-pending API yet.
+
+## Fixed-target operator custody transport — 6 October
+
+`operator_toolchain_host.py` is an operator-only Linux/root gateway, not a model
+tool. Its complete eleven-file protected source closure is hashed before and after
+acquiring the existing journal slot. It verifies only two public GCE metadata
+identity fields against the original project/VM, requires fresh policy/registry
+hashes, and preserves the fixed 19 October stop. Its request has a 4-KiB framed
+control limit and an independent 300-second alarm; the client has a 240-second
+watchdog. No frame accepts a command, target, path, credential or deadline extension.
+
+```text
+default read-only probe -> exact catalog + fresh configuration -> prepare
+                                      |
+local immutable Docker-save stream -> bounded root custody + fsync/read-back
+                                      |
+receive same intent without a stream -> verify retained custody
+                                      |
+explicit pre-load cancellation -> retain bytes/audit, release maintenance slot
+
+load / approval / registry publication / production dispatch: not implemented here
+```
+
+`scripts/transfer_reviewed_toolchain.py` streams the already-reviewed React/Spring
+image directly over the existing pinned IAP transport, without a large local tar.
+Client loss is not permission for a blind retry. An existing complete archive can
+be reverified without another export. Partial corruption needs explicit hash/count
+quarantine; cancelled intents are not silently reopened. Policy and the existing
+Python registry remain unchanged. This is an intermediate prerequisite, not the
+complete toolchain enrollment or generated-application proof.
+
+The first read-only live probe exposed a migration bug: the new bundle inventory
+was rejecting the saved exact seven-file transaction. The controller now accepts
+only the historical seven-file or current eleven-file transaction, validates each
+tree's hash/mode schema, and rederives its identity. Tests reject partial/foreign
+inventories, malformed hashes/modes and changed IDs; exact legacy probe/upgrade
+is covered. This does not weaken the new eleven-file installation requirement.
+
+### Actual public archive custody proof on the existing VM
+
+The eleven-file gateway was installed as
+`529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`,
+independently read-back snapshot
+`c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+967 local coding tests passed without skips, and 83 final focused controller/
+transport/bundle tests passed again. The actual nonsensitive archives transferred
+directly from local Docker Desktop to the original VM, without a Mac tar file.
+
+| Role | Reserved intent | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| React | f26bc68ec963d8c2e347858554d8e7a9e61ece066d68e9f95c0c32b7543c7b4a | 108,749,312 | bbe2dde5593ef0fff2d589f8fe9de801aa02d601ddc66992d3cf2a3550eeed07 |
+| Spring | a7e261be57ffdbc6b8373778bc261ef6df8968677e6d55fb5c6f4f9292418b44 | 509,887,488 | 14f01f1dfcbe010f885012f01b56c583552935304310c9a31a35928462706595 |
+
+Each initial transfer verified the full OCI graph, hash/count and persisted bytes;
+a separate receive with **no exporter/archive stream** re-read the retained file
+and returned the identical custody receipt. The index/platform/config namespaces
+remain distinct. The first React attempt stopped before SSH/export because local
+Docker Desktop was stopped; the application was started, the same prepared intent
+was observed, and the later measured transfer used that intent, not a duplicate.
+
+No Docker load was requested and no image was approved. Pre-load cancellation
+releases maintenance only, retaining both verified archives/audit. These bytes are
+not a role enrollment or permission to reopen/reload. A future reviewed durable
+load/proof/publication controller must reconcile retained custody, execute the four
+real host profiles plus negative cases, and preserve the existing Python registry.
+No private repository, provider key, paid model call, new VM, financial-pool
+activation, runtime approval, core deployment or generated-app/Chat proof occurred.
 
 Verification at this checkpoint: 869 coding tests passed against the verified
 loopback PostgreSQL database without skips. After the final prepared-intent

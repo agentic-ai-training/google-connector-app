@@ -18,6 +18,22 @@ BASES = {
 }
 ROLES = {'react': 'react_offline_v1', 'spring': 'spring_offline_v1'}
 TAGS = {'react': 'gca-reviewed-react:offline-v1', 'spring': 'gca-reviewed-spring:offline-v1'}
+# Operator-reviewed acquisition and repeated tagless-export evidence, not runtime
+# approval. A changed recipe/image requires new measured evidence and source review.
+REVIEWED_ARCHIVES = {
+    'react': {
+        'image_id': 'sha256:d3d2984e4d4b8e90a5b93b0f3a89591c8958fd42a8d8f68de4ac5eafaeeba9de',
+        'archive_sha256': 'bbe2dde5593ef0fff2d589f8fe9de801aa02d601ddc66992d3cf2a3550eeed07',
+        'archive_bytes': 108749312,
+        'recipe_sha256': 'cca456298dd4242ff67f662b3b8cc7b94377a8faefe5ec4d49d536baba4adb66',
+    },
+    'spring': {
+        'image_id': 'sha256:1f90c0fe3495fc3cc00f8b3a9cc6681782238fa1f1dd8a57c8583bac31c68943',
+        'archive_sha256': '14f01f1dfcbe010f885012f01b56c583552935304310c9a31a35928462706595',
+        'archive_bytes': 509887488,
+        'recipe_sha256': 'dfb691f3330ec05842b6f5b53b60cbabfaae6aa9179215a0e7418cb1d6a4686a',
+    },
+}
 MAX_SPEC_BYTES = 512 * 1024
 REACT_DEPENDENCIES = {'react': '19.3.0', 'react-dom': '19.3.0'}
 REACT_DEV_DEPENDENCIES = {'@vitejs/plugin-react': '6.1.2', 'vite': '8.3.2', 'vitest': '5.0.3'}

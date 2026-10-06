@@ -23,7 +23,11 @@ RELEASES = Path("/usr/local/libexec/gca-bundle-releases")
 POLICY = Path("/etc/gca-validation/policy.json")
 NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
          "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
-         "isolated_packaging.py")
+         "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
+         "toolchain_staging.py", "operator_toolchain_host.py")
+# A completed historical installation is evidence, not a request to install its
+# old inventory. Accept only the exact previous protocol and the current one.
+LEGACY_NAMES = NAMES[:7]
 MAX_FRAME = 256000
 
 
@@ -202,12 +206,25 @@ def record():
         raise BundleError("installation intent exceeds bound")
     result = json.loads(path.read_bytes())
     fields = {"version", "id", "phase", "old", "new"}
-    if (set(result) != fields or result["version"] != 1
+    if (not isinstance(result, dict) or set(result) != fields or type(result["version"]) is not int
+            or result["version"] != 1
             or not isinstance(result["id"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["id"])
             or result["phase"] not in {"prepared", "root_saved", "published", "committed", "rolled_back"}
             or not isinstance(result["old"], dict) or not isinstance(result["new"], dict)
-            or set(result["new"]) != set(NAMES)):
+            or set(result["new"]) not in (set(LEGACY_NAMES), set(NAMES))):
         raise BundleError("installation intent is invalid")
+    for tree in (result['old'], result['new']):
+        if not 2 <= len(tree) <= 23 or not {'isolated_validation.py', 'build_artifact.py'} <= set(tree):
+            raise BundleError('installation tree is invalid')
+        for name, item in tree.items():
+            if ((name not in NAMES and not re.fullmatch(
+                    r'__pycache__/[a-z_]+\.cpython-[0-9]+(?:\.opt-[0-9])?\.pyc', name))
+                    or not isinstance(item, dict) or set(item) != {'hash', 'mode'}
+                    or not isinstance(item['hash'], str) or not re.fullmatch(r'[a-f0-9]{64}', item['hash'])
+                    or type(item['mode']) is not int or not 0 <= item['mode'] <= 0o7777):
+                raise BundleError('installation tree evidence is invalid')
+    if result['id'] != digest(canonical({'old': result['old'], 'new': result['new']})):
+        raise BundleError('installation intent identity differs')
     return result
 
 
@@ -253,7 +270,8 @@ def probe_import(directory):
               "v=runpy.run_path(" + repr(str(directory / "isolated_validation.py")) + "); "
               "assert v['_artifact_helper']().MAX_STORED_ARTIFACTS==8; "
               "runpy.run_path(" + repr(str(directory / "isolated_packaging.py")) + "); "
-              "runpy.run_path(" + repr(str(directory / "image_packaging_worker.py")) + ")")
+              "runpy.run_path(" + repr(str(directory / "image_packaging_worker.py")) + "); "
+              "runpy.run_path(" + repr(str(directory / "operator_toolchain_host.py")) + ")")
     result = subprocess.run(  # nosec B603
         ["/usr/bin/python3", "-I", "-B", "-c", source], stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
@@ -298,7 +316,7 @@ def locked_operation(request, state):
         raise BundleError('bundle retirement needs reconciliation before installation')
     files = request["files"]
     if not isinstance(files, dict) or set(files) != set(NAMES):
-        raise BundleError("exact seven-file reviewed bundle required")
+        raise BundleError("exact reviewed operator bundle required")
     for name, source in files.items():
         if not isinstance(source, str) or not 0 < len(source.encode()) <= 100000:
             raise BundleError("reviewed source exceeds its bound")

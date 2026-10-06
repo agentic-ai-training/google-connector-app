@@ -3434,3 +3434,58 @@ reader by themselves. A trusted transport still needs an independent watchdog an
 owned-process cleanup. Real `os._exit` tests cover promotion, receipt/journal updates,
 quarantine rename and torn control writes. Both role tests use tiny fake OCI layers;
 they do not prove real Node/Java execution. See [custody scope](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-protocol-evolution-and-control-data-plane"></a>
+## Closed protocol evolution, framing and control/data-plane separation
+
+**Protocol evolution** must preserve the ability to inspect durable records made
+by a previous release. Our first eleven-file operator controller rejected the
+existing seven-file transaction because it compared historical evidence to the
+new install request's inventory. The correct separation is:
+
+```text
+historical record -> exact recognized old/current schema -> validate hashes/ID
+new install       -> exact current schema only          -> compile/import/swap
+unknown subset    -> reject; not an invented legacy version
+```
+
+This is a finite-language membership problem, not permissive backward compatibility.
+For `S = {known_old_inventory, current_inventory}`, historical keys must equal one
+member of S. A subset test would also accept a damaged or malicious incomplete
+installation. In Python, set equality is expected O(N); N is explicitly bounded.
+
+```python
+def recognized_inventory(names, old_names, current_names):
+    keys = set(names)
+    return keys == set(old_names) or keys == set(current_names)
+```
+
+This teaching helper is only inventory validation. The real controller also checks
+types, per-file SHA-256/modes, canonical transaction identity, protected inodes,
+current filesystem evidence and journal exclusion. Compatibility does not grant
+authority to reinstall an old bundle or bypass its retained-history rollback gates.
+
+**Framing** makes control bytes distinguishable from a following binary archive.
+The fixed operator gateway reads a four-byte big-endian count, then at most 4 KiB
+of unique-key JSON, then a separately bounded archive. Without framing, a binary
+tar stream could be misinterpreted as control or force unlimited buffering.
+
+**Control plane** describes what is authorized: fixed role, source closure,
+archive identity, policy/registry hashes, original VM identity and stop time.
+**Data plane** transports only the catalog's measured public archive. Neither
+the archive nor the model can select a shell command, target or new approval.
+
+```text
+control: fixed intent + hashes -> existing journal ownership
+data:    immutable Docker-save -> bounded stream -> OCI/hash -> persisted read-back
+result:  custody receipt       -> explicit pre-load cancel or future load controller
+```
+
+**Independent watchdog** differs from a cooperative deadline: it can interrupt a
+blocked pipe or reader between progress checks. The client owns only its exporter
+and SSH process groups; killing them cannot prove a Docker daemon RPC has stopped.
+Therefore custody, loading, proof and approval remain distinct states. A cancelled
+never-started load retains bytes and audit history; it is not silently reopened.
+The deployed custody gateway uses fixed public GCE metadata only, not the service
+account credential endpoint. It cannot load or approve an image. See the exact
+[operator protocol](HOST_BUNDLE_OPERATIONS.md) and [unfinished phases](OFFLINE_TOOLCHAINS.md).

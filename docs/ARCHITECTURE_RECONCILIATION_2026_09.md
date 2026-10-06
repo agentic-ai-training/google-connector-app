@@ -15,10 +15,15 @@ real Node/Java gVisor proofs, verified publication and funded activation remain 
 see `OFFLINE_TOOLCHAINS.md` for the exact state machine and evidence boundary.
 That journal barrier was subsequently VM-installed and independently rehashed;
 the bound synthetic Python/replay/cleanup regression and six-container projected
-health checks passed. No import reservation was created. Protected archive staging
-is now implemented/tested locally, including retained hash-bound quarantine and
-crash recovery, but its trusted VM transfer controller is still pending. No toolchain
-role approval, funded activation or generated-app completion follows from these facts.
+health checks passed. At that checkpoint no import reservation was created.
+The subsequent complete eleven-file operator custody gateway is VM-installed and
+independently rehashed; both actual reviewed public React/Spring archives transferred
+and passed a second persisted-file read-back without an exporter. Pre-load cancellation
+retains their bytes/audit and releases maintenance; the main journal is idle and six
+Coolify containers are healthy. The existing Python registry/policy and fixed STOP
+are unchanged. A durable image loader, real Node/Java gVisor execution, role approval,
+funded activation and the generated-app/Chat completion are still pending. See
+`OFFLINE_TOOLCHAINS.md` for exact identities and the uncompleted enrollment phases.
 
 ## Sources and precedence
 

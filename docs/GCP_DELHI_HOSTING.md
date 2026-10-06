@@ -11,12 +11,30 @@ leftovers, an idle main journal and zero import reservations. The obsolete
 `3c8d9aa3ab350577044ccc8abd7dac7a94d8930446b4b353e33f85b691240080`
 code copy was explicitly retired under fresh hashes/audit; no data was deleted.
 
+The subsequent eleven-file custody gateway rollout is independently read-back
+verified as installation `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`,
+snapshot `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+The initial probe exposed/repaired exact historical transaction compatibility;
+partial inventories or altered evidence are still rejected. The obsolete
+`5b3f2e5e64f57f4aac3417dc6ef9b8843092ce6ca0dc26fcb20c3be49220e479`
+code copy was explicitly retired with fresh hashes, preserving the latest predecessor.
+The installed default custody probe verified the original VM's public metadata,
+empty import ledger and unchanged policy/registry hashes. Bound synthetic Python
+compilation, mismatch/unbound/replay rejection and cleanup passed again.
+
 Read-only storage inspection showed Docker's containerd-backed overlayfs and
 94,249,951,232 free bytes under `/var/lib`. Docker was not reconfigured or restarted.
-Protected archive staging/quarantine is implemented/tested **locally**, not installed
-or used to transfer/load an image on the VM. Its future trusted transfer controller,
-real Node/Java host proofs, role approval, runtime bases and end-to-end app/Chat proof
-remain pending. No new cloud resource, service, production model/policy or budget
+Protected archive staging/quarantine and the fixed-target custody-only transport
+are now installed/tested; actual transfer evidence is tracked separately below.
+Both reviewed public archives (108,749,312 React bytes; 509,887,488 Spring bytes)
+subsequently transferred to protected host custody and passed independent no-stream
+read-back. Pre-load cancellation retained their bytes/audit; the main journal is idle,
+policy/registry hashes are unchanged, and all six Coolify containers remain healthy
+with zero scoped leftovers. No Docker load or Node/Java approval occurred. Exact
+intent/archive hashes are in `OFFLINE_TOOLCHAINS.md`.
+The durable load controller, real Node/Java host proofs, role approval, runtime bases
+and end-to-end app/Chat proof remain pending. No new cloud resource, service,
+production model/policy or budget
 allocation was created. The fixed stop and protected Vertex/reserve allocations
 remain unchanged; current SKU-attributed spending evidence is still outstanding.
 
@@ -43,6 +61,16 @@ October accrued charges and a fresh credit balance still need reconciliation
 before funded production enrollment. See [exact hashes and evidence](HOST_BUNDLE_OPERATIONS.md).
 
 ## Status and spending authority
+
+On 6 October the operator supplied the requested newer report: actual range
+19 September–5 October, ₹22,011.16 remaining of ₹28,693.88, with ₹6,664.35 of
+actual credits/other savings and zero payable. The full balance decrease is
+₹6,682.72; ₹18.37 remains unattributed. Only SKU rows 1–10 of 16 were pasted;
+the CPU/RAM/remaining six rows are still required before importing complete
+attributable charges. The ₹7,374.87 figure is a **forecast**, not accrued cost.
+Disk usage is ₹616.26; three Network Intelligence SKUs total ₹40.01 and carrier
+outbound ₹0.04. See [the current partial SKU record](CLOUD_COST_LEDGER.md).
+This does not expand the hosting ceiling or consume the protected Vertex/reserve.
 
 Provisioned 2026-09-19; setup continued 2026-09-20. User reconfirmed INR 28,694
 unspent trial balance before creation; the billing API does not expose those fields.

@@ -56,6 +56,54 @@ def test_full_bundle_swap_preserves_old_tree_and_idempotent_receipt(host):
     assert len(list(host.releases.iterdir())) == 2
 
 
+def historical_installation(host):
+    old = bundle.snapshot(host.root)
+    for name in bundle.LEGACY_NAMES:
+        path = host.root / name
+        path.write_text('# historical protected source\n')
+        path.chmod(0o755 if name == 'isolated_validation.py' else 0o644)
+    new = bundle.snapshot(host.root)
+    identity = bundle.digest(bundle.canonical({'old': old, 'new': new}))
+    host.releases.mkdir(mode=0o700)
+    previous = host.releases / (identity + '.previous')
+    previous.mkdir(mode=0o755)
+    for name in old:
+        path = previous / name
+        path.write_text('# previous reviewed source\n')
+        path.chmod(old[name]['mode'])
+    transaction = {'version': 1, 'id': identity, 'phase': 'committed', 'old': old, 'new': new}
+    bundle.write(host.releases / 'transaction.json', bundle.canonical(transaction))
+    return transaction
+
+
+def test_exact_legacy_installation_can_be_probed_and_upgraded(host):
+    previous = historical_installation(host)
+    probe = bundle.operate({'operation': 'probe'})
+    assert probe['last_installation'] == previous['id']
+    assert set(probe['hashes']) == set(bundle.LEGACY_NAMES)
+    result = bundle.operate({**host.request, 'expected_snapshot_hash': probe['snapshot_hash']})
+    assert set(bundle.snapshot(host.root)) == set(bundle.NAMES)
+    assert bundle.snapshot(host.releases / (result['installation_id'] + '.previous')) == previous['new']
+
+
+@pytest.mark.parametrize('mutation', ['partial_inventory', 'foreign_file', 'bad_hash', 'bad_mode', 'wrong_id'])
+def test_legacy_compatibility_does_not_accept_unrecognized_transaction(host, mutation):
+    transaction = historical_installation(host)
+    if mutation == 'partial_inventory':
+        transaction['new'].pop('oci_packager.py')
+    elif mutation == 'foreign_file':
+        transaction['new']['unexpected.py'] = transaction['new'].pop('oci_packager.py')
+    elif mutation == 'bad_hash':
+        transaction['new']['oci_packager.py']['hash'] = 'not-a-hash'
+    elif mutation == 'bad_mode':
+        transaction['new']['oci_packager.py']['mode'] = True
+    else:
+        transaction['id'] = '0' * 64
+    bundle.write(host.releases / 'transaction.json', bundle.canonical(transaction))
+    with pytest.raises(bundle.BundleError, match='installation'):
+        bundle.operate({'operation': 'probe'})
+
+
 @pytest.mark.parametrize("phase", ["prepared", "archive_verified", "load_started",
                                  "load_uncertain", "loaded", "proof_pending", "unknown"])
 def test_pending_import_blocks_bundle_changes_but_remains_probeable(host, phase):

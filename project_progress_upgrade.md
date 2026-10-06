@@ -2606,6 +2606,23 @@ changes become production evidence.
   zero scoped sandbox leftovers and no import reservation. Only an audited obsolete
   code backup was retired. No actual Node/Java transfer/load, approval or production
   activation happened. The complete host proofs and deployment requirement remain open.
+  The next 2026-10-06 checkpoint installs the complete eleven-file fixed-target
+  custody gateway: bundle `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`,
+  independent snapshot `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+  Exact seven-file historical transaction compatibility is tested without accepting
+  arbitrary subsets, invalid metadata or changed transaction identity. 967 local
+  coding tests passed without skips; Flake8/Bandit/diff checks passed. The installed
+  gateway verifies public VM identity, source closure and fresh unchanged policy/
+  registry under the existing slot. Bound Python/replay/cleanup passed again.
+  Custody may transfer/reconcile and cancel a never-started load while retaining
+  bytes; it cannot load, approve, publish, deploy or grant funded capacity. Actual
+  Node/Java load/proof, registry approval and full application/Chat proof remain open.
+  The actual React/Spring public archives then transferred through that gateway and
+  passed separate no-stream persisted-file re-verification. Both never-started loads
+  were explicitly cancelled retaining custody/audit, and the main journal is idle.
+  Final projections verified six healthy Coolify containers, zero scoped leftovers
+  and unchanged policy/registry. This closes custody transport evidence, not image
+  load/enrollment, Linux/gVisor profile proof, central approval or the complete item.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately
