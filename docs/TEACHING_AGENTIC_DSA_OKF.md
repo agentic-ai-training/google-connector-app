@@ -3255,3 +3255,62 @@ The current launcher source corrects these internal mounts only. Host-backed
 packaging storage remains noexec. Different storage purposes require different
 policies; blindly copying flags across layers is not a security design. Local Docker
 proof must not be described as the existing VM's Linux/gVisor enforcement proof.
+
+<a id="dictionary-streaming-custody-and-merkle-dag"></a>
+## Streaming custody, content addresses and identity namespaces
+
+The new toolchain inspector reads an archive as an iterator of bounded chunks,
+not one giant byte string. Incremental SHA-256 is O(B) time for B input bytes and
+constant hash-state space; retained metadata is separately capped. For example:
+
+```python
+import hashlib
+
+def measure_chunks(chunks, maximum):
+    total = 0
+    digest = hashlib.sha256()
+    for chunk in chunks:
+        total += len(chunk)
+        if total > maximum:
+            raise ValueError('byte limit exceeded')
+        digest.update(chunk)
+    return total, digest.hexdigest()
+```
+
+This small example is not the production parser: it omits deadlines, unsafe
+headers, source authentication and graph validation. In the actual code, a
+512-byte framing state machine rejects PAX/GNU extensions before the tar parser
+can allocate their claimed body. File payload spans are skipped arithmetically
+in that framing state, while a separate streaming hash verifies their bytes.
+Deadlines checked between reads cannot interrupt a blocking reader by themselves;
+the standalone Unix CLI has an independent watchdog and owned-process cleanup.
+
+OCI descriptors form a content-addressed DAG: an edge carries a child's hash and
+size. The same content has the same content address, but different objects must
+not be treated as one identity merely because all use SHA-256:
+
+```text
+archive byte hash (tar representation, headers and padding)
+        |
+        +-- image index digest
+                 |
+                 +-- Linux AMD64 platform manifest digest
+                 |          |
+                 |          +-- runtime configuration digest
+                 |          +-- layer digest(s)
+                 |
+                 +-- non-runtime attestation manifest(s)
+```
+
+The scanner verifies that every descriptor's size/hash matches its blob and that
+the reachable set equals the archive's blob set. A dictionary gives O(1) expected
+digest lookup; set equality catches omitted or unreferenced objects. Graph work is
+O(V+E), while hashing dominates at O(B). A content hash proves byte identity, not
+producer trust, permission, benign behavior or successful execution. Hence
+`image_loaded=false` and `image_approved=false` remain explicit after a valid scan.
+Changing a tar timestamp may change the archive hash without changing the OCI
+image graph; neither digest namespace should silently replace the other.
+
+The actual React and Spring streams were checked on 6 October without large local
+output files. That prepares custody for protected host import; it does not complete
+the original deployment goal. See [exact evidence](OFFLINE_TOOLCHAINS.md).

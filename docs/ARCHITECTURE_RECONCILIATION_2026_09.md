@@ -383,3 +383,12 @@ validation, financial activation, signing/publication and full app/Chat proof re
 open. See [offline toolchains](OFFLINE_TOOLCHAINS.md). No new resource, model call,
 budget expansion or production activation occurred. Existing VM usage continues to
 consume trial credits. The original goal remains incomplete.
+
+The next source checkpoint adds bounded streaming custody inspection for the two
+real local toolchain archives, avoiding a large Mac output file while disk is low.
+It independently binds every OCI blob, the exact source index, AMD64 platform and
+configuration, with tagless compatibility metadata and closed graph membership.
+Extended tar headers are rejected before their bodies can be allocated. This is
+pure inspection plus a fixed exporter CLI, not Docker load, VM transfer, enrollment,
+build provenance, approval or execution. Source scanner and fault tests exist;
+protected host import and real Node/Java gVisor checks remain open.

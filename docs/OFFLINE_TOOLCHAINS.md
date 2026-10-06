@@ -140,3 +140,55 @@ host enrollment, gVisor proof, real Nginx/Java runtime bases, central financial
 admission, registry/signing, app behavior and final Chat delivery remain open.
 See [isolated validation](ISOLATED_VALIDATION.md),
 [host bundle operations](HOST_BUNDLE_OPERATIONS.md) and [OCI packaging](OCI_PACKAGING.md).
+
+## Streaming custody inspection — 6 October 2026
+
+The Mac's free space fell below the combined archive size. The fixed operator
+scanner avoids saving a large archive file locally:
+
+```sh
+.venv/bin/python -m scripts.probe_toolchain_archive --role react
+.venv/bin/python -m scripts.probe_toolchain_archive --role spring
+```
+
+It uses the same clean-environment local Unix Docker context as the fixture probe,
+resolves the role tag to its immutable ID, then exports **by that ID**, without
+tags. It never calls image load, extraction, execution, cloud transport or approval.
+Docker's daemon may still use its own working storage; this is not a zero-disk-I/O
+claim. The source-only scanner is not installed on the VM or exposed to models.
+
+The archive inspector validates classic tar framing before tarfile can allocate
+PAX/GNU extended-header bodies. It rejects links/devices/extensions, traversal,
+duplicates, unknown files, extra blobs, malformed descriptors, tag overrides,
+privileged/runtime-role mismatch and nonzero trailing data. It hashes every blob,
+requires full reachable graph equality, distinguishes index/platform/config digests
+and hashes the complete stream including padding. Limits: 512 MiB input, 128 entries,
+16 MiB retained small metadata and 1 MiB read chunks. The library deadline is checked
+between reads; the dedicated Unix CLI adds a 150-second blocking-read watchdog and
+reaps only its own exporter process group. Transport still needs its own deadline.
+
+| Role | Observed archive bytes | SHA-256 |
+| --- | ---: | --- |
+| React | 108,749,312 | `bbe2dde5593ef0fff2d589f8fe9de801aa02d601ddc66992d3cf2a3550eeed07` |
+| Spring | 509,887,488 | `14f01f1dfcbe010f885012f01b56c583552935304310c9a31a35928462706595` |
+
+Repeated scans of each current image produced the same exact archive digest; this
+is observed stability for these exports, not a guarantee for every Docker release.
+Node platform/config digests are `3ea6582e...` / `21dc647e...`; Spring's are
+`b0eb5e11...` / `3269eb8c...`. They differ from the image index IDs listed above.
+Full receipts are emitted by the command. None is interchangeable with the archive
+byte hash or sufficient by itself to authorize a host policy change.
+
+These are custody checks, not independent build provenance, approved base origin,
+live gVisor execution, funded dispatch or deployment proof. The CLI's local tag and
+labels do not grant production authority. The eventual operator enrollment must
+bind reviewed recipe/provenance and exact immutable receipt, import through protected
+state with crash recovery, read back the loaded identity, and complete real host
+positive/negative tests before changing policy. Those stages remain open. Low local
+disk space and current October billing reconciliation still need resolution.
+
+Regression evidence for this source checkpoint: 834 coding tests passed against
+real loopback PostgreSQL, without skips, before the final two end-marker cases were
+added. Those cases and the final focused archive/probe suite were separately run.
+Focused Flake8/Bandit and diff checks passed. This is not trusted CI or production
+execution evidence; the single existing google-genai deprecation warning remains.

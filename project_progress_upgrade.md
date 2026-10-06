@@ -2574,6 +2574,14 @@ changes become production evidence.
   generated login-app proof. Protected image export/enrollment, runtime bases,
   complete host proofs and cross-language/database scope remain open. See
   `docs/OFFLINE_TOOLCHAINS.md`; this item remains unchecked.
+  A subsequent 2026-10-06 checkpoint verified both real tagless Docker-save archives
+  as bounded streams without a large local archive file: 108,749,312 React bytes and
+  509,887,488 Spring bytes, with stable repeated full-stream hashes. It verifies all
+  blobs/descriptors/reachability and distinct index/platform/config identity, rejecting
+  extended tar headers before allocation, unsafe paths, unreferenced blobs and tag
+  overrides. This is operator-only custody inspection, not image import, build
+  provenance, role approval or host execution. Protected durable import/enrollment
+  and the four-profile live gVisor proof are still required; nothing is marked complete.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately
