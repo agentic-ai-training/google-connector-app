@@ -102,7 +102,40 @@ Unknown/reappeared objects fail closed. Active source, its latest predecessor,
 job journals, artifacts and deployment data are not retirement targets. Local
 tests include abrupt process death immediately after a real unlink.
 
-## Current live evidence — 5 October 2026
+## Current live evidence — 6 October 2026
+
+Source checkpoint `3ee954d` corrects only validation's disposable internal tmpfs
+execution flags; host-backed packaging storage remains noexec. The full seven-file
+bundle was installed through the existing protected transaction and independently
+read back. Latest installation:
+`fe1010fdde74f46221cd937f56b3f084bee4206978f6d294c6bf5c452df8e2bc`.
+Snapshot: `835b2bd12a13d4249bb210c159ee5ddf441b3f60c34654e4059dcef77083ee2f`.
+Launcher SHA-256: `59bf2018778577d9fbe23a35eaf8d95c2b1434fb22c268e068703f2debc58526`.
+All six other file hashes remain those of the 5 October bundle below.
+
+Retention was full. Obsolete code copy `22cc0233...` was explicitly reviewed and
+retired with fresh active/retention hashes and prepared/committed audit. Independent
+read-back verified active source unchanged before installation, no pending retirement
+and preserved data/journals/artifacts. The current installation's predecessor is
+preserved; the eight-entry limit remains unchanged.
+
+The bound nonsensitive Python compile passed after installation. Changed-source and
+unbound dispatch were rejected before execution; replay was rejected afterward.
+Cleanup observation passed and lost result was not inferred as a passing test.
+The installer read-back showed an idle journal. The initial broad health query
+failed to confirm health; a subsequent bounded field-projection check independently
+proved all six exact Coolify names running/healthy, an idle journal and zero scoped
+sandbox containers. The policy still approves only Python compilation. No health
+claim is inferred merely from installation or from the synthetic test.
+
+Separately, actual local AMD64 Docker React and Spring offline tests/build/package
+and deliberate test failures passed. This is not Node/Java Linux/gVisor execution
+proof or approval for private/generated code. No toolchain/runtime policy, financial
+pool, schema, cloud resource, VM size/deadline or model route was changed. No model
+was called. See [offline toolchains](OFFLINE_TOOLCHAINS.md) for exact local identities,
+the reproduced cache/native execution defects and remaining deployment gates.
+
+## Earlier live evidence — 5 October 2026
 
 Latest independently read-back verified installation:
 `c11d29d43f04bf580bfbfb458a6db4f10dcc9e41231f697893d3de688520403e`.

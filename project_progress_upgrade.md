@@ -2566,7 +2566,11 @@ changes become production evidence.
   sandbox-local binaries/JNI while retaining all other restrictions and packaging's
   noexec storage. Catalog guards reject executable/duplicate/unreviewed dependency
   authority. 804 coding tests passed against local PostgreSQL, without skips.
-  This is not VM installation, Linux/gVisor proof, central funded approval or
+  The corrected launcher was subsequently VM-installed/read-back verified via the
+  protected seven-file transaction. Bound synthetic Python regression, mismatch/
+  unbound/replay rejection and cleanup passed; a separate field-projected health
+  check verified six healthy Coolify containers and no scoped sandbox leftovers.
+  This is not Node/Java Linux/gVisor proof, central funded approval or
   generated login-app proof. Protected image export/enrollment, runtime bases,
   complete host proofs and cross-language/database scope remain open. See
   `docs/OFFLINE_TOOLCHAINS.md`; this item remains unchecked.

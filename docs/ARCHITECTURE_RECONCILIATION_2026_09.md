@@ -373,8 +373,13 @@ offline positive/negative tests and build/package checks. Maven go-offline's dyn
 test-provider gap was reproduced and seeded using only public reviewed fixtures.
 The validator source permits execution on bounded internal tmpfs for binaries/JNI;
 read-only root, non-root user, network none, zero caps and gVisor are preserved.
-Host-backed packaging storage remains noexec. The source change is not VM-installed,
-and local Docker is not gVisor proof. Protected export/enrollment, native four-profile
+Host-backed packaging storage remains noexec. The source was subsequently VM-installed
+and independently rehashed on 6 October, followed by bound synthetic Python validation,
+replay/mismatch rejection and cleanup. A final projected health check independently
+verified six healthy Coolify containers, an idle journal and no scoped sandbox
+containers. Installation alone was not treated as health evidence. Local Docker
+is not Node/Java gVisor proof. Protected export/enrollment, native four-profile
 validation, financial activation, signing/publication and full app/Chat proof remain
-open. See [offline toolchains](OFFLINE_TOOLCHAINS.md). No cloud/model spending or
-production activation occurred. The original goal remains incomplete.
+open. See [offline toolchains](OFFLINE_TOOLCHAINS.md). No new resource, model call,
+budget expansion or production activation occurred. Existing VM usage continues to
+consume trial credits. The original goal remains incomplete.

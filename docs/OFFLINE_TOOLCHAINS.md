@@ -92,8 +92,10 @@ Actual tests exposed Docker's implicit tmpfs noexec: Vitest could not execute it
 workspace binary, and Jansi could not load a transient native library from `/tmp`.
 The launcher source now permits execution on only the bounded sandbox-internal
 workspace and tmp mounts, retaining nosuid/nodev and all other restrictions.
-Host-backed packaging storage remains noexec. This source revision is not installed
-on the VM. Never substitute native host execution to work around a toolchain failure.
+Host-backed packaging storage remains noexec. The reviewed source revision was
+subsequently installed/read-back verified on the existing VM on 6 October; see the
+separate host evidence below. Never substitute native host execution to work around
+a toolchain failure.
 
 ## Measured local evidence — 6 October 2026
 
@@ -122,6 +124,17 @@ This covers the coding subsystem, not the complete original project acceptance a
 There were zero model calls, private-source inputs or new cloud resources. Nothing
 was deployed or approved for production. Do not interchange image index, platform
 manifest and config digests; read back each host's actual identity after archive load.
+The seven-file host bundle was independently rehashed after installing this launcher
+correction: installation `fe1010fdde74f46221cd937f56b3f084bee4206978f6d294c6bf5c452df8e2bc`,
+snapshot `835b2bd12a13d4249bb210c159ee5ddf441b3f60c34654e4059dcef77083ee2f`.
+The bound synthetic Python test passed, rejecting changed source, unbound dispatch
+and replay; cleanup passed and lost result was not inferred as test success. The
+final independent projected health check verified all six Coolify containers healthy,
+an idle journal and zero scoped sandbox containers. The initial broad health query
+did not establish health; its outcome was not used as positive evidence. Only an
+explicitly inspected obsolete code rollback copy was retired;
+journals/artifacts/data and the latest predecessor were preserved.
+
 Current VM policy still approves only the Python synthetic profile. Protected export,
 host enrollment, gVisor proof, real Nginx/Java runtime bases, central financial
 admission, registry/signing, app behavior and final Chat delivery remain open.

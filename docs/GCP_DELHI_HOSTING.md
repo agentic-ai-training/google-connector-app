@@ -361,3 +361,15 @@ Afterward, read-only health showed zero unresolved host jobs, zero validation
 leftovers and all six Coolify containers healthy. Local verification passed 731
 coding tests against real loopback PostgreSQL, without skips. This does not approve
 private packaging, a financial pool, production migrations or a generated deployment.
+
+On 6 October, source checkpoint `3ee954d` passed real local offline React/Spring
+positive and deliberately failing tests, and 804 coding regressions against local
+PostgreSQL. The sandbox-internal tmpfs execution correction was installed through
+the protected full-bundle transaction on the same VM. Exact installation and file
+hashes are in `HOST_BUNDLE_OPERATIONS.md`; independent bound Python validation,
+mismatch/unbound/replay rejection and cleanup passed. Final projected health checked
+all six Coolify containers running/healthy, an idle host journal and zero scoped
+sandbox leftovers. VM policy still approves only Python compilation. There was no
+new resource, production migration, financial enrollment, model call or deadline
+extension. Existing VM usage still consumes credits. The September report remains
+insufficient to reconcile accrued October usage or activate a funded production pool.

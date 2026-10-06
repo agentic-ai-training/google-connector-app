@@ -67,7 +67,10 @@ separate capability verification; Linux proof is not macOS proof.
   256 MiB tmpfs and `/tmp` a 64 MiB tmpfs, charged to that memory limit. The current
   launcher source marks these disposable internal mounts `exec,nosuid,nodev` for
   test binaries/JNI. Packaging's host-backed volumes remain `noexec`. The 6 October
-  source correction is not installed on the VM; see [offline toolchains](OFFLINE_TOOLCHAINS.md).
+  correction is installed/read-back verified on the VM, with bound synthetic Python
+  regression/cleanup proof and independent six-container Coolify health check;
+  Node/Java host execution remains unproven. See
+  [offline toolchains](OFFLINE_TOOLCHAINS.md).
 - No network, Docker socket, host bind mounts, persistent volumes, privileges or caps.
 - Fixed profile commands, no dependency downloads. Images must already contain needed
   tools/dependencies. Isolated Git diff is unsupported because Git metadata is excluded.
