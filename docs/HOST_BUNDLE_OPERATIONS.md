@@ -76,6 +76,16 @@ exists. Restoring an old bundle after packaging could remove cleanup capability.
 That state requires a reviewed forward-compatible repair, not deleting records or
 using a bypass flag.
 
+The 6 October journal-barrier rollout is separately read-back verified as installation
+`a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`, snapshot
+`29bba63ff5d024d2397c62225b5e60b19f154dcbbf4055b591ee835dff1d9e03`.
+Only `isolated_validation.py` changed among the seven installed files. A pending
+toolchain-import reservation now blocks validation/packaging and bundle mutations
+but remains read-only probeable. Old-launcher rollback after import history requires
+a forward-compatible review. The newer archive-staging library is local only, not
+an untracked extra file in the installed bundle. See `OFFLINE_TOOLCHAINS.md` for the
+source hashes, test/live evidence and unfinished transfer/publication controller.
+
 ## Explicit retirement of obsolete rollback copies
 
 The eight-entry release limit is unchanged. It includes `transaction.json`;

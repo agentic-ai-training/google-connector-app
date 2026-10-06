@@ -2593,6 +2593,19 @@ changes become production evidence.
   controller, role approval or Node/Java host proof. The reserved proof-pending
   phase deliberately has no release API yet. All those live requirements remain
   unchecked, and no maintenance reservation was created on the VM.
+  A subsequent checkpoint adds protected archive staging under that same journal,
+  with bounded streaming, complete OCI inspection, persisted-file read-back/fsync,
+  receipt-to-journal custody, exact-prefix control-write repair, and explicit hash-bound
+  quarantine retaining failed transfers. 916 coding tests passed without skips;
+  five additional fault cases were then added and all 52 final staging tests passed.
+  Real process-death tests cover promotion, receipt/journal publication and quarantine.
+  This library is local and not yet connected to the trusted VM transfer controller.
+  Separately, the journal barrier itself was installed/read-back verified as bundle
+  `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`;
+  live bound Python/replay/cleanup checks passed, with six healthy Coolify containers,
+  zero scoped sandbox leftovers and no import reservation. Only an audited obsolete
+  code backup was retired. No actual Node/Java transfer/load, approval or production
+  activation happened. The complete host proofs and deployment requirement remain open.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

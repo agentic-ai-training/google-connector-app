@@ -3374,3 +3374,63 @@ so validation is O(N×H), bounded independently of request traffic. Canonical JS
 fingerprints make changed image/role/host/archive/policy inputs a different intent.
 Actual subprocess `os._exit` tests reopen SQLite and demonstrate that controller
 death does not clear the reservation. Mocked success cannot establish this property.
+
+<a id="dictionary-custody-quarantine-and-durability"></a>
+## Archive custody, quarantine and file-versus-directory durability
+
+**Custody** means measured bytes are stored at a protected location with their
+identity preserved. It is not execution success, role approval or deployment.
+Our new staging path binds the complete archive and its OCI graph to one canonical
+operator intent; a returned receipt explicitly keeps image loading/approval false.
+
+**Quarantine** preserves rejected or incomplete bytes rather than deleting them.
+The operator must supply the observed hash and length. A bounded write-ahead audit
+records the exact rename before it happens, enabling reconciliation after process
+death. Unknown files or contradictory source/destination states require review.
+There are at most three quarantines and a bounded aggregate byte budget, so
+retention cannot become an unlimited retry loop or disk sink.
+
+```text
+prepared intent -> partial bytes -> validate full OCI/hash -> fsync file
+                                                         |
+                                           re-read -> atomic rename
+                                                         |
+                                             fsync parent directory
+                                                         |
+                                            fsync custody receipt
+                                                         |
+                                         SQLite archive_verified
+
+failed partial -> exact hash/size confirmation -> quarantine intent -> rename
+                                                           |
+                                                     verify and audit
+```
+
+**Atomic visibility** and **durability** are different. Rename makes one directory
+entry switch visible, but does not by itself flush file data or guarantee that the
+rename survives power loss. The archive data, affected directory and control
+receipt are flushed separately. SQLite and filesystem publication are not one
+distributed transaction: recovery verifies the actual archive again before repairing
+the receipt or advancing the journal. For illustration:
+
+```python
+import os
+
+def flush_bytes(stream):
+    stream.flush()                # Python userspace buffer -> kernel
+    os.fsync(stream.fileno())     # ask filesystem to persist file data
+```
+
+This sketch omits parent-directory fsync, protected inodes, lock ownership, size and
+time bounds, compare-and-set and source authentication; do not use it as a complete
+import controller. Our real scanner uses bounded chunks and O(B) hashing; staging
+adds a second O(B) persisted-file read-back. Retained metadata has its own cap.
+An existing receipt or filename cannot replace that read-back.
+
+**Prefix-safe control repair** allows only an exact prefix of the independently
+reconstructed canonical receipt to be completed. Foreign bytes are never truncated.
+**Cooperative deadlines** are checked between reads; they cannot interrupt a blocked
+reader by themselves. A trusted transport still needs an independent watchdog and
+owned-process cleanup. Real `os._exit` tests cover promotion, receipt/journal updates,
+quarantine rename and torn control writes. Both role tests use tiny fake OCI layers;
+they do not prove real Node/Java execution. See [custody scope](OFFLINE_TOOLCHAINS.md).

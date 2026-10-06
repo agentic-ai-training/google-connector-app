@@ -13,6 +13,12 @@ Read-only inspection remains available; expiry cannot clear an uncertain image l
 This is not live image enrollment or approval. Protected transfer/reconciliation,
 real Node/Java gVisor proofs, verified publication and funded activation remain open;
 see `OFFLINE_TOOLCHAINS.md` for the exact state machine and evidence boundary.
+That journal barrier was subsequently VM-installed and independently rehashed;
+the bound synthetic Python/replay/cleanup regression and six-container projected
+health checks passed. No import reservation was created. Protected archive staging
+is now implemented/tested locally, including retained hash-bound quarantine and
+crash recovery, but its trusted VM transfer controller is still pending. No toolchain
+role approval, funded activation or generated-app completion follows from these facts.
 
 ## Sources and precedence
 

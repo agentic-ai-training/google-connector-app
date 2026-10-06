@@ -1,5 +1,25 @@
 # Delhi generated-application host — approved provisioning runbook
 
+## Latest toolchain-custody checkpoint — 6 October 2026
+
+The journal import barrier is VM-installed/read-back verified as installation
+`a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`;
+snapshot `29bba63ff5d024d2397c62225b5e60b19f154dcbbf4055b591ee835dff1d9e03`.
+Bound synthetic Python compilation, mismatch/unbound/replay rejection and cleanup
+passed. Projected health showed six healthy Coolify containers, zero scoped sandbox
+leftovers, an idle main journal and zero import reservations. The obsolete
+`3c8d9aa3ab350577044ccc8abd7dac7a94d8930446b4b353e33f85b691240080`
+code copy was explicitly retired under fresh hashes/audit; no data was deleted.
+
+Read-only storage inspection showed Docker's containerd-backed overlayfs and
+94,249,951,232 free bytes under `/var/lib`. Docker was not reconfigured or restarted.
+Protected archive staging/quarantine is implemented/tested **locally**, not installed
+or used to transfer/load an image on the VM. Its future trusted transfer controller,
+real Node/Java host proofs, role approval, runtime bases and end-to-end app/Chat proof
+remain pending. No new cloud resource, service, production model/policy or budget
+allocation was created. The fixed stop and protected Vertex/reserve allocations
+remain unchanged; current SKU-attributed spending evidence is still outstanding.
+
 ## Latest packaging-isolation checkpoint — 5 October 2026
 
 The protected native-role/readiness and guest-network bundle is installed and

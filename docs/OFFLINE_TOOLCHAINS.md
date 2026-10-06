@@ -86,6 +86,88 @@ unused suppression warnings; the user-owned Vertex test retains the google-genai
 deprecation warning. No trusted CI, live import or full-project acceptance proof is
 implied by these subsystem results.
 
+## Protected archive staging — local implementation, 6 October
+
+`app/coding/toolchain_staging.py` consumes only a trusted operator stream under the
+existing host journal's flock. It derives the private operation directory from the
+canonical intent ID; no request supplies a filesystem path or shell command.
+Symlinks, hard links, special files, untracked objects, unsafe ownership and
+nonprivate custody files are rejected. Transfers enforce the reserved archive
+length before writing, the 512 MiB inventory ceiling, bounded control JSON and
+64 MiB of free-disk headroom beyond the proposed archive. These are storage
+controls, not financial reservations or sandbox-execution proof.
+
+```text
+durable prepared intent
+        |
+stream -> archive.partial -> complete OCI/hash inspection -> fsync data
+        |                                    |
+        |                            re-read persisted bytes
+        |                                    |
+        |                         rename archive.tar + fsync directory
+        |                                    |
+        |                         custody receipt + fsync publication
+        |                                    |
+        |                         journal archive_verified [NO approval]
+        |
+incomplete/failed bytes
+        |
+explicit expected SHA + length -> durable quarantine intent
+        |
+rename to hash-named quarantine -> verify -> committed audit
+        |
+new transfer only within retained-byte/count bounds
+```
+
+An already-complete partial or final archive is verified again without re-uploading.
+A staged filename or old receipt is never sufficient evidence. A complete recovered
+file is fsynced before custody publication, because a dead writer may have left
+complete bytes only in the kernel cache. Torn control writes can be repaired only
+when their bytes are an exact prefix of the independently reconstructed receipt.
+Foreign prefixes fail closed and are never truncated.
+
+An incomplete transfer is not automatically deleted. Explicit quarantine preserves
+its exact bytes and uses a write-ahead intent so process death after rename is
+reconciled by the same expected hash/length. At most three quarantines are retained,
+within the aggregate byte bound; exhaustion requires review, not pruning. Pending
+quarantine state blocks a new transfer. Expiry prevents a fresh upload but does not
+prevent custody reconciliation of existing bytes. Callers must terminate any exporter
+they started when recovery consumes no stream input.
+
+Deadlines are cooperative checks between reads, not a guarantee that arbitrary
+blocking readers can be interrupted. The future pinned-IAP transfer controller must
+provide a separate watchdog and owned-process cleanup. This library invokes no Docker,
+network, model, unpacking, policy publication or approval operation. It is **not yet
+installed or connected to the VM transfer controller**. The seven-file host bundle
+has not silently been expanded to include this library's dependency closure.
+
+The broad coding suite passed 916 tests against loopback PostgreSQL without skips.
+Five more fault-test cases were then added; all 52 final staging tests passed,
+including real subprocess death around archive promotion, receipt/journal publication,
+quarantine intent/rename and a torn control write. Both roles are covered by tiny
+synthetic OCI archives; these bytes do not prove a real image can run. Flake8, Bandit
+and diff checks passed. No actual toolchain archive was uploaded or loaded.
+
+### Separate live journal-barrier rollout
+
+The preceding journal change was installed as the reviewed seven-file bundle:
+
+- Installation: `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`.
+- Snapshot: `29bba63ff5d024d2397c62225b5e60b19f154dcbbf4055b591ee835dff1d9e03`.
+- Launcher: `89d379a8d221df0a54bd99a1b5477a8378e5dc8c348b6a31efa292e2a4bc46af`.
+
+The other six source hashes are unchanged. Fresh probe/read-back and isolated import
+passed. Only the audited obsolete `3c8d9aa3ab350577044ccc8abd7dac7a94d8930446b4b353e33f85b691240080`
+code copy was retired; data/journals/artifacts and the latest predecessor remain.
+The eight-entry limit is unchanged. The live bound synthetic Python probe passed,
+including mismatch, unbound/replay rejection and observed cleanup without inventing
+test success from a lost result. Independent projected observations verified six
+healthy Coolify containers, zero scoped sandbox leftovers and an idle main journal.
+No import intent was created. Production policy, services, budgets and models were
+not changed. The read-only Docker projection showed `overlayfs` with
+`io.containerd.snapshotter.v1`, and 94,249,951,232 free bytes under `/var/lib`;
+that is storage evidence, not successful image load or role approval.
+
 ## Fixed catalogs
 
 | Role | Reviewed dependencies |
