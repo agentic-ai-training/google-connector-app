@@ -2259,6 +2259,14 @@ changes become production evidence.
   ₹28,693.88 initial credit from the later report rather than the rounded
   ₹28,694 pre-creation confirmation. September service totals still lack a
   current SKU-level breakdown, so no production ledger import occurred.
+  On 7 October the operator supplied all sixteen SKU rows for 19 September–5 October:
+  INR 6,791.47 usage, INR 21,610.67 remaining trial balance, and INR 291.74 of the
+  all-time decrease not explained by the selected period. CPU/RAM both imply
+  397.5875 VM-hours. The observed-rate thirty-day compute/disk/network projection
+  is INR 12,298.82; it is not a guaranteed bill or new spending authority. The six
+  missing rows are no longer outstanding. Cost coverage/freshness, production
+  migration/backup and funded controller enrollment remain incomplete. Preserve
+  Vertex/reserve/STOP; see `docs/DELHI_BILLING_RECONCILIATION_2026_10_07.md`.
   2026-09-27: added cumulative charge accrual without double-counting refreshed credit,
   and migration 018 for apps sharing the existing host's funded CPU/RAM/storage pool.
   Admission/dispatch, uncertainty and cleanup are tested in local PostgreSQL; 103

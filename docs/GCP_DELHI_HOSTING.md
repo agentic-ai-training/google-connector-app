@@ -43,7 +43,8 @@ The durable load controller, real Node/Java host proofs, role approval, runtime 
 and end-to-end app/Chat proof remain pending. No new cloud resource, service,
 production model/policy or budget
 allocation was created. The fixed stop and protected Vertex/reserve allocations
-remain unchanged; current SKU-attributed spending evidence is still outstanding.
+remain unchanged. Complete selected-period SKU evidence has since arrived on
+7 October; see the current reconciliation below. Live cost enrollment is still pending.
 
 ## Latest packaging-isolation checkpoint — 5 October 2026
 
@@ -68,6 +69,23 @@ October accrued charges and a fresh credit balance still need reconciliation
 before funded production enrollment. See [exact hashes and evidence](HOST_BUNDLE_OPERATIONS.md).
 
 ## Status and spending authority
+
+The **7 October** operator report now includes all sixteen SKU rows. They reconcile
+to INR **6,791.47** for 19 September–5 October: compute INR 6,123.36, disk INR 627.82,
+and network INR 40.29. The newly reported remaining credit is INR **21,610.67** of
+INR 28,693.88; the all-time decrease is INR **7,083.21**, leaving INR **291.74** not
+explained by this selected-period table. Do not invent its service/date attribution.
+
+The reported CPU and RAM usage independently imply 397.5875 hours of the approved
+4-vCPU/16-GiB shape. Projecting the measured rates and observed disk/network average
+to thirty days gives about INR **12,298.82**, below the INR 14,000 ceiling and implying
+about INR **1,298.82** beyond the original INR 11,000. This supersedes the earlier
+catalog estimate as the latest measured-rate **planning estimate**, not a guaranteed
+bill. The INR 8,500 Vertex allocation, INR 6,000 protected reserve and fixed STOP
+remain unchanged. No resource/term expansion or live ledger import is authorized.
+The missing-row request is complete; final attributable charge coverage and fresh
+identity/balance still precede funded enrollment. See
+[all rows, calculations and caveats](DELHI_BILLING_RECONCILIATION_2026_10_07.md).
 
 On 6 October the operator supplied the requested newer report: actual range
 19 September–5 October, ₹22,011.16 remaining of ₹28,693.88, with ₹6,664.35 of

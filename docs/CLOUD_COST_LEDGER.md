@@ -24,6 +24,27 @@ before importing incurred costs or authorizing new paid resources.
 
 ## Authority
 
+### Complete SKU evidence — received 7 October 2026
+
+The operator has now supplied **all 16 rows**, superseding the partial checkpoint
+below. CPU INR 3,986.56 + RAM INR 2,136.80 + disk INR 627.82 + networking INR 40.29
+sum to **INR 6,791.47** for the selected 19 September–5 October period. The newer
+remaining credit is **INR 21,610.67**, implying INR 7,083.21 consumed overall and
+an **INR 291.74 difference** outside what this period table explains. Do not attribute
+that difference to the VM or silently equate the table's cutoff with current time.
+The six missing rows are no longer a blocker. Independent final charge coverage,
+identity/freshness, reviewed migration/backup, and production controller enrollment
+still require evidence; no live cost import has occurred.
+
+Measured CPU/RAM usage both imply 397.5875 VM-hours for 4 cores/16 GiB. A 720-hour
+projection of compute plus observed disk/network averages is **INR 12,298.82**.
+This is a planning estimate, not a guaranteed future bill or authority to lower
+the approved INR 14,000 ceiling, release outstanding obligations, extend the VM or
+spend Vertex funds. The original INR 11,000 would need about INR 1,298.82 extra at
+these averages; unused earmark is returned only after final cost reconciliation.
+The protected INR 8,500 Vertex and INR 6,000 future reserve remain unchanged.
+See [complete evidence, arithmetic and limitations](DELHI_BILLING_RECONCILIATION_2026_10_07.md).
+
 ### Newer operator billing evidence — received 6 October 2026
 
 The project-filtered report requested by the operator covers **19 September–5 October**
@@ -33,7 +54,7 @@ The actual report credits/other savings total ₹6,664.35, leaving an **₹18.37
 difference** against the all-time balance decrease. Do not assign that difference to
 a service or silently treat the forecast ₹7,374.87 as incurred charges.
 
-Only rows 1–10 of 16 were supplied. Known nonzero usage rows:
+At that earlier checkpoint only rows 1–10 of 16 were supplied. Known nonzero usage rows:
 
 | SKU | Usage cost |
 | --- | ---: |
