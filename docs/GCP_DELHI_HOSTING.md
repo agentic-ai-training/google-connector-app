@@ -2,6 +2,13 @@
 
 ## Latest toolchain-custody checkpoint — 6 October 2026
 
+Subsequent work adds the **local**, twelve-file durable load-unit controller and
+bounded compressed installer. The actual VM remains on the eleven-file custody
+installation below; both retained public imports are cancelled. No live Docker load,
+role approval, registry publication, new resource, paid model call or budget change
+has occurred. Trusted real host profiles, publication/recovery and complete app proof
+remain open. See `OFFLINE_TOOLCHAINS.md` for exact local/live evidence boundaries.
+
 The journal import barrier is VM-installed/read-back verified as installation
 `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`;
 snapshot `29bba63ff5d024d2397c62225b5e60b19f154dcbbf4055b591ee835dff1d9e03`.

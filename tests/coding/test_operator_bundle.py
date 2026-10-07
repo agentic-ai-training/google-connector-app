@@ -1,4 +1,5 @@
 """Real protected filesystem/SQLite transactions; no cloud or privileged installs."""
+import base64
 import fcntl
 import hashlib
 import json
@@ -8,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import zlib
 from types import SimpleNamespace
 
 import pytest
@@ -84,6 +86,62 @@ def test_exact_legacy_installation_can_be_probed_and_upgraded(host):
     result = bundle.operate({**host.request, 'expected_snapshot_hash': probe['snapshot_hash']})
     assert set(bundle.snapshot(host.root)) == set(bundle.NAMES)
     assert bundle.snapshot(host.releases / (result['installation_id'] + '.previous')) == previous['new']
+
+
+def test_complete_prior_custody_transaction_remains_probeable(host):
+    transaction = historical_installation(host)
+    for name in bundle.PRIOR_CUSTODY_NAMES[7:]:
+        path = host.root / name
+        path.write_text('# prior custody source\n')
+        path.chmod(0o644)
+    transaction['new'] = bundle.snapshot(host.root)
+    previous_id = transaction['id']
+    transaction['id'] = bundle.digest(bundle.canonical({'old': transaction['old'], 'new': transaction['new']}))
+    (host.releases / (previous_id + '.previous')).rename(host.releases / (transaction['id'] + '.previous'))
+    bundle.write(host.releases / 'transaction.json', bundle.canonical(transaction))
+    observed = bundle.operate({'operation': 'probe'})
+    assert observed['last_installation'] == transaction['id']
+    assert len(observed['hashes']) == 11
+
+
+def test_bounded_compressed_real_operator_source_roundtrip(host):
+    body = bundle.encode_request(host.request)
+    assert len(body) <= bundle.MAX_FRAME == 256000
+    assert bundle.decode_request(body) == host.request
+    assert len(bundle.canonical(host.request)) <= bundle.MAX_DECODED_FRAME == 384000
+    if len(bundle.canonical(host.request)) > bundle.MAX_FRAME:
+        assert json.loads(body)['encoding'] == 'zlib-base64'
+
+
+@pytest.mark.parametrize('fault', ['expansion', 'trailing', 'truncated', 'hash', 'size', 'boolean', 'operation'])
+def test_compressed_operator_frames_fail_closed_before_installation(fault):
+    body = bundle.canonical({'operation': 'apply', 'files': {'one': 'x' * 300000}})
+    compressed = zlib.compress(body)
+    frame = {'version': 2, 'encoding': 'zlib-base64', 'decoded_bytes': len(body),
+             'decoded_sha256': bundle.digest(body), 'payload': base64.b64encode(compressed).decode()}
+    if fault == 'expansion':
+        frame['payload'] = base64.b64encode(zlib.compress(b'x' * 1000000)).decode()
+    elif fault == 'trailing':
+        frame['payload'] = base64.b64encode(compressed + b'foreign').decode()
+    elif fault == 'truncated':
+        frame['payload'] = base64.b64encode(compressed[:-2]).decode()
+    elif fault == 'hash':
+        frame['decoded_sha256'] = '0' * 64
+    elif fault == 'size':
+        frame['decoded_bytes'] = bundle.MAX_DECODED_FRAME + 1
+    elif fault == 'boolean':
+        frame['version'] = True
+    else:
+        body = bundle.canonical({'operation': 'probe', 'extra': 'x' * 300000})
+        frame.update(decoded_bytes=len(body), decoded_sha256=bundle.digest(body),
+                     payload=base64.b64encode(zlib.compress(body)).decode())
+    with pytest.raises(bundle.BundleError, match='compressed operator'):
+        bundle.decode_request(bundle.canonical(frame))
+
+
+def test_duplicate_control_keys_are_not_a_valid_encoding_or_operation():
+    with pytest.raises(bundle.BundleError, match='duplicate'):
+        bundle.decode_request(b'{"operation":"probe","operation":"apply"}')
 
 
 @pytest.mark.parametrize('mutation', ['partial_inventory', 'foreign_file', 'bad_hash', 'bad_mode', 'wrong_id'])

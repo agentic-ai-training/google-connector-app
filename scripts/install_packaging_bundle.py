@@ -71,7 +71,7 @@ def main():
     reviewed_source = Path(bundle.__file__).read_text()
     argv[-1] = shlex.join(["sudo", "-n", "/usr/bin/python3", "-I", "-B", "-c", reviewed_source])
     request = payload(args)
-    body = json.dumps(request, separators=(",", ":")).encode()
+    body = bundle.encode_request(request)
     if len(body) > bundle.MAX_FRAME:
         raise RuntimeError("Reviewed operator bundle exceeds framing limit")
     result = subprocess.run(  # nosec B603

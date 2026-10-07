@@ -2623,6 +2623,15 @@ changes become production evidence.
   Final projections verified six healthy Coolify containers, zero scoped leftovers
   and unchanged policy/registry. This closes custody transport evidence, not image
   load/enrollment, Linux/gVisor profile proof, central approval or the complete item.
+  A subsequent local checkpoint adds a fixed durable systemd load unit, empty worker
+  environment, same-journal exact-custody reopening, process/invocation/limit read-back,
+  pre-RPC durable claims and terminal-receipt reconciliation without repeated loading.
+  Lost/partial claims and uncertain RPCs keep the host reserved. Real process-death
+  tests exercise mocked pre-RPC and post-receipt boundaries. The complete new source
+  closure is twelve files; the wire cap stays 256,000 with a separate bounded 384,000
+  decoded compressed-apply format. The VM remains on the eleven-file custody release.
+  This is not live loading, Node/Java execution, publication or final app proof;
+  the full requirement is still unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

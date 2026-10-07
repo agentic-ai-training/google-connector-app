@@ -77,7 +77,7 @@ IMPORT_PHASES = {
     "loaded": {"proof_pending"},
     # Release is deliberately unavailable until a verified publication controller
     # exists. An image load or client-supplied digest is NOT role approval.
-    "proof_pending": set(), "cancelled": set(),
+    "proof_pending": set(), "cancelled": {"archive_verified"},
 }
 MAX_TOOLCHAIN_IMPORTS = 8
 
@@ -413,6 +413,14 @@ class Journal:
         if item["phase"] != expected_phase or len(history) >= 16:
             raise IsolationError("Toolchain import phase changed; inspect before retry")
         now = int(time.time())
+        if expected_phase == 'cancelled':
+            # Explicit same-custody reopening only. Cancellation is not a new
+            # allocation or permission to reload an uncertain operation.
+            self.require_available()
+            if (phase != 'archive_verified' or item['intent']['stop_unix'] <= now
+                    or not any(entry['phase'] == 'archive_verified'
+                               and entry['evidence_sha256'] == evidence_sha256 for entry in history)):
+                raise IsolationError('Cancelled import needs exact unexpired verified custody')
         if phase == "load_started" and item["intent"]["stop_unix"] <= now:
             raise IsolationError("Toolchain import host allocation expired")
         history.append({"phase": phase, "evidence_sha256": evidence_sha256, "at": now})

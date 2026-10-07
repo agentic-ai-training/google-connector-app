@@ -110,6 +110,32 @@ def test_observation_retry_is_idempotent_but_changed_evidence_or_phase_is_not(tm
             advance(journal, item, "archive_verified", "a" * 64)
 
 
+def test_cancelled_import_only_reopens_same_previously_verified_receipt(tmp_path, monkeypatch):
+    with runner.Journal(tmp_path) as journal:
+        item = journal.begin_toolchain_import(intent())
+        verified = advance(journal, item, 'archive_verified')
+        cancelled = advance(journal, verified, 'cancelled', 'a' * 64)
+        with pytest.raises(runner.IsolationError, match='exact unexpired'):
+            advance(journal, cancelled, 'archive_verified', 'b' * 64)
+        job = journal.begin('python_compile', 'sha256:' + 'a' * 64, 1)
+        with pytest.raises(runner.IsolationError, match='unreconciled job'):
+            advance(journal, cancelled, 'archive_verified')
+        journal.record(job, 'cleaned')
+        reopened = advance(journal, cancelled, 'archive_verified')
+        assert advance(journal, cancelled, 'archive_verified') == reopened
+        cancelled = advance(journal, reopened, 'cancelled', 'a' * 64)
+        monkeypatch.setattr(runner.time, 'time', lambda: item['intent']['stop_unix'] + 1)
+        with pytest.raises(runner.IsolationError, match='exact unexpired'):
+            advance(journal, cancelled, 'archive_verified')
+
+
+def test_cancelled_prepared_without_verified_receipt_cannot_reopen(tmp_path):
+    with runner.Journal(tmp_path) as journal:
+        cancelled = advance(journal, journal.begin_toolchain_import(intent()), 'cancelled')
+        with pytest.raises(runner.IsolationError, match='exact unexpired'):
+            advance(journal, cancelled, 'archive_verified')
+
+
 def test_expiry_blocks_load_but_never_clears_ambiguous_state(tmp_path, monkeypatch):
     with runner.Journal(tmp_path) as journal:
         request = intent()

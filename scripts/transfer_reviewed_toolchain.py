@@ -1,8 +1,8 @@
 """Operator-only pinned IAP custody transport; defaults to read-only inspection.
 
 Streams an already-reviewed local image by immutable ID, without a Mac archive.
-Never starts Docker load, publishes policy or grants production access. Explicit
-actions need an operator-owned config and current protected source fingerprint.
+Docker load requires an explicit separate fixed-unit operation; no policy publication
+or production access. Actions require the protected config/source fingerprint.
 """
 import argparse
 import hashlib
@@ -130,7 +130,8 @@ def rpc(host, operation, *, export_role=None, **values):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--operator-config", type=Path, required=True)
-    parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload"),
+    parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload",
+                                              "load_prepare", "load_dispatch", "load_observe"),
                         default="probe")
     parser.add_argument("--role", choices=("react", "spring"))
     parser.add_argument("--intent-id")

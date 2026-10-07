@@ -2,8 +2,8 @@
 """Fixed operator custody gateway on the approved Delhi VM; never a model tool.
 
 Protected source only, pinned target/bundle, bounded frames and independent alarm.
-It stages public reviewed images but never loads them, changes policy/registry,
-approves roles or activates funded production dispatch.
+It stages and explicitly loads only reviewed public images. Loading never changes
+policy/registry, approves roles or activates funded production dispatch.
 """
 import http.client
 import importlib.util
@@ -13,15 +13,16 @@ from pathlib import Path
 import signal
 import stat
 import sys
+import time
 import types
 
 
 DEPENDENCIES = ("build_artifact", "isolated_validation", "oci_packager",
-                "toolchain_spec", "toolchain_archive", "toolchain_staging")
+                "toolchain_spec", "toolchain_archive", "toolchain_staging", "toolchain_loader")
 BUNDLE_NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
                 "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
                 "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
-                "toolchain_staging.py", "operator_toolchain_host.py")
+                "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py")
 
 
 def _bootstrap():
@@ -49,7 +50,7 @@ def _bootstrap():
 if not __package__:
     _bootstrap()
 
-from app.coding import isolated_validation as isolation, toolchain_staging as custody  # noqa: E402
+from app.coding import isolated_validation as isolation, toolchain_staging as custody, toolchain_loader as loader  # noqa: E402
 from app.coding.toolchain_spec import REVIEWED_ARCHIVES, unique_object  # noqa: E402
 
 
@@ -143,6 +144,8 @@ def operate(request, stream):
     common = {"version", "operation", "bundle_sha256"}
     operations = {"probe": set(), "prepare": {"role", "policy_sha256", "registry_sha256"},
                   "receive": {"intent_id"},
+                  "load_prepare": {"intent_id"}, "load_dispatch": {"intent_id"},
+                  "load_observe": {"intent_id"},
                   "cancel_preload": {"intent_id", "expected_phase"},
                   "quarantine": {"intent_id", "partial_sha256", "partial_bytes"}}
     if (not isinstance(request, dict) or not isinstance(request.get("operation"), str)
@@ -199,6 +202,13 @@ def operate(request, stream):
         if request["operation"] == "receive":
             return {"operation": "receive", "custody": custody.stage_archive(journal, identity, stream),
                     "production_policy_changed": False}
+        if request['operation'].startswith('load_'):
+            binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
+                       'registry_sha256': registry_hash}
+            action = {'load_prepare': loader.prepare, 'load_dispatch': loader.dispatch,
+                      'load_observe': loader.reconcile}[request['operation']]
+            return {'operation': request['operation'], 'load': action(journal, identity, binding),
+                    'production_policy_changed': False, 'image_approved': False}
         return {"operation": "quarantine", **custody.quarantine_partial(
             journal, identity, expected_sha256=request["partial_sha256"], expected_bytes=request["partial_bytes"]),
             "production_policy_changed": False}
@@ -214,6 +224,34 @@ def main():
     signal.signal(signal.SIGALRM, timeout)
     signal.alarm(300)
     try:
+        if len(sys.argv) == 4 and sys.argv[1] == '--load-worker':
+            if set(os.environ) - {'PATH', 'HOME', 'LC_CTYPE'}:
+                raise OperatorToolchainError('load worker environment is not keyless')
+            target_identity()
+            policy, policy_hash, registry_hash = configuration()
+            binding = {'bundle_sha256': snapshot(), 'policy_sha256': policy_hash,
+                       'registry_sha256': registry_hash}
+            deadline = time.monotonic() + 25
+            while True:
+                journal = isolation.Journal(Path(policy['state_directory']))
+                try:
+                    journal.__enter__()
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise OperatorToolchainError('worker journal ownership deadline exceeded')
+                    time.sleep(0.1)
+            try:
+                locked_policy, locked_policy_hash, locked_registry_hash = configuration()
+                if (locked_policy != policy or locked_policy_hash != policy_hash
+                        or locked_registry_hash != registry_hash or snapshot() != binding['bundle_sha256']):
+                    raise OperatorToolchainError('worker configuration changed before ownership')
+                loader.run_worker(journal, sys.argv[2], sys.argv[3], binding)
+            finally:
+                journal.__exit__(None, None, None)
+            return
+        if len(sys.argv) != 1:
+            raise OperatorToolchainError('unsupported fixed worker arguments')
         request = frame(sys.stdin.buffer)
         print(json.dumps(operate(request, sys.stdin.buffer), sort_keys=True))
     finally:

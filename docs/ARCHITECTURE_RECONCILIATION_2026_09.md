@@ -24,6 +24,10 @@ Coolify containers are healthy. The existing Python registry/policy and fixed ST
 are unchanged. A durable image loader, real Node/Java gVisor execution, role approval,
 funded activation and the generated-app/Chat completion are still pending. See
 `OFFLINE_TOOLCHAINS.md` for exact identities and the uncompleted enrollment phases.
+The subsequent durable load-unit/outbox/reconciliation implementation is local,
+with a complete twelve-file closure and bounded compressed install protocol. Real
+process-death tests exercise claim/receipt/SQLite boundaries with mocked RPCs.
+The VM still runs the eleven-file custody release; no load or approval occurred.
 
 ## Sources and precedence
 

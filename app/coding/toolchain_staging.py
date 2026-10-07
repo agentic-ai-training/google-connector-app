@@ -121,16 +121,20 @@ def write_document(path, value):
     sync(path.parent)
 
 
-def context(journal, identity):
+def context(journal, identity, *, readback=False):
     if (not isinstance(journal, Journal) or journal.db is None or journal.lock is None
             or not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity)):
         raise ToolchainStagingError("active trusted host journal required")
     item = next((row for row in journal.toolchain_imports() if row["id"] == identity), None)
-    if item is None or item["phase"] not in {"prepared", "archive_verified"}:
+    phases = {"prepared", "archive_verified"}
+    if readback:
+        phases |= {'cancelled', 'load_started', 'load_uncertain', 'loaded', 'proof_pending'}
+    if item is None or item["phase"] not in phases:
         raise ToolchainStagingError("import phase does not permit staging")
     protected(journal.directory, private=True)
     root = journal.directory / "toolchain-imports"
-    root.mkdir(mode=0o700, exist_ok=True)
+    if not readback:
+        root.mkdir(mode=0o700, exist_ok=True)
     protected(root, private=True)
     sync(root.parent)
     entries = list(root.iterdir())
@@ -138,7 +142,8 @@ def context(journal, identity):
     if len(entries) > 8 or any(path.name not in known or not path.is_dir() for path in entries):
         raise ToolchainStagingError("untracked import directory requires review")
     directory = root / identity
-    directory.mkdir(mode=0o700, exist_ok=True)
+    if not readback:
+        directory.mkdir(mode=0o700, exist_ok=True)
     protected(directory, private=True)
     sync(root)
     allowed = {"archive.tar", "archive.partial", "custody.json", "custody.pending",
@@ -257,6 +262,32 @@ def verify_archive(path, intent, timeout_seconds):
         # cache. Flush its data before publishing any durable custody observation.
         os.fsync(stream.fileno())
     return evidence
+
+
+def verify_retained_custody(journal, identity, *, timeout_seconds=120):
+    """Read existing bytes/audit at any reserved phase; never reopen or load.
+
+    A cancelled record or receipt filename alone is not reusable custody. Require
+    the complete archive, exact original receipt, settled quarantine and a matching
+    earlier journal observation. No missing directory is created by this reader.
+    """
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 300:
+        raise ToolchainStagingError('bounded custody readback required')
+    item, directory = context(journal, identity, readback=True)
+    if any((directory / name).exists() for name in
+           ('archive.partial', 'custody.pending', 'quarantine.pending')):
+        raise ToolchainStagingError('retained custody has unsettled state')
+    audit = quarantine_audit(directory)
+    if any(entry['phase'] != 'committed' for entry in audit['entries']):
+        raise ToolchainStagingError('retained quarantine is unsettled')
+    receipt = {'version': 1, 'intent_id': identity,
+               'archive': verify_archive(directory / 'archive.tar', item['intent'], timeout_seconds),
+               'quarantine_audit_sha256': checksum(canonical(audit))}
+    if (document(directory / 'custody.json') != receipt or
+            not any(entry['phase'] == 'archive_verified' and
+                    entry['evidence_sha256'] == checksum(canonical(receipt)) for entry in item['observations'])):
+        raise ToolchainStagingError('retained custody differs from verified journal observation')
+    return receipt
 
 
 def stage_archive(journal, identity, source=None, *, timeout_seconds=120):

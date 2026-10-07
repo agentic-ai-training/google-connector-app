@@ -40,6 +40,71 @@ execution service.
 
 ## Crash-persistent import reservation — local implementation, 6 October
 
+### Subsequent local durable-loader checkpoint
+
+`toolchain_loader.py` adds the fixed operator systemd outbox/worker/read-back path.
+The new source closure has twelve files; **the VM still runs the independently
+verified eleven-file custody release** `529bc18...`. No live load/unit dispatch,
+registry change, role approval or generated code execution occurred in this checkpoint.
+Both verified public imports remain cancelled with retained bytes/audit. Do not
+dispatch a real load before host profile-proof, verified publication and the
+forward-compatible recovery path is ready.
+
+```text
+cancelled verified custody -> re-read archive/receipt/history + current config
+                                      |
+                   exact same-custody reopen (no new allocation)
+                                      |
+          fsynced fixed dispatch -> unique retained systemd unit
+                                      |
+           worker boot/PID/start-time + unit invocation + limit read-back
+                                      |
+                 fsynced claim -> SQLite load_started -> Docker load
+                                      |
+                +---------------------+--------------------+
+                |                                          |
+         no normal daemon ack                      normal daemon ack
+                |                                          |
+         load_uncertain                     exact immutable image read-back
+          remains reserved                       |                 |
+                                           verified           unavailable
+                                              |                 |
+                          terminal receipt -> loaded     ack true, readback false
+                                              |                 |
+                       host-profile proof     +---- observe only --+
+                       publication/approval [still unfinished]
+```
+
+The worker runs separately from SSH, with a retained unique unit, a 300-second
+lifetime, one CPU, 1-GiB memory/no swap and 32 tasks. Its environment is explicitly
+emptied before Python. The protected keyless worker reads back effective unit
+memory/swap/task/privilege/filesystem limits before Docker access and records them
+in its claim. No generated command/path/model/credential is accepted. These limits
+bound the loader client, **not the separate Docker daemon**; live daemon import
+capacity/disk checks and all profile enforcement proofs remain separate obligations.
+
+Normal Docker completion and image verification are separate facts. A timeout,
+nonzero exit or missing terminal receipt cannot be resolved merely because an image
+exists or the unit is absent. A protected normal-completion receipt plus exact
+current projected image metadata can repair a lost final journal write without a
+second load. Claims bind boot ID, PID/start ticks, unit invocation, dispatch/custody
+hashes and journal history. Partial claim files also prohibit redispatch. A loaded
+image remains reserved and unapproved; there is still no proof/publication release API.
+
+Real `os._exit` tests cover death immediately before the mocked RPC and after the
+terminal receipt but before the final SQLite update. Other tests reject changed
+custody/config, wrong worker/unit lineage, relaxed effective limits, uncertain load
+cancellation/replay and unsafe decoding. Systemd/Docker are mocked in these tests;
+neither role's fake OCI layer executes. A read-only VM observation verified the
+actual seven-property `not-found` unit projection, not a running loader.
+
+Verification: the complete coding suite passed **1,030 tests** with local PostgreSQL
+and no skips; the final focused lifecycle/custody/installer suite passed **223** again
+after the optional-key template correction. That final projection was verified against
+both real public Docker Desktop images. Full suite results are local, not trusted CI
+or live Linux/gVisor enrollment. Flake8/Bandit/whitespace checks passed; only the
+existing Vertex dependency deprecation and unused Bandit suppressions remain.
+
 The existing `isolated_validation.Journal` now reserves toolchain maintenance under
 the **same flock and SQLite database** as validation and packaging. This prevents a
 lost SSH/controller process from releasing host capacity merely by dying. The

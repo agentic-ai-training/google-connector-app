@@ -5,6 +5,7 @@ directory swap is two renames: the interval with no gateway is deliberately clos
 not claimed atomic. A durable external intent and exact old-tree hashes permit
 rollback after process death, without deleting the validation journal or artifacts.
 """
+import base64
 import fcntl
 import hashlib
 import json
@@ -16,6 +17,7 @@ import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
+import zlib
 
 
 ROOT = Path("/usr/local/libexec/gca")
@@ -24,11 +26,13 @@ POLICY = Path("/etc/gca-validation/policy.json")
 NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
          "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
          "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
-         "toolchain_staging.py", "operator_toolchain_host.py")
+         "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py")
 # A completed historical installation is evidence, not a request to install its
 # old inventory. Accept only the exact previous protocol and the current one.
 LEGACY_NAMES = NAMES[:7]
+PRIOR_CUSTODY_NAMES = NAMES[:11]
 MAX_FRAME = 256000
+MAX_DECODED_FRAME = 384000
 
 
 class BundleError(RuntimeError):
@@ -211,7 +215,7 @@ def record():
             or not isinstance(result["id"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["id"])
             or result["phase"] not in {"prepared", "root_saved", "published", "committed", "rolled_back"}
             or not isinstance(result["old"], dict) or not isinstance(result["new"], dict)
-            or set(result["new"]) not in (set(LEGACY_NAMES), set(NAMES))):
+            or set(result["new"]) not in (set(LEGACY_NAMES), set(PRIOR_CUSTODY_NAMES), set(NAMES))):
         raise BundleError("installation intent is invalid")
     for tree in (result['old'], result['new']):
         if not 2 <= len(tree) <= 23 or not {'isolated_validation.py', 'build_artifact.py'} <= set(tree):
@@ -421,8 +425,56 @@ def main():
     body = sys.stdin.buffer.read(MAX_FRAME + 1)
     if len(body) > MAX_FRAME:
         raise BundleError("operator installation frame exceeds bound")
-    result = operate(json.loads(body))
+    result = operate(decode_request(body))
     print(json.dumps(result, sort_keys=True))
+
+
+def encode_request(request):
+    body = canonical(request)
+    if len(body) <= MAX_FRAME:
+        return body
+    if request.get('operation') != 'apply' or len(body) > MAX_DECODED_FRAME:
+        raise BundleError('decoded operator frame exceeds bound')
+    frame = canonical({'version': 2, 'encoding': 'zlib-base64', 'decoded_bytes': len(body),
+                       'decoded_sha256': digest(body),
+                       'payload': base64.b64encode(zlib.compress(body, 9)).decode('ascii')})
+    if len(frame) > MAX_FRAME:
+        raise BundleError('compressed operator frame exceeds bound')
+    return frame
+
+
+def decode_request(body):
+    if not isinstance(body, bytes) or len(body) > MAX_FRAME:
+        raise BundleError('operator frame exceeds bound')
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise BundleError('operator frame contains duplicate keys')
+            result[key] = value
+        return result
+
+    request = json.loads(body, object_pairs_hook=unique)
+    if isinstance(request, dict) and request.get('encoding') == 'zlib-base64':
+        if (set(request) != {'version', 'encoding', 'decoded_bytes', 'decoded_sha256', 'payload'}
+                or type(request['version']) is not int or request['version'] != 2
+                or type(request['decoded_bytes']) is not int
+                or not MAX_FRAME < request['decoded_bytes'] <= MAX_DECODED_FRAME
+                or not isinstance(request['payload'], str)
+                or not isinstance(request['decoded_sha256'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', request['decoded_sha256'])):
+            raise BundleError('compressed operator contract differs')
+        compressed = base64.b64decode(request['payload'], validate=True)
+        decoder = zlib.decompressobj()
+        expanded = decoder.decompress(compressed, request['decoded_bytes'] + 1)
+        if (len(expanded) != request['decoded_bytes'] or decoder.unconsumed_tail
+                or decoder.unused_data or not decoder.eof or digest(expanded) != request['decoded_sha256']):
+            raise BundleError('compressed operator content differs')
+        request = json.loads(expanded, object_pairs_hook=unique)
+        if not isinstance(request, dict) or request.get('operation') != 'apply':
+            raise BundleError('compressed operator operation differs')
+    return request
 
 
 if __name__ == "__main__":

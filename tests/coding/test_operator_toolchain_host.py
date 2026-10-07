@@ -171,11 +171,12 @@ def test_control_operation_rejects_unexpected_binary_body(target):
 def test_expanded_catalog_and_recipes_are_explicit_and_frame_bound_is_unchanged():
     from datetime import datetime, timezone
     assert int(datetime(2026, 10, 19, 17, 24, 32, tzinfo=timezone.utc).timestamp()) == host.STOP_UNIX
-    assert bundle.NAMES == host.BUNDLE_NAMES and len(bundle.NAMES) == 11
+    assert bundle.NAMES == host.BUNDLE_NAMES and len(bundle.NAMES) == 12
     assert bundle.MAX_FRAME == 256000
     args = SimpleNamespace(apply=True, rollback=None, expected_snapshot_hash="a" * 64)
-    body = json.dumps(payload(args), separators=(",", ":")).encode()
+    body = bundle.encode_request(payload(args))
     assert len(body) <= bundle.MAX_FRAME
+    assert bundle.decode_request(body) == payload(args)
     root = Path(__file__).resolve().parents[2]
     for role in ("react", "spring"):
         directory = root / "toolchains" / role

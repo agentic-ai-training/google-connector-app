@@ -3489,3 +3489,73 @@ never-started load retains bytes and audit history; it is not silently reopened.
 The deployed custody gateway uses fixed public GCE metadata only, not the service
 account credential endpoint. It cannot load or approve an image. See the exact
 [operator protocol](HOST_BUNDLE_OPERATIONS.md) and [unfinished phases](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-durable-rpc-claims-and-reconciliation"></a>
+## Durable RPC claims, unit ownership and evidence reconciliation
+
+An SSH connection is a transport, not an execution owner. Closing it must not grant
+permission to retry a write that a server may still be processing. Our subsequent
+local toolchain loader uses a fixed retained systemd unit and a protected outbox.
+The worker acquires the same host journal, verifies its unit/PID/boot/start ticks and
+effective limits, writes a durable claim, advances `load_started`, and only then
+invokes the fixed Docker load RPC. This is operator-owned public-image maintenance,
+not a general model-selected terminal or generated-code execution service.
+
+```text
+SSH client -> durable outbox -> retained unique unit -> fsynced claim -> RPC
+     X                                 |                              |
+disconnect                  work remains independently owned      completion ack
+                                                                   |
+                                                        immutable image read-back
+                                                                   |
+                                               receipt fsync -> SQLite loaded
+```
+
+**Invocation ID** distinguishes separate launches of a unit whose name is reused.
+**Boot ID + PID + process start ticks** distinguish process incarnations even after
+PID reuse. Neither a PID nor an absent process is proof that the Docker daemon's
+RPC ended. Unit limits bound the client process, not the separate daemon; those are
+different resource owners and need separate capacity/behavior verification.
+
+**Normal RPC completion acknowledgement** and **postcondition verification** are
+different facts. The receipt records both. A normal acknowledgement followed by an
+unavailable image read-back can be reconciled using another read, without another
+load. A timeout or missing acknowledgement cannot be repaired from image presence
+alone. A matching positive receipt, claim and journal lineage can repair the SQLite
+projection after process death between receipt publication and the final update.
+
+**Same-custody reopening** is a deliberately controlled state-machine cycle:
+`cancelled -> archive_verified` requires an unexpired unchanged intent, exact
+previous verified receipt, actual retained-file read-back and no competing work.
+It does not erase cancellation history or create a new allocation. The observation
+path remains capped at sixteen entries, so the cycle cannot support unlimited retries.
+Neither `loaded` nor `proof_pending` releases the slot or means approved.
+
+Actual `os._exit` tests cover pre-RPC and post-receipt death using mocked RPCs. The
+real Docker Desktop public-image projection check caught an optional-key template
+bug that mocks missed; optional `Healthcheck` uses a map lookup returning null when
+absent. Both exact public images passed that read-only projection afterward. This
+is not a live VM image load, gVisor execution, role approval or application deployment.
+
+<a id="dictionary-bounded-decompression"></a>
+## Bounded decompression and authenticated source framing
+
+Compression reduces transport bytes, not authority. The new complete source closure
+requires twelve reviewed files, while the live host still has its eleven-file custody
+release. Its installer keeps the 256,000-byte wire limit and declares a separate
+384,000-byte decoded limit, exact decoded byte count and SHA-256. A version-2 apply
+envelope uses base64 for binary transport and zlib for compression.
+
+```text
+bounded wire bytes -> unique-key JSON -> exact envelope -> bounded base64 decode
+       -> decompression(max_output + 1) -> exact count/hash/eof/no trailing bytes
+       -> apply only -> exact filenames/source checks -> existing journal/swap
+```
+
+A **decompression bomb** is a small compressed input that expands to enormous data.
+Checking size only after unbounded decompression is too late. The implementation
+limits produced output first, then rejects unconsumed or trailing compressed data,
+missing end-of-stream, count/hash mismatch and duplicate keys. Let W be wire cap and
+D decoded cap: retained data is bounded by O(W + D), not attacker-proposed expansion.
+This is not signature verification: authorization still comes from the protected
+operator source and pinned SSH/host identity, not a caller's supplied hash.
