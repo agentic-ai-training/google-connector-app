@@ -103,6 +103,8 @@ def test_worker_claim_precedes_rpc_and_normal_ack_plus_readback_is_required(host
             return SimpleNamespace(returncode=0)
         assert '--format' in argv and argv[-1] == host.image_id
         assert '(index .Config "Healthcheck")' in argv[argv.index('--format') + 1]
+        assert '(index .Config "Entrypoint")' in argv[argv.index('--format') + 1]
+        assert '(index .Config "Volumes")' in argv[argv.index('--format') + 1]
         return SimpleNamespace(returncode=0, stdout=json.dumps(image_value(host)).encode())
 
     monkeypatch.setattr(loader.subprocess, 'run', run)

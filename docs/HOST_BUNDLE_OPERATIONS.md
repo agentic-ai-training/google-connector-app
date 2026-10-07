@@ -7,11 +7,11 @@ resource groups, enroll financial capacity, run generated code or deploy apps.
 
 ## Installation protocol
 
-The subsequent **local** loader/proof/publication source protocol accepts fourteen exact files.
+The reviewed loader/proof/publication/rejection source protocol accepts fourteen exact files.
 Historical completed twelve/thirteen-file transactions remain readable, but do not
-authorize installing a partial new source closure. The live VM remains on the
-eleven-file custody release documented below; no load unit
-was dispatched. The new installer preserves the 256,000-byte wire cap. Large apply
+authorize installing a partial new source closure. The live fourteen-file recovery
+release is recorded below; the earlier eleven-file custody checkpoint is historical.
+The installer preserves the 256,000-byte wire cap. Large apply
 frames use a version-2 zlib/base64 envelope with declared count/SHA-256 and a separate
 384,000-byte decoded ceiling. Decompression is limited before allocation; trailing
 streams, incomplete streams, wrong sizes/hashes, duplicate keys and compressed
@@ -71,9 +71,68 @@ Unknown files, symlinks, hard links, unsafe ownership, changed hashes and occupi
 rollback destinations fail closed. Retention exhaustion needs operator review;
 this workflow does not silently prune old releases.
 
-## Commands
+## 8 October live recovery-controller rollout
 
-The current eleven-file installation is
+Source checkpoint `c312172` installed the complete fourteen-file operator closure.
+Installation ID:
+`a87e3b4b62784103c957f58935ffecd0e485a24f8c33cee531829e0f8802a8b5`.
+Independent read-back snapshot:
+`512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.
+The isolated import passed; policy was unchanged and no workload was executed by
+the installation. Post-install probe confirmed an idle journal, no pending import
+and no pending retirement. The read-only gateway confirmed the two historical v1
+imports still cancelled, the same policy/registry hashes, verified host limits,
+87.31 GiB free and all six Coolify containers healthy.
+
+One exact obsolete seven-file code copy, installation
+`9bdec0e235d9cc16ef66795026da59ed674513e6cccbfcd14bdf7ef111f9748f`, was retired after
+fresh snapshot/retention verification. Its code snapshot was
+`dec0b984fb1fbce0848d9e7b6f0f5a809c5d11a6e5fcfd41e6f3873e2e443f8d`.
+The active bundle and data journal were unchanged by retirement; the latest
+predecessor and all image/archive/job evidence were preserved. There was no
+resource, deadline, paid model or production deployment change.
+
+The nonsensitive pinned-IAP Python transport regression passed compilation,
+replay rejection and bound cleanup after rollout; it did not activate production
+admission. The first local invocation was rejected before SSH because the probe
+requires an absolute operator configuration path. The corrected absolute-path
+invocation passed; no failed remote dispatch was replayed.
+
+Local final verification before rollout: 1,254 coding tests passed without skips,
+255 targeted recovery/installer/transport checks passed, and Flake8/Bandit/diff
+checks passed (existing dependency/suppression warnings only). This is not full
+goal acceptance or live React/Spring proof; those operations are separate from
+installing their reviewed controller.
+
+### First live React import: retained readback failure
+
+Fresh v2 import `341dd8fd9ee3cc0ab781027bf705300f27c72fee97f1b62909097371738d4e50`
+reused the exact retained 108,749,312-byte React archive without upload. The retained
+load unit acknowledged dispatch and subsequently exited successfully with a positive
+daemon-completion receipt. However, the clean-environment Docker template failed
+on the absent optional `Entrypoint` key. The controller correctly retained
+`load_uncertain`, `reconciliation_required=true`, failure stage `image_readback`,
+and `image_approved=false`; no fixture or publication was started.
+
+The public image index identity, Linux/amd64, UID 65532 and reviewed role/base/operator
+labels were independently observed, but image presence alone does not close the
+reservation. The local readback now uses optional map lookup for `Entrypoint` and
+`Volumes`, matching the existing `Healthcheck` handling. That source correction is
+**not installed** over pending maintenance. The next operation must be an audited,
+source-bound readback repair of this exact completed load, preserving the original
+claim/receipt and invoking no new Docker load. Ordinary bundle installation,
+rejection, new import and profile approval must not bypass the retained barrier.
+
+The corrected projection was then exercised read-only on the actual VM using the
+same clean environment. It returned the exact reviewed image metadata and passed
+the local recipe validator. The 176 loader/rejection/publication regressions,
+Flake8 and whitespace checks passed after the projection change. These prove the
+readback correction, not installation of the correction or reconciliation of the
+live reserved import; no second Docker load or fixture execution was requested.
+
+## Commands and preceding custody checkpoint
+
+The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:
 `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.

@@ -459,3 +459,19 @@ v2 and protected retained-custody reuse. Ambiguous Docker operations remain rese
 rejection does not delete an image/archive or roll back partial publication. See
 [offline toolchains](OFFLINE_TOOLCHAINS.md) and
 [host bundle operations](HOST_BUNDLE_OPERATIONS.md) for exact live/local evidence.
+
+On 8 October, recovery source `c312172` was installed through the full fourteen-file
+operator transaction, installation `a87e3b4b62784103c957f58935ffecd0e485a24f8c33cee531829e0f8802a8b5`,
+independently read-back snapshot `512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.
+The latest predecessor/data/images/archives were preserved; one verified obsolete
+code copy was retired to honor the retention bound. No policy or cloud resource
+was changed by installation. Pinned-IAP synthetic compilation/replay/cleanup passed;
+host limits verified and all six Coolify containers were healthy. This does not
+fund central capacity or complete live Node/Java/application/Chat proof.
+
+The first live React import positively completed its Docker load but is retained
+as `load_uncertain` because the original clean-environment projection required an
+absent optional `Entrypoint` key. A corrected optional lookup passed actual read-
+only VM metadata/recipe checks and 176 relevant local regressions, but is not
+installed over the reserved import. Audited same-import readback repair is the
+next operation; no reload, approval, fixture or generated deployment is claimed.

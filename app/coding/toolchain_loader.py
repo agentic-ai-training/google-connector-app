@@ -205,8 +205,8 @@ def image(role, expected):
     # Only projected public configuration; never a full Docker inspect containing
     # arbitrary Env values. Immutable index/platform/config identities are distinct.
     projection = ('{"id":{{json .Id}},"os":{{json .Os}},"arch":{{json .Architecture}},'
-                  '"user":{{json .Config.User}},"entrypoint":{{json .Config.Entrypoint}},'
-                  '"volumes":{{json .Config.Volumes}},"healthcheck":{{json (index .Config "Healthcheck")}},'
+                  '"user":{{json .Config.User}},"entrypoint":{{json (index .Config "Entrypoint")}},'
+                  '"volumes":{{json (index .Config "Volumes")}},"healthcheck":{{json (index .Config "Healthcheck")}},'
                   '"role":{{json (index .Config.Labels "org.gca.toolchain.role")}},'
                   '"base":{{json (index .Config.Labels "org.gca.toolchain.base")}},'
                   '"operator":{{json (index .Config.Labels "org.gca.toolchain.operator-only")}}}')

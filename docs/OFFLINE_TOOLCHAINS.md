@@ -228,6 +228,17 @@ read-only VM probe still reports eleven source files and snapshot
 `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`;
 the new fourteen-file controller has not been installed in that observation.
 
+The subsequent **8 October live** checkpoint installed the fourteen-file recovery
+controller (`c312172`), snapshot
+`512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.
+Python transport/replay/cleanup and six-container health passed. The first React
+v2 import reused its retained archive and completed Docker loading, but readback
+failed because the clean-environment template required absent optional `Entrypoint`.
+Its exact reservation remains `load_uncertain`; no host fixture or role approval is
+claimed. The local optional-field correction still requires audited same-import
+repair, not blind reload or installing a changed bundle over pending maintenance.
+See [the live operation record](HOST_BUNDLE_OPERATIONS.md).
+
 ```text
 cancelled verified custody -> re-read archive/receipt/history + current config
                                       |

@@ -2695,6 +2695,14 @@ changes become production evidence.
   disposable local PostgreSQL schemas; 255 focused recovery/staging/gateway/installer/
   transport tests and Flake8/Bandit/whitespace checks passed. These results do not
   substitute for the pending live toolchain, deployment or original scope acceptance.
+  Live 8 October rollout installed fourteen files from `c312172`, independent snapshot
+  `512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`, preserving data,
+  policy and latest predecessor. Python transport/replay/cleanup and six-container
+  health passed. React import `341dd8fd9ee3cc0ab781027bf705300f27c72fee97f1b62909097371738d4e50`
+  reused its retained archive and positively completed Docker loading, but remains
+  `load_uncertain` after optional-Entrypoint template failure. The local projection
+  correction is not installed. Finish audited same-import/source-bound readback
+  repair without replaying load or bypassing maintenance before fixtures/publication.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately
