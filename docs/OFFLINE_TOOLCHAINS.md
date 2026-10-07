@@ -43,12 +43,64 @@ execution service.
 ### Subsequent local durable-loader checkpoint
 
 `toolchain_loader.py` adds the fixed operator systemd outbox/worker/read-back path.
-The new source closure has twelve files; **the VM still runs the independently
+That checkpoint's source closure had twelve files; the subsequent local fixed-fixture
+proof controller below makes the reviewed closure thirteen files. **The VM still runs the independently
 verified eleven-file custody release** `529bc18...`. No live load/unit dispatch,
 registry change, role approval or generated code execution occurred in this checkpoint.
 Both verified public imports remain cancelled with retained bytes/audit. Do not
 dispatch a real load before host profile-proof, verified publication and the
 forward-compatible recovery path is ready.
+
+### Local fixed-fixture proof controller — 7 October
+
+`toolchain_proof.py` adds operator-only `proof_run` and read-only `proof_observe`.
+Each role has three independently hash-pinned fixture cases: React tests/pass,
+React build/pass, React tests/deliberate failure; Spring tests/pass, package/pass,
+tests/deliberate failure. All six cases use checked-in public source, not a generated
+repository or caller-selected archive. Both positive and negative source archives
+are pinned by exact byte count and SHA-256. The client and host independently check
+them; the client also validates returned intent/case/source/cleanup/result lineage.
+
+```text
+verified load + actual image read-back + unchanged protected controller binding
+    -> same journal: proof_pending (ordinary validation/packaging still blocked)
+    -> durable case/attempt/job before Docker create
+    -> fixed sandbox metadata + actual native Sentry/Gofer/cgroup enforcement
+    -> unprivileged guest observation BEFORE fixture extraction
+    -> offline fixed test/build command
+    -> exact container removal + native termination check
+    -> protected result receipt (expected failure is a separate test case)
+    -> observe all three cases; image_approved remains FALSE
+```
+
+The proofs reuse the existing exclusive journal and bounded aggregate cgroup, not
+a second capacity pool. Each sandbox has one CPU, 1-GiB memory/no swap, 64 tasks,
+private IPC/cgroup namespaces, no network, read-only root, UID/GID 65532, no Linux
+capabilities, no-new-privileges and only bounded `/workspace` and `/tmp` tmpfs.
+Docker metadata alone is insufficient: native runtime enforcement and fixed guest
+privilege observations are required before source extraction. The same execution
+implementation is reused; proof-only Python hooks are not accepted in JSON frames.
+
+Each case permits at most two attempts. A lost process/result cannot invent a
+pass; an unfinished job or uncertain native cleanup blocks another case. Successful
+observation replay does not execute the fixture again. A failed test is accepted as
+the deliberate negative case only with exit 1, the reviewed failure marker and
+evidence that the intended test command actually ran, not a preparation failure.
+Cancelled/unloaded imports are refused before any systemd inspection.
+
+This remains **local source/test evidence**. The VM is still on its eleven-file
+custody release; public archives remain cancelled and retained. No live image load,
+fixed-fixture execution, role approval, registry publication or budget mutation
+has occurred. The verified publication controller and live daemon-capacity checks
+must be ready before the first real import; otherwise proof-pending would have no
+safe completion path. Do not use these case receipts as generated-app validation
+attestations or as authorization for deployment.
+
+Final local verification: **1,114 coding tests passed** using only disposable
+loopback PostgreSQL schemas, with no skipped cases. Flake8, targeted Bandit and
+`git diff --check` passed. The existing Vertex SDK deprecation and pre-existing
+unused Bandit suppressions remain warnings. These results are not trusted CI,
+cloud runtime enforcement evidence or production enrollment.
 
 ```text
 cancelled verified custody -> re-read archive/receipt/history + current config

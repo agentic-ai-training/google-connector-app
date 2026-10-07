@@ -26,11 +26,13 @@ POLICY = Path("/etc/gca-validation/policy.json")
 NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
          "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
          "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
-         "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py")
+         "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py",
+         "toolchain_proof.py")
 # A completed historical installation is evidence, not a request to install its
 # old inventory. Accept only the exact previous protocol and the current one.
 LEGACY_NAMES = NAMES[:7]
 PRIOR_CUSTODY_NAMES = NAMES[:11]
+PRIOR_LOADER_NAMES = NAMES[:12]
 MAX_FRAME = 256000
 MAX_DECODED_FRAME = 384000
 
@@ -215,7 +217,8 @@ def record():
             or not isinstance(result["id"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["id"])
             or result["phase"] not in {"prepared", "root_saved", "published", "committed", "rolled_back"}
             or not isinstance(result["old"], dict) or not isinstance(result["new"], dict)
-            or set(result["new"]) not in (set(LEGACY_NAMES), set(PRIOR_CUSTODY_NAMES), set(NAMES))):
+            or set(result["new"]) not in (set(LEGACY_NAMES), set(PRIOR_CUSTODY_NAMES),
+                                         set(PRIOR_LOADER_NAMES), set(NAMES))):
         raise BundleError("installation intent is invalid")
     for tree in (result['old'], result['new']):
         if not 2 <= len(tree) <= 23 or not {'isolated_validation.py', 'build_artifact.py'} <= set(tree):

@@ -2,8 +2,9 @@
 
 ## Latest toolchain-custody checkpoint — 6 October 2026
 
-Subsequent work adds the **local**, twelve-file durable load-unit controller and
-bounded compressed installer. The actual VM remains on the eleven-file custody
+Subsequent work adds the **local** durable load-unit controller, bounded compressed
+installer and fixed-fixture proof controller (thirteen-file reviewed source closure).
+The actual VM remains on the eleven-file custody
 installation below; both retained public imports are cancelled. No live Docker load,
 role approval, registry publication, new resource, paid model call or budget change
 has occurred. Trusted real host profiles, publication/recovery and complete app proof

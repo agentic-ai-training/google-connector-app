@@ -3612,3 +3612,52 @@ with `os._exit` after each rename and then resume from observed state. They esta
 process-death recovery for those boundaries, not arbitrary power-loss guarantees.
 Unknown torn control files are retained for review rather than silently deleted.
 See [operator commands and exact evidence scope](HOST_BUNDLE_OPERATIONS.md).
+
+<a id="dictionary-fixed-fixture-enrollment-proof"></a>
+## Fixed-fixture enrollment, expected failures and evidence versus authority
+
+An **enrollment proof** asks whether an operator-reviewed runtime can execute known
+source under the required isolation, not whether arbitrary generated code is correct.
+A **fixture** is fixed test input with known expectations. Here its actual tar bytes
+have independent size/hash pins. Matching a hash supplied by the caller is not
+enough: the expected pin must come from the protected reviewed catalog.
+
+```text
+protected fixture pin -> actual bytes -> exact reserved role
+    -> durable attempt -> verify native + guest enforcement
+    -> extract bytes -> run fixed command -> verify native cleanup
+    -> append retained evidence -> all case results known
+                                      |
+                              NOT approval authority
+```
+
+The DSA structure is a bounded map keyed by `(import_id, case_name, attempt)`, with
+a unique job ID as a reverse index. At most eight imports, three cases and two
+attempts yield 48 retained case records. A primary key makes duplicate attempts
+invalid; the exclusive host flock serializes ownership, and an SQLite transaction
+atomically records job intent with its case. These solve different problems: the
+lock excludes concurrent owners, while the transaction prevents a case without
+its corresponding job after interruption.
+
+An **expected failure** is not any error. The negative fixture must reach the
+intended test command, return its known exit code and emit its known failure marker.
+An npm/Maven preparation error, missing binary, truncated output or unknown cleanup
+cannot pass the negative case. In Python, use exact predicates rather than truthy
+coercion: `success is False`, `type(exit_code) is int`, and compare the executed
+command to the protected profile. Boolean values are subclasses of integers in
+Python, so checking only `isinstance(value, int)` can incorrectly accept `True`
+as version 1 or a purported exit code.
+
+**Evidence** records observed facts; **authority** permits a consequential action.
+Three passing case receipts do not themselves approve an image or enable customer
+execution. A separate verified publication transition must bind the same archive,
+image, controller and policy and preserve rollback/recovery. Keeping those concerns
+separate avoids upgrading permission merely because a test finished.
+
+Hashing fixture bytes costs O(B); the bounded indexed case lookup is approximately
+O(log N), with N at most 48, while collecting the three case results is O(3).
+No DP or generative planner is needed: this is an exact state machine and a finite
+truth table, not an optimization problem. An LLM must not choose whether to ignore
+missing native enforcement or convert an unknown result into a pass. Current
+implementation: [toolchain proof controller](../app/coding/toolchain_proof.py);
+local/live evidence limits: [offline toolchains](OFFLINE_TOOLCHAINS.md).

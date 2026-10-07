@@ -212,6 +212,65 @@ def test_validator_copies_snapshot_without_host_mount_or_credentials(tmp_path, m
     assert calls[-1][0][:3] == ("rm", "--force", "--volumes")
 
 
+@pytest.mark.parametrize('denied', [False, True])
+def test_operator_fixture_enforcement_runs_before_source_extraction_and_cleanup_after_removal(
+        workspace, monkeypatch, denied):
+    calls = fake_transport(monkeypatch)
+    observations = []
+
+    def readiness(journal, job, cid):
+        assert any(args[0] == 'start' for args, _ in calls)
+        assert not any(args[0] == 'exec' for args, _ in calls)
+        assert job['state'] == 'running' and cid == 'c' * 64
+        observations.append('ready')
+        if denied:
+            raise runner.IsolationError('native enforcement denied')
+        return {'local_mock_only': True}
+
+    def cleanup(cid):
+        assert calls[-1][0][:3] == ('rm', '--force', '--volumes')
+        assert cid == 'c' * 64
+        observations.append('native_cleanup')
+
+    with runner.Journal(Path(POLICY['state_directory'])) as journal:
+        job = journal.begin('python_compile', IMAGE, 10)
+        values = (runner.source_archive(workspace), 'python_compile', 10, POLICY, journal, job)
+        hooks = {'readiness': readiness, 'native_cleanup': cleanup, 'proof_cgroup': 'gcapackaging.slice'}
+        if denied:
+            with pytest.raises(runner.IsolationError, match='native enforcement denied'):
+                runner._execute_archive(*values, **hooks)
+            assert not any(args[0] == 'exec' for args, _ in calls)
+        else:
+            result = runner._execute_archive(*values, **hooks)
+            assert result['native_enforcement'] == {'local_mock_only': True}
+            assert result['executed_commands'] == [list(runner.PROFILES['python_compile'][1])]
+        assert journal.db.execute('SELECT state FROM jobs').fetchone()[0] == 'cleaned'
+    assert observations == ['ready', 'native_cleanup']
+    create = next(args for args, _ in calls if args[0] == 'create')
+    assert '--pids-limit=64' in create and '--cgroup-parent=gcapackaging.slice' in create
+    assert '--ipc=private' in create and '--cgroupns=private' in create
+
+
+@pytest.mark.parametrize('failure', [RuntimeError, OSError])
+def test_native_fixture_cleanup_failure_overrides_success_and_retains_uncertainty(workspace, monkeypatch, failure):
+    calls = fake_transport(monkeypatch)
+
+    def deny(cid):
+        assert calls[-1][0][:3] == ('rm', '--force', '--volumes')
+        raise failure('Sentry still live')
+
+    with runner.Journal(Path(POLICY['state_directory'])) as journal:
+        job = journal.begin('python_compile', IMAGE, 10)
+        with pytest.raises(runner.IsolationError, match='cleanup uncertain'):
+            runner._execute_archive(runner.source_archive(workspace), 'python_compile', 10, POLICY, journal, job,
+                                    readiness=lambda *args: {'local_mock_only': True},
+                                    native_cleanup=deny, proof_cgroup='gcapackaging.slice')
+        row = journal.db.execute('SELECT state,container_id FROM jobs').fetchone()
+        assert row['state'] == 'cleanup_uncertain' and row['container_id'] == 'c' * 64
+        with pytest.raises(runner.IsolationError, match='unreconciled'):
+            journal.require_available()
+
+
 @pytest.mark.parametrize("phase", ["create", "start", "inspect", "exec"])
 def test_cleanup_after_control_failure(workspace, monkeypatch, phase):
     calls = fake_transport(monkeypatch, fail=phase)

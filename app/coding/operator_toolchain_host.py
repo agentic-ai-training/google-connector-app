@@ -17,12 +17,15 @@ import time
 import types
 
 
-DEPENDENCIES = ("build_artifact", "isolated_validation", "oci_packager",
-                "toolchain_spec", "toolchain_archive", "toolchain_staging", "toolchain_loader")
+DEPENDENCIES = ("build_artifact", "isolated_validation", "oci_packager", "runtime_image_store",
+                "image_output_store", "image_packaging_worker", "isolated_packaging",
+                "toolchain_spec", "toolchain_archive", "toolchain_staging", "toolchain_loader",
+                "toolchain_proof")
 BUNDLE_NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
                 "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
                 "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
-                "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py")
+                "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py",
+                "toolchain_proof.py")
 
 
 def _bootstrap():
@@ -51,6 +54,7 @@ if not __package__:
     _bootstrap()
 
 from app.coding import isolated_validation as isolation, toolchain_staging as custody, toolchain_loader as loader  # noqa: E402
+from app.coding import toolchain_proof as proof  # noqa: E402
 from app.coding.toolchain_spec import REVIEWED_ARCHIVES, unique_object  # noqa: E402
 
 
@@ -146,13 +150,14 @@ def operate(request, stream):
                   "receive": {"intent_id"},
                   "load_prepare": {"intent_id"}, "load_dispatch": {"intent_id"},
                   "load_observe": {"intent_id"},
+                  "proof_run": {"intent_id", "case"}, "proof_observe": {"intent_id"},
                   "cancel_preload": {"intent_id", "expected_phase"},
                   "quarantine": {"intent_id", "partial_sha256", "partial_bytes"}}
     if (not isinstance(request, dict) or not isinstance(request.get("operation"), str)
             or request["operation"] not in operations or type(request.get("version")) is not int
             or request["version"] != 1 or set(request) != common | operations[request["operation"]]):
         raise OperatorToolchainError("operator request authority differs")
-    if request["operation"] != "receive" and stream.read(1):
+    if request["operation"] not in {'receive', 'proof_run'} and stream.read(1):
         raise OperatorToolchainError("unexpected operator frame body")
     if request["bundle_sha256"] != snapshot():
         raise OperatorToolchainError("operator source changed since review")
@@ -208,6 +213,20 @@ def operate(request, stream):
             action = {'load_prepare': loader.prepare, 'load_dispatch': loader.dispatch,
                       'load_observe': loader.reconcile}[request['operation']]
             return {'operation': request['operation'], 'load': action(journal, identity, binding),
+                    'production_policy_changed': False, 'image_approved': False}
+        if request['operation'].startswith('proof_'):
+            binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
+                       'registry_sha256': registry_hash}
+            if request['operation'] == 'proof_run':
+                case = request['case']
+                role = intent['role']
+                if not isinstance(case, str) or case not in proof.CASES[role]:
+                    raise OperatorToolchainError('fixed proof case differs from reserved role')
+                source = stream.read(proof.FIXTURES[role][case.rsplit('_', 1)[1]][0] + 1)
+                result = proof.run(journal, identity, case, source, binding)
+            else:
+                result = proof.observe(journal, identity, binding)
+            return {'operation': request['operation'], 'proof': result,
                     'production_policy_changed': False, 'image_approved': False}
         return {"operation": "quarantine", **custody.quarantine_partial(
             journal, identity, expected_sha256=request["partial_sha256"], expected_bytes=request["partial_bytes"]),

@@ -2649,6 +2649,20 @@ changes become production evidence.
   actual child-process death after both directory renames, partial staging and
   lost phase writes. The VM remains on the eleven-file custody release; complete
   Node/Java sandbox proofs, publication and application deployment remain open.
+  The 2026-10-07 local checkpoint adds an operator-only fixed-fixture proof controller
+  and expands the reviewed source closure to thirteen files. Exact public fixture
+  bytes, same-journal durable attempts, positive load/read-back, unchanged controller
+  bindings, native runtime limits and guest privileges are prerequisites. Checks run
+  before fixture extraction; container removal plus native termination are required
+  before retaining a result. Fixed positive/deliberate-negative cases have bounded
+  retries and cannot grant image approval. Process-death and forged-receipt tests
+  preserve uncertainty; normal workload admission remains closed during proof.
+  The VM still runs the eleven-file custody release. No live load, host profile
+  execution, publication, approval or generated application deployment happened.
+  The verified publication controller and complete live proofs remain unfinished.
+  Final local verification: 1,114 coding tests passed without skips against disposable
+  local PostgreSQL schemas; targeted Flake8/Bandit and whitespace checks passed.
+  This does not close trusted CI, live enrollment or the enclosing unchecked item.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

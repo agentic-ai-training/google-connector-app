@@ -18,6 +18,8 @@ from app.coding import operator_toolchain_host as gateway, toolchain_spec as cat
 from app.coding import toolchain_staging as custody
 from app.coding.validation_transport import IAPValidationHost, _protected, command
 from scripts.probe_local_offline_toolchains import DOCKER, ENV, inspect
+from scripts.probe_local_offline_toolchains import fixture_archive
+from app.coding import toolchain_proof as proof
 
 
 MAX_RESPONSE = 32768
@@ -56,10 +58,56 @@ def stop_owned(process):
                 pass
 
 
-def rpc(host, operation, *, export_role=None, **values):
+def proof_receipt(value, identity, case):
+    role = case.split('_', 1)[0]
+    if (not isinstance(value, dict) or value.get('intent_id') != identity
+            or value.get('case') != case or value.get('version') != 1
+            or type(value.get('version')) is not int
+            or value.get('source_sha256') != proof.FIXTURES[role][case.rsplit('_', 1)[1]][1]
+            or value.get('cleanup_verified') is not True or type(value.get('passed')) is not bool
+            or type(value.get('exit_code')) is not int
+            or value['passed'] and value['exit_code'] != (1 if case.endswith('_fail') else 0)
+            or type(value.get('observed_at_unix')) is not int or value['observed_at_unix'] < 1
+            or not isinstance(value.get('job_id'), str) or not re.fullmatch(r'[a-f0-9]{32}', value['job_id'])
+            or any(not isinstance(value.get(key), str) or not re.fullmatch(r'[a-f0-9]{64}', value[key])
+                   for key in ('binding_sha256', 'native_enforcement_sha256', 'result_sha256'))):
+        raise RuntimeError('host fixed-fixture evidence differs')
+
+
+def proof_evidence(evidence, operation, identity, case=None):
+    value = evidence.get('proof')
+    if not isinstance(value, dict) or evidence.get('image_approved') is not False:
+        raise RuntimeError('host fixed-fixture evidence differs')
+    if value.get('intent_id') != identity or value.get('image_approved') is not False:
+        raise RuntimeError('host fixed-fixture evidence differs')
+    if operation == 'proof_run':
+        proof_receipt(value, identity, case)
+        if type(value.get('replayed_observation')) is not bool:
+            raise RuntimeError('host fixed-fixture evidence differs')
+    else:
+        cases = value.get('cases')
+        if (not isinstance(cases, dict) or set(cases) not in [set(group) for group in proof.CASES.values()]
+                or type(value.get('all_fixed_cases_passed')) is not bool
+                or any(item is not None and not isinstance(item, dict) for item in cases.values())):
+            raise RuntimeError('host fixed-fixture evidence differs')
+        for name, receipt in cases.items():
+            if receipt is not None:
+                proof_receipt(receipt, identity, name)
+        if value['all_fixed_cases_passed'] != all(item is not None and item['passed'] for item in cases.values()):
+            raise RuntimeError('host fixed-fixture evidence differs')
+
+
+def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
     """No automatic retries. Client loss leaves the host reservation for inspection."""
     request, control = envelope(operation, **values)
     role = export_role
+    source = None
+    if operation == 'proof_run':
+        case = values.get('case')
+        if fixture_role not in proof.CASES or case not in proof.CASES[fixture_role]:
+            raise RuntimeError('fixed local fixture role/case required')
+        source, _ = fixture_archive(fixture_role, negative=case.endswith('_fail'))
+        proof.fixture(fixture_role, case, source)
     argv, environment = command(host)
     argv[-1] = shlex.join(["sudo", "-n", "/usr/bin/python3", "-I", "-B",
                          "/usr/local/libexec/gca/operator_toolchain_host.py"])
@@ -70,7 +118,7 @@ def rpc(host, operation, *, export_role=None, **values):
 
     exporter = remote = None
     signal.signal(signal.SIGALRM, timeout)
-    signal.alarm(240)
+    signal.alarm(300 if operation == 'proof_run' else 240)
     try:
         if operation == "receive" and role is not None:
             if role not in catalog.REVIEWED_ARCHIVES or inspect(role) != catalog.REVIEWED_ARCHIVES[role]["image_id"]:
@@ -83,6 +131,8 @@ def rpc(host, operation, *, export_role=None, **values):
             stderr=subprocess.DEVNULL, start_new_session=True)
         try:
             remote.stdin.write(control)
+            if operation == 'proof_run':
+                remote.stdin.write(source)
             if exporter is not None:
                 size, digest = 0, hashlib.sha256()
                 while body := exporter.stdout.read(1024 * 1024):
@@ -119,6 +169,8 @@ def rpc(host, operation, *, export_role=None, **values):
                 raise RuntimeError("host archive custody differs from reviewed role")
             if role is not None and result["archive"].get("image_index_digest") != catalog.REVIEWED_ARCHIVES[role]["image_id"]:
                 raise RuntimeError("host image identity differs from reviewed role")
+        if operation in {'proof_run', 'proof_observe'}:
+            proof_evidence(evidence, operation, values.get('intent_id'), values.get('case'))
         return evidence
     finally:
         signal.alarm(0)
@@ -131,7 +183,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--operator-config", type=Path, required=True)
     parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload",
-                                              "load_prepare", "load_dispatch", "load_observe"),
+                                              "load_prepare", "load_dispatch", "load_observe",
+                                              "proof_run", "proof_observe"),
                         default="probe")
     parser.add_argument("--role", choices=("react", "spring"))
     parser.add_argument("--intent-id")
@@ -140,6 +193,7 @@ def main():
     parser.add_argument("--partial-sha256")
     parser.add_argument("--partial-bytes", type=int)
     parser.add_argument("--expected-phase", choices=("prepared", "archive_verified"))
+    parser.add_argument('--case', choices=tuple(case for cases in proof.CASES.values() for case in cases))
     args = parser.parse_args()
     values = {}
     if args.operation == "prepare":
@@ -163,10 +217,15 @@ def main():
             if not args.expected_phase:
                 parser.error("cancel requires the exact pre-load phase")
             values["expected_phase"] = args.expected_phase
+        if args.operation == 'proof_run':
+            if args.role not in proof.CASES or args.case not in proof.CASES[args.role]:
+                parser.error('proof requires the fixed case belonging to the reviewed role')
+            values['case'] = args.case
     host = IAPValidationHost.model_validate_json(_protected(args.operator_config.resolve(), private=True).read_text())
     role = args.role if args.operation == "receive" else None
     # prepare's role is a control field, not an instruction to export an image.
-    print(json.dumps(rpc(host, args.operation, export_role=role, **values),
+    print(json.dumps(rpc(host, args.operation, export_role=role,
+                         fixture_role=args.role if args.operation == 'proof_run' else None, **values),
                      sort_keys=True))
 
 

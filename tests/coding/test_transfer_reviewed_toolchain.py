@@ -151,3 +151,54 @@ def test_export_uses_only_reviewed_immutable_id_and_handles_reconciled_input_not
     data = io.BytesIO(processes[1].stdin.getvalue())
     assert gateway.frame(data)["intent_id"] == "b" * 64
     assert data.read() == (b"" if already_staged else body)
+
+
+def fixture_receipt(case='react_test_pass'):
+    return {'version': 1, 'intent_id': 'b' * 64, 'case': case, 'job_id': 'd' * 32,
+            'source_sha256': client.proof.FIXTURES[case.split('_', 1)[0]][case.rsplit('_', 1)[1]][1],
+            'binding_sha256': 'a' * 64, 'native_enforcement_sha256': 'c' * 64,
+            'result_sha256': 'd' * 64, 'exit_code': 1 if case.endswith('_fail') else 0,
+            'passed': True, 'cleanup_verified': True, 'observed_at_unix': 1}
+
+
+@pytest.mark.parametrize('role', ['react', 'spring'])
+@pytest.mark.parametrize('negative', [False, True])
+def test_proof_transports_only_fixed_fixture_bytes_without_image_export(transport, role, negative):
+    case = client.proof.CASES[role][-1 if negative else 0]
+    result = {**fixture_receipt(case), 'replayed_observation': False, 'image_approved': False}
+    transport.results.append(evidence('proof_run', proof=result, image_approved=False))
+    assert client.rpc(None, 'proof_run', fixture_role=role, intent_id='b' * 64, case=case)['proof'] == result
+    stream = io.BytesIO(transport.processes[0].stdin.getvalue())
+    parsed = gateway.frame(stream)
+    assert parsed['case'] == case and 'role' not in parsed
+    assert stream.read() == client.fixture_archive(role, negative=negative)[0]
+    assert len(transport.processes) == 1
+
+
+@pytest.mark.parametrize('field,value', [('intent_id', 'a' * 64), ('image_approved', True),
+                                        ('source_sha256', 'c' * 64), ('cleanup_verified', False),
+                                        ('passed', 1), ('job_id', 7), ('version', True)])
+def test_forged_fixture_result_never_counts_as_proof(transport, field, value):
+    result = {**fixture_receipt(), 'replayed_observation': False, 'image_approved': False, field: value}
+    transport.results.append(evidence('proof_run', proof=result, image_approved=False))
+    with pytest.raises(RuntimeError, match='fixed-fixture evidence'):
+        client.rpc(None, 'proof_run', fixture_role='react', intent_id='b' * 64, case='react_test_pass')
+
+
+@pytest.mark.parametrize('role', ['react', 'spring'])
+def test_observe_validates_each_fixed_case_and_does_not_invent_missing_result(transport, role):
+    cases = {case: fixture_receipt(case) for case in client.proof.CASES[role]}
+    result = {'intent_id': 'b' * 64, 'phase': 'proof_pending', 'cases': cases,
+              'all_fixed_cases_passed': True, 'image_approved': False}
+    transport.results.append(evidence('proof_observe', proof=result, image_approved=False))
+    assert client.rpc(None, 'proof_observe', intent_id='b' * 64)['proof']['all_fixed_cases_passed'] is True
+    cases[next(iter(cases))] = None
+    transport.results.append(evidence('proof_observe', proof=result, image_approved=False))
+    with pytest.raises(RuntimeError, match='fixed-fixture evidence'):
+        client.rpc(None, 'proof_observe', intent_id='b' * 64)
+
+
+def test_wrong_fixture_role_is_rejected_before_any_transport(transport):
+    with pytest.raises(RuntimeError, match='fixture role/case'):
+        client.rpc(None, 'proof_run', fixture_role='spring', intent_id='b' * 64, case='react_test_pass')
+    assert transport.processes == []

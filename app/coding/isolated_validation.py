@@ -480,6 +480,47 @@ class Journal:
                             (job_id, "creating", now))
         return dict(self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
+    def begin_toolchain_proof(self, identity: str, profile: str, image: str,
+                             timeout: int, case: str, source_hash: str, binding_hash: str) -> dict:
+        """Operator fixture only: keep the import reservation and ordinary gate closed.
+
+        The fixed proof controller verifies actual fixture bytes before this call.
+        This is not an alternative model dispatch or role-approval mechanism.
+        Proofs are ordinary validation jobs for the existing identity-safe reaper;
+        the proof controller additionally checks native runtime cleanup.
+        """
+        imports = self.toolchain_imports()
+        row = next((item for item in imports if item['id'] == identity), None)
+        profiles = {'react': {'react_test', 'react_build'},
+                    'spring': {'spring_test', 'spring_package'}}
+        now = int(time.time())
+        if (row is None or row['phase'] != 'proof_pending'
+                or profile not in profiles[row['intent']['role']]
+                or image != row['intent']['image_id'] or type(timeout) is not int or timeout != 180
+                or now + timeout + 90 >= row['intent']['stop_unix']
+                or case not in {profile + '_pass', profile + '_fail'}
+                or profile.endswith(('build', 'package')) and case.endswith('_fail')
+                or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
+                       for value in (source_hash, binding_hash))
+                or self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone()):
+            raise IsolationError('Proof is not the exact reserved idle toolchain maintenance')
+        rows = self.db.execute(
+            'SELECT * FROM toolchain_proof_cases WHERE import_id=? AND case_name=? ORDER BY attempt',
+            (identity, case)).fetchall()
+        if (len(rows) >= 2 or any(item['source_sha256'] != source_hash
+                                 or item['binding_sha256'] != binding_hash for item in rows)):
+            raise IsolationError('Proof attempt bound or source/controller authority differs')
+        job_id = uuid.uuid4().hex
+        with self.db:
+            self.db.execute("INSERT INTO jobs(id,name,image,profile,deadline,state,container_id,updated_at,purpose) "
+                            "VALUES(?,?,?,?,?,'creating',NULL,?,'validation')",
+                            (job_id, 'gca-validation-' + job_id, image, profile, now + timeout + 90, now))
+            self.db.execute('INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)',
+                            (job_id, 'creating', now))
+            self.db.execute('INSERT INTO toolchain_proof_cases VALUES(?,?,?,?,?,?,NULL)',
+                            (identity, case, len(rows) + 1, job_id, source_hash, binding_hash))
+        return dict(self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+
     def record(self, job: dict, state: str, container_id: str | None = None):
         if state not in {"running", "cleanup_uncertain", "cleaned"}:
             raise IsolationError("Invalid journal transition")
@@ -902,15 +943,26 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
         raise IsolationError("No approved offline toolchain for this validation profile")
     if type(timeout) is not int or not 1 <= timeout <= 1800:
         raise IsolationError("Validation timeout must be within 1..1800 seconds")
-    relative_cwd, command = PROFILES[profile]
     check_archive(source, profile)
     if binding is not None:
         verify_dispatch(binding, policy, source, profile, timeout)
-    artifact_helper = (_artifact_helper() if binding is not None
-                       and profile in {"react_build", "spring_package"} else None)
     journal.require_available(binding)
     ensure_toolchain_image(policy["images"][profile])
     job = journal.begin(profile, policy["images"][profile], timeout, binding)
+    return _execute_archive(source, profile, timeout, policy, journal, job, binding)
+
+
+def _execute_archive(source: bytes, profile: str, timeout: int, policy: dict, journal: Journal,
+                     job: dict, binding: dict | None = None, *, readiness=None,
+                     native_cleanup=None, proof_cgroup: str | None = None) -> dict:
+    """Shared command implementation; admission stays in the two trusted callers.
+
+    Hooks are Python callables owned by reviewed host code, never frame parameters.
+    No toolchain loading, source selection or role approval happens here.
+    """
+    relative_cwd, command = PROFILES[profile]
+    artifact_helper = (_artifact_helper() if binding is not None
+                       and profile in {"react_build", "spring_package"} else None)
     name = job["name"]
     create_confirmed = False
     # Set intent before create: a lost response still requires cleanup of this exact ID.
@@ -921,7 +973,9 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             f"--label=gca.scope={journal.scope}", f"--label=gca.job={job['id']}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             "--user=65532:65532", "--memory=1g", "--memory-swap=1g",
-            "--cpus=1", "--pids-limit=128", "--ulimit=nofile=256:256",
+            "--cpus=1", "--pids-limit=" + ('64' if proof_cgroup else '128'), "--ulimit=nofile=256:256",
+            *(["--cgroup-parent=" + proof_cgroup, "--ipc=private", "--cgroupns=private"]
+              if proof_cgroup else []),
             # Tests/builds intentionally execute binaries/native modules produced
             # inside this disposable sandbox. Docker otherwise defaults tmpfs to
             # noexec; that breaks Node/Rust and can block JNI/native test loading.
@@ -944,6 +998,7 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             raise IsolationError("Toolchain image requested a forbidden persistent mount")
         docker("start", name)
         journal.record(job, "running", container_id)
+        enforcement = readiness(journal, job, container_id) if readiness else None
         # Docker cp cannot resolve runsc's sandbox-internal tmpfs directory. Extract
         # our link-free bounded archive *inside* the sandbox, as the unprivileged UID.
         docker(
@@ -954,6 +1009,7 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
         workdir = "/workspace" + ("" if relative_cwd == "." else "/" + relative_cwd)
         deadline = time.monotonic() + timeout
         result = None
+        executed_commands = []
         export_path = "dist" if profile == "react_build" else None
         build_artifact = None
         for fixed_command in (*([PREPARE_COMMANDS[profile]] if profile in PREPARE_COMMANDS else []),
@@ -963,6 +1019,7 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
                 raise IsolationError("Validation deadline exceeded")
             result = execute_bounded(["exec", "--workdir", workdir, name, *fixed_command],
                                      remaining)
+            executed_commands.append(list(fixed_command))
             if not result["success"]:
                 break
         if result["success"]:
@@ -1040,6 +1097,8 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             "image_id": policy["images"][profile], "network": "none",
             "workspace_mutations_discarded": True,
             "validation_job_id": job["id"], "cleanup_verified": True,
+            **({"executed_commands": executed_commands} if readiness else {}),
+            **({"native_enforcement": enforcement} if enforcement is not None else {}),
             **({"claim_id": binding["claim_id"], "request_hash": binding["request_hash"],
                 "source_hash": binding["source_hash"]} if binding else {}),
             **({"build_artifact": build_artifact} if build_artifact is not None else {}),
@@ -1048,7 +1107,9 @@ def validate_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
         # Failure here overrides success. The caller must record cleanup uncertainty.
         try:
             journal.cleanup(job, create_confirmed=create_confirmed)
-        except (IsolationError, subprocess.TimeoutExpired, ValueError, KeyError) as error:
+            if native_cleanup is not None and job.get('container_id'):
+                native_cleanup(job['container_id'])
+        except (RuntimeError, OSError, subprocess.TimeoutExpired, ValueError, KeyError) as error:
             journal.record(job, "cleanup_uncertain")
             raise IsolationError(f"Sandbox cleanup uncertain for {name}") from error
 

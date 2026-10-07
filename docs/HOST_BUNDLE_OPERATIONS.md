@@ -7,14 +7,16 @@ resource groups, enroll financial capacity, run generated code or deploy apps.
 
 ## Installation protocol
 
-The subsequent **local** loader source protocol accepts twelve exact files. The
-live VM remains on the eleven-file custody release documented below; no load unit
+The subsequent **local** loader/proof source protocol accepts thirteen exact files.
+Historical completed twelve-file loader transactions remain readable, but do not
+authorize installing a partial new source closure. The live VM remains on the
+eleven-file custody release documented below; no load unit
 was dispatched. The new installer preserves the 256,000-byte wire cap. Large apply
 frames use a version-2 zlib/base64 envelope with declared count/SHA-256 and a separate
 384,000-byte decoded ceiling. Decompression is limited before allocation; trailing
 streams, incomplete streams, wrong sizes/hashes, duplicate keys and compressed
-operations other than apply/exact forward resume are rejected. Historical exact seven/eleven-file transactions
-remain readable; a new install requires the exact current twelve-file inventory.
+operations other than apply/exact forward resume are rejected. Historical exact seven/eleven/twelve-file transactions
+remain readable; a new install requires the exact current thirteen-file inventory.
 No missing helper is ignored or installed outside the reviewed complete transaction.
 
 ```text
@@ -85,8 +87,8 @@ python -m scripts.install_packaging_bundle \
   --apply --expected-snapshot-hash "$OBSERVED_SNAPSHOT_HASH"
 ```
 
-Only the exact twelve explicit known filenames are accepted by the new source for
-a new installation. Saved transactions accept the exact historical seven/eleven-file
+Only the exact thirteen explicit known filenames are accepted by the new source for
+a new installation. Saved transactions accept the exact historical seven/eleven/twelve-file
 inventory or the current inventory, with typed hash/mode evidence and a rederived ID.
 Arbitrary partial inventories are not compatible transactions. A lost response does **not**
 authorize blind retry. Probe again; if it reports `interrupted=true`, inspect its
@@ -95,7 +97,7 @@ exact installation ID, phase, `old_snapshot_hash`, and `candidate_snapshot_hash`
 ### Exact forward recovery (local implementation, not yet a live rollout)
 
 The current installer has an explicit `resume_forward` operation for completing the
-**same** recorded twelve-file candidate. It does not restore an older launcher and
+**same** recorded current candidate. It does not restore an older launcher and
 does not create a different release. This addresses the recovery gap where rollback
 is prohibited because import/packaging history must remain readable.
 
