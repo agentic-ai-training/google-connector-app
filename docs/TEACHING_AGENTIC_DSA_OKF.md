@@ -3661,3 +3661,62 @@ truth table, not an optimization problem. An LLM must not choose whether to igno
 missing native enforcement or convert an unknown result into a pass. Current
 implementation: [toolchain proof controller](../app/coding/toolchain_proof.py);
 local/live evidence limits: [offline toolchains](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-multi-file-publication-and-provenance-chain"></a>
+## Multi-file publication, logical atomicity and provenance chains
+
+An atomic `os.replace` updates **one** directory entry. It does not atomically replace
+both a policy file and a registry file. The application therefore needs **logical
+atomicity**: during partial publication, no consumer is permitted to use the mixed
+pair. Here the same exclusive host flock protects execution and publication; a
+durable `publishing` state denies new work until both files and the completion
+receipt are verified. A process crash releases the OS lock, but not that durable
+admission barrier.
+
+```text
+old registry + old policy       -> durable publishing intent
+new registry + old policy      -> blocked; exact forward recovery only
+new registry + new policy      -> blocked until receipt/phase commit
+new pair + matching receipt    -> enrolled; verify pair/chain before admission
+foreign pair or staging bytes  -> blocked; preserve evidence for review
+```
+
+A **publication plan** is an immutable mapping of original/candidate file bytes to
+their SHA-256 hashes, plus evidence references and the original controller binding.
+Its hash identifies an exact transaction, not merely the desired outcome. Recovery
+may finish that transaction; it may not choose another candidate or overwrite a
+different operator edit. A staged file is repairable only when its bytes are an
+exact prefix of the independently reconstructed target. `target.startswith(prefix)`
+is a predicate on bounded bytes, not authority to rewrite arbitrary content.
+
+**Provenance** answers where an artifact came from. An operator-built image exported
+from Docker is not necessarily a published repository image. A fabricated
+`repository_digest` would conflate acquisition identity with distribution authority.
+Registry v2 instead retains separate index, AMD64 manifest and config identities,
+archive count/hash, recipe hash, import ID, controller binding and three fixed proof
+receipt hashes. The existing Python repository-origin entry is preserved unchanged.
+Neither provenance nor a passing fixture grants central funded deployment access.
+
+Publishing the second role creates a **hash chain** of configuration pairs:
+
+```text
+baseline pair -> React-approved pair -> React-and-Spring-approved pair
+       old/new hashes match at every edge; Python remains present
+```
+
+Verification works backward from the actual current pair. Exactly one retained
+publication must end at it; its original pair becomes the next node. A missing edge,
+fork, altered receipt, expired stop or mismatch closes admission. This is graph
+reachability over at most eight directed edges, not machine-learning confidence.
+The implementation scans a bounded list for each edge: O(N²) comparisons, with
+N ≤ 8, plus O(B) hashing/decoding of bounded configuration bytes. A dictionary keyed
+by pair could reduce traversal to O(N), but the small bound makes explicit duplicate
+and fork checks straightforward. Retained plans occupy O(NB); no external content
+or OAuth/provider credential is needed for this decision.
+
+Local tests use real `os._exit` after reservation, either replacement and completion.
+They verify process-death recovery and admission closure, not arbitrary hardware
+power-loss behavior or live Linux runtime enforcement. Every file/data boundary is
+flushed with `fsync`, but filesystem/provider guarantees still constrain durability.
+Implementation: [publisher](../app/coding/toolchain_publication.py) and
+[admission verifier](../app/coding/isolated_validation.py).

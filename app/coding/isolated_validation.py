@@ -68,6 +68,7 @@ MAX_REPORT_ARCHIVE_BYTES = 4 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_SOURCE_BYTES + MAX_SOURCE_ENTRIES * 1024 + 10240
 DOCKER = "/usr/bin/docker"
 TOOLCHAIN_REGISTRY = Path("/etc/gca-validation/toolchain-registry.json")
+VALIDATION_POLICY = Path('/etc/gca-validation/policy.json')
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
 IMPORT_PHASES = {
     "prepared": {"archive_verified", "cancelled"},
@@ -75,15 +76,24 @@ IMPORT_PHASES = {
     "load_started": {"load_uncertain", "loaded"},
     "load_uncertain": {"loaded"},
     "loaded": {"proof_pending"},
-    # Release is deliberately unavailable until a verified publication controller
-    # exists. An image load or client-supplied digest is NOT role approval.
-    "proof_pending": set(), "cancelled": {"archive_verified"},
+    "proof_pending": {'publishing'}, 'publishing': {'enrolled'}, 'enrolled': set(),
+    "cancelled": {"archive_verified"},
 }
 MAX_TOOLCHAIN_IMPORTS = 8
 
 
 class IsolationError(RuntimeError):
     pass
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
+
+
+def publication_receipt(identity, fingerprint, hashes):
+    return {'version': 1, 'intent_id': identity, 'plan_sha256': fingerprint,
+            'policy_sha256': hashes['policy_new'], 'registry_sha256': hashes['registry_new'],
+            'configuration_published': True, 'image_approved': True}
 
 
 def _artifact_helper():
@@ -300,13 +310,90 @@ class Journal:
         self.db = self.lock = None
 
     def require_available(self, binding: dict | None = None):
-        if any(row["phase"] != "cancelled" for row in self.toolchain_imports()):
+        imports = self.toolchain_imports()
+        if any(row["phase"] not in {'cancelled', 'enrolled'} for row in imports):
             raise IsolationError("Host slot held by an unreconciled toolchain import")
+        if any(row['phase'] == 'enrolled' for row in imports):
+            self.verify_publications(imports)
         if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
                                        (self.binding_claim(binding),)).fetchone():
             raise IsolationError("Dispatch claim already consumed; reconcile instead of replaying")
         if self.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
             raise IsolationError("Validation slot held by an unreconciled job")
+
+    def publication_plan(self, item):
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='toolchain_publication_plans'").fetchone():
+            raise IsolationError('Enrolled toolchain has no publication plan')
+        row = self.db.execute('SELECT * FROM toolchain_publication_plans WHERE import_id=?', (item['id'],)).fetchone()
+        if (row is None or not isinstance(row['plan'], str) or not 1 <= len(row['plan'].encode()) <= 196608
+                or hashlib.sha256(row['plan'].encode()).hexdigest() != row['plan_sha256']):
+            raise IsolationError('Publication plan fingerprint is invalid')
+        value = json.loads(row['plan'])
+        names = {'policy_old', 'registry_old', 'policy_new', 'registry_new'}
+        if (not isinstance(value, dict) or set(value) != {'version', 'intent_id', 'binding', 'documents', 'hashes',
+                                                        'custody_sha256', 'proofs_sha256', 'load_sha256'}
+                or type(value['version']) is not int or value['version'] != 1 or value['intent_id'] != item['id']
+                or not isinstance(value['documents'], dict) or set(value['documents']) != names
+                or not isinstance(value['hashes'], dict) or set(value['hashes']) != names
+                or not isinstance(value['binding'], dict)
+                or set(value['binding']) != {'policy_sha256', 'registry_sha256', 'bundle_sha256'}
+                or any(not isinstance(body, str) or not 1 <= len(body.encode()) <= 32768
+                       or hashlib.sha256(body.encode()).hexdigest() != value['hashes'][name]
+                       for name, body in value['documents'].items())
+                or value['binding'].get('policy_sha256') != item['intent']['policy_sha256']
+                or value['binding'].get('registry_sha256') != item['intent']['registry_sha256']
+                or value['hashes']['policy_old'] != item['intent']['policy_sha256']
+                or value['hashes']['registry_old'] != item['intent']['registry_sha256']):
+            raise IsolationError('Publication plan source/configuration lineage differs')
+        return value, row['plan_sha256']
+
+    def verify_publications(self, imports=None):
+        imports = self.toolchain_imports() if imports is None else imports
+        enrolled = [row for row in imports if row['phase'] == 'enrolled']
+        if not enrolled:
+            return
+        def read(path):
+            for item in (path, *path.parents):
+                info = item.lstat()
+                if item.is_symlink() or info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+                    raise IsolationError('Published configuration is not operator protected')
+            if not path.is_file() or path.stat().st_mode & 0o077 or not 1 <= path.stat().st_size <= 32768:
+                raise IsolationError('Published configuration bound differs')
+            return path.read_bytes()
+        policy_body, registry_body = read(VALIDATION_POLICY), read(TOOLCHAIN_REGISTRY)
+        policy, registry = json.loads(policy_body), validate_toolchain_registry(json.loads(registry_body))
+        remaining = []
+        for item in enrolled:
+            plan, fingerprint = self.publication_plan(item)
+            expected = publication_receipt(item['id'], fingerprint, plan['hashes'])
+            history = item['observations']
+            if (len(history) < 2 or history[-2]['phase'] != 'publishing'
+                    or history[-2]['evidence_sha256'] != fingerprint
+                    or history[-1]['evidence_sha256'] != hashlib.sha256(_canonical_json(expected)).hexdigest()
+                    or int(time.time()) >= item['intent']['stop_unix']):
+                raise IsolationError('Published receipt/lifetime lineage differs')
+            new_policy, new_registry = json.loads(plan['documents']['policy_new']), json.loads(plan['documents']['registry_new'])
+            image = item['intent']['image_id']
+            record = new_registry['images'].get(image)
+            profiles = ('react_test', 'react_build') if item['intent']['role'] == 'react' else ('spring_test', 'spring_package')
+            if (record is None or registry['images'].get(image) != record
+                    or record.get('import_id') != item['id']
+                    or record.get('origin') != 'reviewed_operator_archive'
+                    or record.get('recipe_sha256') != item['intent']['recipe_sha256']
+                    or any(new_policy['images'].get(name) != image for name in profiles)
+                    or any(policy.get('images', {}).get(name) != image for name in profiles)
+                    or any(policy.get('images', {}).get(name) != image for name, value in new_policy['images'].items()
+                           if value == image)):
+                raise IsolationError('Published role record/profile differs')
+            remaining.append(plan['hashes'])
+        current = (hashlib.sha256(policy_body).hexdigest(), hashlib.sha256(registry_body).hexdigest())
+        while remaining:
+            matches = [value for value in remaining if (value['policy_new'], value['registry_new']) == current]
+            if len(matches) != 1:
+                raise IsolationError('Published configuration chain has drift or a fork')
+            matched = matches[0]
+            remaining.remove(matched)
+            current = (matched['policy_old'], matched['registry_old'])
 
     @staticmethod
     def import_intent(value):
@@ -366,7 +453,7 @@ class Journal:
                 raise IsolationError("Toolchain import journal phase differs")
             result.append({"id": identity, "intent": intent, "phase": previous,
                            "observations": observations, "image_approved": False})
-        if sum(item["phase"] != "cancelled" for item in result) > 1:
+        if sum(item["phase"] not in {'cancelled', 'enrolled'} for item in result) > 1:
             raise IsolationError("Toolchain import journal has overlapping maintenance")
         return result
 
@@ -726,6 +813,48 @@ def docker(*args: str, payload: bytes | None = None, timeout: int = 30) -> bytes
     return result.stdout
 
 
+def validate_toolchain_registry(document):
+    """Typed local-operator provenance; never fabricate a repository pull identity."""
+    if (not isinstance(document, dict) or set(document) != {'version', 'images'}
+            or type(document['version']) is not int or document['version'] not in (1, 2)
+            or not isinstance(document['images'], dict) or not 1 <= len(document['images']) <= 8):
+        raise IsolationError('Offline toolchain registry is invalid')
+    legacy = {'archive_path', 'archive_sha256', 'archive_bytes', 'repository_digest'}
+    operator = {'archive_path', 'archive_sha256', 'archive_bytes', 'origin', 'role', 'import_id',
+                'image_index_digest', 'platform_manifest_digest', 'config_digest', 'recipe_sha256',
+                'bundle_sha256', 'prior_policy_sha256', 'prior_registry_sha256', 'proofs', 'stop_unix'}
+    for identity, record in document['images'].items():
+        if (not isinstance(identity, str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', identity)
+                or not isinstance(record, dict) or set(record) not in (legacy, operator)
+                or not isinstance(record['archive_path'], str) or not Path(record['archive_path']).is_absolute()
+                or type(record['archive_bytes']) is not int or not 1 <= record['archive_bytes'] <= 512 * 1024**2
+                or not isinstance(record['archive_sha256'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', record['archive_sha256'])):
+            raise IsolationError('Offline toolchain record is invalid')
+        if set(record) == legacy:
+            if (not isinstance(record['repository_digest'], str)
+                    or not re.fullmatch(r'[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}', record['repository_digest'])):
+                raise IsolationError('Offline repository provenance is invalid')
+            continue
+        role = record.get('role')
+        cases = {'react': {'react_test_pass', 'react_build_pass', 'react_test_fail'},
+                 'spring': {'spring_test_pass', 'spring_package_pass', 'spring_test_fail'}}
+        if (document['version'] != 2 or record['origin'] != 'reviewed_operator_archive'
+                or not isinstance(role, str) or role not in cases
+                or record['image_index_digest'] != identity
+                or type(record['stop_unix']) is not int or record['stop_unix'] < 1
+                or not isinstance(record['proofs'], dict) or set(record['proofs']) != cases[role]
+                or any(not isinstance(record[key], str) or not re.fullmatch(r'[a-f0-9]{64}', record[key])
+                       for key in ('import_id', 'recipe_sha256', 'bundle_sha256',
+                                   'prior_policy_sha256', 'prior_registry_sha256'))
+                or any(not isinstance(record[key], str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', record[key])
+                       for key in ('platform_manifest_digest', 'config_digest'))
+                or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
+                       for value in record['proofs'].values())):
+            raise IsolationError('Offline operator provenance is invalid')
+    return document
+
+
 def ensure_toolchain_image(image_id: str):
     """Reload only an operator-archived exact pin; workload execution never downloads."""
     try:
@@ -743,11 +872,12 @@ def ensure_toolchain_image(image_id: str):
     if registry.stat().st_size > 32768 or registry.stat().st_mode & 0o077:
         raise IsolationError("Offline toolchain registry is invalid")
     document = json.loads(registry.read_text())
-    if (not isinstance(document, dict) or set(document) != {"version", "images"}
-            or document["version"] != 1
-            or not isinstance(document["images"], dict) or len(document["images"]) > 8):
-        raise IsolationError("Offline toolchain registry is invalid")
+    validate_toolchain_registry(document)
     record = document["images"].get(image_id)
+    if isinstance(record, dict) and record.get('origin') == 'reviewed_operator_archive':
+        # Never hide a new daemon RPC inside ordinary workload admission. Reuse
+        # the explicit same-journal maintenance loader and reconciliation instead.
+        raise IsolationError('Operator toolchain is missing; explicit maintenance reconciliation required')
     if (not isinstance(record, dict) or set(record) != {
             "archive_path", "archive_sha256", "archive_bytes", "repository_digest"}
             or not re.fullmatch(r"[0-9a-f]{64}", str(record["archive_sha256"]))

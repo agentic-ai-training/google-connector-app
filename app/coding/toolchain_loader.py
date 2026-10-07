@@ -286,7 +286,7 @@ def reconcile(journal, identity, binding):
     """No Docker load. A positive protected terminal receipt is required."""
     row = verify_binding(journal, identity, binding)
     observed = unit(identity)
-    if row['phase'] not in {'load_started', 'load_uncertain', 'loaded', 'proof_pending'}:
+    if row['phase'] not in {'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled'}:
         return {'phase': row['phase'], 'unit': observed, 'image_approved': False}
     control = directory(journal, identity)
     receipt_path = control / 'result.json'

@@ -20,12 +20,12 @@ import types
 DEPENDENCIES = ("build_artifact", "isolated_validation", "oci_packager", "runtime_image_store",
                 "image_output_store", "image_packaging_worker", "isolated_packaging",
                 "toolchain_spec", "toolchain_archive", "toolchain_staging", "toolchain_loader",
-                "toolchain_proof")
+                "toolchain_proof", "toolchain_publication")
 BUNDLE_NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
                 "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
                 "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
                 "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py",
-                "toolchain_proof.py")
+                "toolchain_proof.py", "toolchain_publication.py")
 
 
 def _bootstrap():
@@ -55,6 +55,7 @@ if not __package__:
 
 from app.coding import isolated_validation as isolation, toolchain_staging as custody, toolchain_loader as loader  # noqa: E402
 from app.coding import toolchain_proof as proof  # noqa: E402
+from app.coding import toolchain_publication as publication  # noqa: E402
 from app.coding.toolchain_spec import REVIEWED_ARCHIVES, unique_object  # noqa: E402
 
 
@@ -102,9 +103,11 @@ def configuration():
             or not Path(policy["state_directory"]).is_absolute()
             or not isinstance(policy.get("images"), dict)
             or set(registry) != {"version", "images"} or type(registry["version"]) is not int
-            or registry["version"] != 1
+            or registry["version"] not in (1, 2)
             or not isinstance(registry["images"], dict) or not 1 <= len(registry["images"]) <= 8):
         raise OperatorToolchainError("operator policy or registry differs")
+    if registry['version'] == 2:
+        isolation.validate_toolchain_registry(registry)
     custody.protected(Path(policy["state_directory"]), private=True)
     return policy, policy_hash, registry_hash
 
@@ -151,6 +154,8 @@ def operate(request, stream):
                   "load_prepare": {"intent_id"}, "load_dispatch": {"intent_id"},
                   "load_observe": {"intent_id"},
                   "proof_run": {"intent_id", "case"}, "proof_observe": {"intent_id"},
+                  "publish_prepare": {"intent_id"},
+                  "publish": {"intent_id", "plan_sha256"},
                   "cancel_preload": {"intent_id", "expected_phase"},
                   "quarantine": {"intent_id", "partial_sha256", "partial_bytes"}}
     if (not isinstance(request, dict) or not isinstance(request.get("operation"), str)
@@ -190,6 +195,8 @@ def operate(request, stream):
         if item is None:
             raise OperatorToolchainError("reserved operator intent is unknown")
         intent = item["intent"]
+        if intent['host_instance_id'] != TARGET_INSTANCE or intent['stop_unix'] != STOP_UNIX:
+            raise OperatorToolchainError('publication/import target lifetime differs')
         if request["operation"] == "cancel_preload":
             if (intent["host_instance_id"] != TARGET_INSTANCE or intent["stop_unix"] != STOP_UNIX
                     or request["expected_phase"] not in ("prepared", "archive_verified")):
@@ -200,6 +207,17 @@ def operate(request, stream):
                                                    custody.checksum(custody.canonical(request)))
             return {"operation": "cancel_preload", "reservation": item, "custody_retained": True,
                     "image_loaded": False, "image_approved": False, "production_policy_changed": False}
+        if request['operation'] == 'publish_prepare':
+            binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
+                       'registry_sha256': registry_hash}
+            result = publication.prepare(journal, identity, binding, POLICY, REGISTRY)
+            return {'operation': request['operation'], 'publication': result,
+                    'production_policy_changed': False, 'image_approved': False}
+        if request['operation'] == 'publish':
+            result = publication.publish(journal, identity, request['plan_sha256'],
+                                         request['bundle_sha256'], POLICY, REGISTRY)
+            return {'operation': request['operation'], 'publication': result,
+                    'production_policy_changed': False, 'validation_policy_changed': True, 'image_approved': True}
         if (intent["host_instance_id"] != TARGET_INSTANCE or intent["stop_unix"] != STOP_UNIX
                 or intent["policy_sha256"] != policy_hash or intent["registry_sha256"] != registry_hash
                 or any(intent.get(key) != value for key, value in REVIEWED_ARCHIVES[intent["role"]].items())):

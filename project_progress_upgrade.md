@@ -2663,6 +2663,24 @@ changes become production evidence.
   Final local verification: 1,114 coding tests passed without skips against disposable
   local PostgreSQL schemas; targeted Flake8/Bandit and whitespace checks passed.
   This does not close trusted CI, live enrollment or the enclosing unchecked item.
+  The next local checkpoint completes immutable publication preparation and explicit
+  two-file forward publication/recovery. Registry v2 preserves Python provenance and
+  binds operator-built images to actual archive/index/platform/config/recipe/proof
+  identities without fabricated repository digests. `publishing` keeps the shared
+  slot reserved until actual policy/registry bytes, a deterministic receipt and the
+  multi-role publication chain verify. Role approval cannot be inferred from an
+  `enrolled` phase alone; missing operator images never silently reload. Real process
+  death is tested at reservation, both replacements and completion. Full coding suite:
+  1,187 local tests passed without skips; targeted Flake8/Bandit/diff checks passed.
+  Reviewed closure: fourteen files; actual VM: eleven-file custody release with two
+  cancelled retained imports. Live publication and central funded enrollment are not
+  claimed. Review the failed-host-proof recovery route before actual loading; complete
+  Node/Java host tests, signing, deployment and Chat delivery remain unchecked.
+  Installer compatibility additionally reads completed publication evidence through
+  protected current/exact-predecessor source and read-only SQLite under its existing
+  flock. Invalid or unreadable enrollment stays pending; no old-source rollback is
+  granted. A fresh read-only VM probe still shows eleven files and snapshot
+  `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

@@ -44,7 +44,8 @@ execution service.
 
 `toolchain_loader.py` adds the fixed operator systemd outbox/worker/read-back path.
 That checkpoint's source closure had twelve files; the subsequent local fixed-fixture
-proof controller below makes the reviewed closure thirteen files. **The VM still runs the independently
+proof controller below made the reviewed closure thirteen files. The subsequent
+publication controller expands it to fourteen. **The VM still runs the independently
 verified eleven-file custody release** `529bc18...`. No live load/unit dispatch,
 registry change, role approval or generated code execution occurred in this checkpoint.
 Both verified public imports remain cancelled with retained bytes/audit. Do not
@@ -91,9 +92,9 @@ Cancelled/unloaded imports are refused before any systemd inspection.
 This remains **local source/test evidence**. The VM is still on its eleven-file
 custody release; public archives remain cancelled and retained. No live image load,
 fixed-fixture execution, role approval, registry publication or budget mutation
-has occurred. The verified publication controller and live daemon-capacity checks
-must be ready before the first real import; otherwise proof-pending would have no
-safe completion path. Do not use these case receipts as generated-app validation
+has occurred. Verified publication is now implemented locally below; live daemon
+capacity and failure-recovery checks are still required before the first real import.
+Do not use these case receipts as generated-app validation
 attestations or as authorization for deployment.
 
 Final local verification: **1,114 coding tests passed** using only disposable
@@ -101,6 +102,79 @@ loopback PostgreSQL schemas, with no skipped cases. Flake8, targeted Bandit and
 `git diff --check` passed. The existing Vertex SDK deprecation and pre-existing
 unused Bandit suppressions remain warnings. These results are not trusted CI,
 cloud runtime enforcement evidence or production enrollment.
+
+### Verified two-file publication — local implementation, 7 October
+
+`toolchain_publication.py` adds `publish_prepare` and an explicit `publish` operation.
+Preparation verifies all three retained fixed-case receipts, actual immutable image
+read-back and positive loader completion, complete archive custody, original policy
+and registry bytes, clean execution state and the fixed host stop. It durably stores
+one immutable, hash-bound plan per import. Preparing a plan does not write either
+configuration file, clear maintenance or approve a role.
+
+```text
+proof_pending -> immutable plan -> explicit publish(plan SHA + reviewed source SHA)
+      -> publishing (ordinary admission remains closed)
+      -> exact registry replacement + fsync/read-back
+      -> exact policy replacement + fsync/read-back
+      -> deterministic receipt + enrolled
+      -> ordinary admission verifies actual pair + receipt + publication chain
+```
+
+The same explicit operation recovers an interrupted publication. Each current file
+must be either the plan's exact original bytes or exact candidate bytes. A partial
+staging file must be an exact candidate prefix; foreign bytes remain for review.
+The publisher never rolls back unrelated edits or chooses another plan. Failure
+after one replacement, after both replacements or before the final journal update
+keeps the shared slot closed. Phase `enrolled` alone is insufficient: admission
+checks protected current files, the immutable plan, deterministic receipt and an
+unbroken hash chain when the second role is subsequently published. Source/binding
+changes, expiry, incomplete evidence or ambiguous native cleanup remain barriers.
+
+Registry v2 distinguishes `reviewed_operator_archive` from the existing repository
+origin. The original Python archive record is preserved exactly. React/Spring
+records retain import ID, index/platform/config identities, recipe/controller hashes,
+three case receipt hashes, original configuration hashes, archive custody and stop.
+There is no invented `repository_digest` for locally built images. A missing operator
+image cannot trigger hidden reload during ordinary validation; explicit maintenance
+reconciliation is required. Local role approval does not enroll central funded
+capacity, sign a generated image, publish a core candidate or deploy an application.
+
+Operator commands (the complete reviewed controller must first be installed):
+
+```sh
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation publish_prepare --intent-id "$VERIFIED_IMPORT_ID"
+
+# Review and reuse the exact returned plan hash; do not invent one.
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation publish --intent-id "$VERIFIED_IMPORT_ID" \
+  --plan-sha256 "$REVIEWED_PUBLICATION_PLAN_SHA256"
+```
+
+Evidence: 64 local publication tests cover preserved Python provenance, bounded
+immutable plans, refusal of missing/changed proofs, missing-image fail-closed behavior,
+prefix staging, receipt/configuration drift, two-role chains and real `os._exit`
+after reservation, either rename and completion. Systemd/Docker/native operations
+are mocked; this is not live gVisor proof. The complete local coding suite passes
+**1,187 tests** after the final installer-reader cases, with disposable loopback
+PostgreSQL and no skips; lint/security/whitespace
+checks pass with existing warnings. The VM remains on its eleven-file custody release;
+both imports are cancelled. Live rollout, complete host proof and generated-app
+validation/deployment/Chat proof remain open. Before loading, also review the recovery
+route for a completed image whose fixed host proof cannot pass; uncertain daemon
+operations must never be released merely to unblock progress.
+
+Completed enrolled history is also checked by the bundle installer through a protected
+current-source reader and read-only SQLite under its already-owned flock. During an
+interrupted directory swap it may use only the exact recorded predecessor reader.
+It does not open another Journal or clear a phase. Invalid or unreadable publication
+history stays pending; rollback after retained imports remains prohibited. A fresh
+read-only VM probe still reports eleven source files and snapshot
+`c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`;
+the new fourteen-file controller has not been installed in that observation.
 
 ```text
 cancelled verified custody -> re-read archive/receipt/history + current config
@@ -124,7 +198,7 @@ cancelled verified custody -> re-read archive/receipt/history + current config
                           terminal receipt -> loaded     ack true, readback false
                                               |                 |
                        host-profile proof     +---- observe only --+
-                       publication/approval [still unfinished]
+                       publication/approval [local controller above; live pending]
 ```
 
 The worker runs separately from SSH, with a retained unique unit, a 300-second
@@ -141,7 +215,8 @@ exists or the unit is absent. A protected normal-completion receipt plus exact
 current projected image metadata can repair a lost final journal write without a
 second load. Claims bind boot ID, PID/start ticks, unit invocation, dispatch/custody
 hashes and journal history. Partial claim files also prohibit redispatch. A loaded
-image remains reserved and unapproved; there is still no proof/publication release API.
+image remains reserved and unapproved until the verified publication controller above
+has completed the exact pair and receipt. This paragraph describes the earlier loader checkpoint.
 
 Real `os._exit` tests cover death immediately before the mocked RPC and after the
 terminal receipt but before the final SQLite update. Other tests reject changed
@@ -171,7 +246,7 @@ prepared -> archive_verified -> load_started -> loaded -> proof_pending
                                                     |
                                   validation/packaging remain blocked
 
-proof_pending --X--> publication/approval [controller not implemented yet]
+proof_pending -> publishing -> enrolled [new local controller; live pending]
 ```
 
 Cancellation is permitted only before a load starts. Timeout/expiry never clears
@@ -195,7 +270,8 @@ work. The reviewed custody-only controller below can reserve, transfer, reconcil
 and explicitly cancel a never-started load, retaining its archive and audit history.
 Do not advance a live reservation to loading until the protected load/reconciliation,
 four-profile host proof and verified publication controller are complete. There is
-intentionally no release-from-proof-pending API yet.
+no implicit release-from-proof-pending API; the explicit verified publisher above is
+the new local completion route.
 
 ## Fixed-target operator custody transport — 6 October
 

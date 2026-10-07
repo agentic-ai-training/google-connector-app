@@ -23,16 +23,18 @@ import zlib
 ROOT = Path("/usr/local/libexec/gca")
 RELEASES = Path("/usr/local/libexec/gca-bundle-releases")
 POLICY = Path("/etc/gca-validation/policy.json")
+REGISTRY = Path('/etc/gca-validation/toolchain-registry.json')
 NAMES = ("isolated_validation.py", "build_artifact.py", "oci_packager.py",
          "runtime_image_store.py", "image_output_store.py", "image_packaging_worker.py",
          "isolated_packaging.py", "toolchain_spec.py", "toolchain_archive.py",
          "toolchain_staging.py", "operator_toolchain_host.py", "toolchain_loader.py",
-         "toolchain_proof.py")
+         "toolchain_proof.py", "toolchain_publication.py")
 # A completed historical installation is evidence, not a request to install its
 # old inventory. Accept only the exact previous protocol and the current one.
 LEGACY_NAMES = NAMES[:7]
 PRIOR_CUSTODY_NAMES = NAMES[:11]
 PRIOR_LOADER_NAMES = NAMES[:12]
+PRIOR_PROOF_NAMES = NAMES[:13]
 MAX_FRAME = 256000
 MAX_DECODED_FRAME = 384000
 
@@ -218,7 +220,7 @@ def record():
             or result["phase"] not in {"prepared", "root_saved", "published", "committed", "rolled_back"}
             or not isinstance(result["old"], dict) or not isinstance(result["new"], dict)
             or set(result["new"]) not in (set(LEGACY_NAMES), set(PRIOR_CUSTODY_NAMES),
-                                         set(PRIOR_LOADER_NAMES), set(NAMES))):
+                                         set(PRIOR_LOADER_NAMES), set(PRIOR_PROOF_NAMES), set(NAMES))):
         raise BundleError("installation intent is invalid")
     for tree in (result['old'], result['new']):
         if not 2 <= len(tree) <= 23 or not {'isolated_validation.py', 'build_artifact.py'} <= set(tree):
@@ -286,6 +288,40 @@ def probe_import(directory):
     )
     if result.returncode:
         raise BundleError("reviewed bundle isolated import failed")
+
+
+def verify_enrolled(connection, state):
+    """Read-only publication check using the protected current/predecessor reader.
+
+    No new Journal is opened: the installer already owns the same flock and a
+    read-only SQLite connection. An interrupted rename may require the exact
+    recorded predecessor source, never arbitrary request/workspace code.
+    """
+    source_path = ROOT / 'isolated_validation.py'
+    expected = None
+    if not ROOT.exists():
+        transaction = record()
+        if transaction is None:
+            raise BundleError('published history has no protected source reader')
+        source_path = RELEASES / (transaction['id'] + '.previous') / 'isolated_validation.py'
+        expected = transaction['old'].get('isolated_validation.py', {}).get('hash')
+    safe(source_path)
+    if not source_path.is_file() or not 1 <= source_path.stat().st_size <= 100000:
+        raise BundleError('publication reader source bound differs')
+    body = source_path.read_bytes()
+    if expected is not None and digest(body) != expected:
+        raise BundleError('publication predecessor reader differs')
+    namespace = {'__name__': 'gca_installer_publication_reader', '__file__': str(source_path), '__package__': None}
+    exec(compile(body, str(source_path), 'exec'), namespace)  # nosec B102
+    namespace['VALIDATION_POLICY'] = POLICY
+    namespace['TOOLCHAIN_REGISTRY'] = REGISTRY
+    reader = namespace.get('Journal')
+    if reader is None or not callable(getattr(reader, 'verify_publications', None)):
+        raise BundleError('protected source cannot interpret published history')
+    connection.row_factory = sqlite3.Row
+    journal = reader.__new__(reader)
+    journal.directory, journal.db, journal.lock = state, connection, None
+    journal.verify_publications()
 
 
 def reviewed_files(files):
@@ -505,7 +541,12 @@ def operate(request):
                 # loss. Old bundles lack this barrier, so rollback after any import
                 # history requires a forward-compatible operator review.
                 imports = connection.execute("SELECT phase FROM toolchain_imports LIMIT 9").fetchall()
-                pending_imports = len(imports) > 8 or any(row[0] != "cancelled" for row in imports)
+                pending_imports = len(imports) > 8 or any(row[0] not in {'cancelled', 'enrolled'} for row in imports)
+                if not pending_imports and any(row[0] == 'enrolled' for row in imports):
+                    try:
+                        verify_enrolled(connection, state)
+                    except (RuntimeError, OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+                        pending_imports = True
                 if pending_imports and request["operation"] != "probe":
                     raise BundleError("unreconciled toolchain import prevents bundle mutation")
                 if request["operation"] == "rollback" and imports:

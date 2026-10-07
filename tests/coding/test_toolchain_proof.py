@@ -31,7 +31,7 @@ def execute(host, monkeypatch, *, valid=True, preparation_failed=False):
 
     def run(source, profile, timeout, policy, journal, job, **hooks):
         calls.append(profile)
-        assert journal.toolchain_imports()[0]['phase'] == 'proof_pending'
+        assert next(row for row in journal.toolchain_imports() if row['id'] == host.identity)['phase'] == 'proof_pending'
         assert timeout == 180 and hooks['proof_cgroup'] == proof.native.CGROUP_PARENT
         assert hooks['readiness'] is proof.readiness
         assert hooks['native_cleanup'] is proof.native.require_native_cleanup

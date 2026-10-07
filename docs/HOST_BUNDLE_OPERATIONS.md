@@ -7,17 +7,26 @@ resource groups, enroll financial capacity, run generated code or deploy apps.
 
 ## Installation protocol
 
-The subsequent **local** loader/proof source protocol accepts thirteen exact files.
-Historical completed twelve-file loader transactions remain readable, but do not
+The subsequent **local** loader/proof/publication source protocol accepts fourteen exact files.
+Historical completed twelve/thirteen-file transactions remain readable, but do not
 authorize installing a partial new source closure. The live VM remains on the
 eleven-file custody release documented below; no load unit
 was dispatched. The new installer preserves the 256,000-byte wire cap. Large apply
 frames use a version-2 zlib/base64 envelope with declared count/SHA-256 and a separate
 384,000-byte decoded ceiling. Decompression is limited before allocation; trailing
 streams, incomplete streams, wrong sizes/hashes, duplicate keys and compressed
-operations other than apply/exact forward resume are rejected. Historical exact seven/eleven/twelve-file transactions
-remain readable; a new install requires the exact current thirteen-file inventory.
+operations other than apply/exact forward resume are rejected. Historical exact seven/eleven/twelve/thirteen-file transactions
+remain readable; a new install requires the exact current fourteen-file inventory.
 No missing helper is ignored or installed outside the reviewed complete transaction.
+
+An `enrolled` import is not treated as completed merely because its phase says so.
+The installer checks its publication plan, receipt, actual protected policy/registry
+pair and complete provenance chain, using read-only SQLite while holding the same
+host flock. The verifier comes from protected current source, or the exact recorded
+predecessor when an interrupted swap has removed the active directory. Unknown,
+drifted or unreadable history remains pending. This permits verified completed
+enrollment to coexist with later source updates without authorizing rollback into
+an older launcher that lacks the retained-import/publication barriers.
 
 ```text
 read-only probe: exact old-tree hash + idle host journal
@@ -87,8 +96,8 @@ python -m scripts.install_packaging_bundle \
   --apply --expected-snapshot-hash "$OBSERVED_SNAPSHOT_HASH"
 ```
 
-Only the exact thirteen explicit known filenames are accepted by the new source for
-a new installation. Saved transactions accept the exact historical seven/eleven/twelve-file
+Only the exact fourteen explicit known filenames are accepted by the new source for
+a new installation. Saved transactions accept the exact historical seven/eleven/twelve/thirteen-file
 inventory or the current inventory, with typed hash/mode evidence and a rederived ID.
 Arbitrary partial inventories are not compatible transactions. A lost response does **not**
 authorize blind retry. Probe again; if it reports `interrupted=true`, inspect its

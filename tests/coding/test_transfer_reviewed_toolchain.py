@@ -202,3 +202,33 @@ def test_wrong_fixture_role_is_rejected_before_any_transport(transport):
     with pytest.raises(RuntimeError, match='fixture role/case'):
         client.rpc(None, 'proof_run', fixture_role='spring', intent_id='b' * 64, case='react_test_pass')
     assert transport.processes == []
+
+
+@pytest.mark.parametrize('fault', [None, 'configuration_published', 'image_approved', 'intent_id'])
+def test_publication_preparation_cannot_claim_policy_write_or_image_approval(transport, fault):
+    result = {'intent_id': 'b' * 64, 'phase': 'prepared', 'plan_sha256': 'c' * 64,
+              'policy_sha256': 'd' * 64, 'registry_sha256': 'e' * 64,
+              'image_approved': False, 'configuration_published': False}
+    if fault:
+        result[fault] = 'a' * 64 if fault == 'intent_id' else True
+    transport.results.append(evidence('publish_prepare', publication=result, image_approved=False))
+    if fault:
+        with pytest.raises(RuntimeError, match='publication preparation evidence'):
+            client.rpc(None, 'publish_prepare', intent_id='b' * 64)
+    else:
+        assert client.rpc(None, 'publish_prepare', intent_id='b' * 64)['publication'] == result
+
+
+@pytest.mark.parametrize('fault', [None, 'version', 'configuration_published', 'policy_sha256', 'plan_sha256'])
+def test_explicit_publication_accepts_only_exact_verified_receipt(transport, fault):
+    result = {'version': 1, 'intent_id': 'b' * 64, 'plan_sha256': 'c' * 64,
+              'policy_sha256': 'd' * 64, 'registry_sha256': 'e' * 64,
+              'image_approved': True, 'configuration_published': True, 'replayed_observation': False}
+    if fault:
+        result[fault] = True if fault == 'version' else False if fault == 'configuration_published' else 'wrong'
+    transport.results.append(evidence('publish', publication=result, image_approved=True, validation_policy_changed=True))
+    if fault:
+        with pytest.raises(RuntimeError, match='verified publication evidence'):
+            client.rpc(None, 'publish', intent_id='b' * 64, plan_sha256='c' * 64)
+    else:
+        assert client.rpc(None, 'publish', intent_id='b' * 64, plan_sha256='c' * 64)['publication'] == result
