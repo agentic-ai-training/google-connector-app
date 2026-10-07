@@ -3549,7 +3549,7 @@ envelope uses base64 for binary transport and zlib for compression.
 ```text
 bounded wire bytes -> unique-key JSON -> exact envelope -> bounded base64 decode
        -> decompression(max_output + 1) -> exact count/hash/eof/no trailing bytes
-       -> apply only -> exact filenames/source checks -> existing journal/swap
+       -> apply or exact forward resume -> source checks -> existing journal/swap
 ```
 
 A **decompression bomb** is a small compressed input that expands to enormous data.
@@ -3559,3 +3559,56 @@ missing end-of-stream, count/hash mismatch and duplicate keys. Let W be wire cap
 D decoded cap: retained data is bounded by O(W + D), not attacker-proposed expansion.
 This is not signature verification: authorization still comes from the protected
 operator source and pinned SSH/host identity, not a caller's supplied hash.
+
+<a id="dictionary-forward-recovery-and-monotone-authority"></a>
+## Forward recovery, monotone authority and interrupted multi-rename updates
+
+**Forward recovery** completes the already-recorded target state after interruption;
+**rollback** restores the previous state. They are not interchangeable. In this
+project, an old launcher may lack the code needed to recognize retained imports or
+packaging work. Rolling back source could therefore discard a safety barrier even
+when the data remains. Forward recovery preserves that capability without inventing
+a new candidate or deleting history.
+
+**Monotone authority** here means recovery cannot obtain greater permission merely
+because a process crashed. Its allowed target is exactly the original candidate:
+the source bodies, filenames, file modes and their hashes must match the durable
+intent. It cannot substitute a repair generated later, approve a toolchain, increase
+capacity or clear an uncertain operation. A changed candidate needs a new reviewed
+update, not this recovery command.
+
+The DSA model is a small **finite state machine** combined with equality checks on
+three filename-to-hash dictionaries. Recorded phase is only one observation: it can
+lag a successful directory rename. The controller therefore checks actual trees.
+
+```text
+old root + staged prefix, no predecessor
+    -> finish only missing exact files -> verify/import -> save old root
+absent root + exact predecessor + complete stage
+    -> publish stage
+new root + exact predecessor, no stage
+    -> verify/import -> commit
+foreign/missing/contradictory trees -> refuse; preserve evidence
+```
+
+In Python, prefix containment is `all(expected.get(k) == v for k, v in observed.items())`.
+This is dictionary-subset reasoning, not permission to overwrite a mismatching file.
+It is valid only while the original root still exists. Once the root has been saved,
+the complete staged dictionary must equal the candidate dictionary. That stronger
+condition prevents recovering from a supposedly completed copy with missing files.
+
+Let F be the number of files, B their total bytes, and R retained predecessor trees.
+SHA-256 read-back costs O(B); comparing inventories costs expected O(F), with O(F)
+metadata. Scanning protected retention costs O(R) bounded by the existing release
+allowance plus the one in-progress staging tree. No dynamic programming is needed:
+there are a few legal transitions, not competing optimization choices. Equality and
+explicit state guards are both simpler and more reliable than a model choosing the
+next rename.
+
+The implementation uses the **same exclusive host flock** as validation/packaging,
+requires no unresolved jobs/imports, fsyncs each directory boundary, preserves the
+predecessor and reruns isolated imports. Local child-process tests kill execution
+with `os._exit` after each rename and then resume from observed state. They establish
+process-death recovery for those boundaries, not arbitrary power-loss guarantees.
+Unknown torn control files are retained for review rather than silently deleted.
+See [operator commands and exact evidence scope](HOST_BUNDLE_OPERATIONS.md).

@@ -16,6 +16,11 @@ from app.coding.validation_transport import IAPValidationHost, _protected, comma
 
 
 def payload(args):
+    if getattr(args, 'resume_forward', None):
+        source = Path(bundle.__file__).parent
+        return {'operation': 'resume_forward', 'installation_id': args.resume_forward,
+                'expected_old_snapshot_hash': args.expected_old_snapshot_hash,
+                'files': {name: (source / name).read_text() for name in bundle.NAMES}}
     if getattr(args, 'retire', None):
         return {'operation': 'retire', 'installation_id': args.retire,
                 'expected_snapshot_hash': args.expected_snapshot_hash,
@@ -32,11 +37,18 @@ def payload(args):
 def verify(request, evidence):
     if not isinstance(evidence, dict) or evidence.get("operation") != request["operation"]:
         raise RuntimeError("Operator bundle evidence is unconfirmed")
-    if request["operation"] == "apply":
+    if request["operation"] in {"apply", "resume_forward"}:
         expected = {name: hashlib.sha256(source.encode()).hexdigest() for name, source in request["files"].items()}
         if (evidence.get("hashes") != expected or evidence.get("isolated_import_passed") is not True
                 or evidence.get("policy_changed") is not False or evidence.get("workload_executed") is not False):
             raise RuntimeError("Installed operator bundle differs from reviewed source")
+        if request['operation'] == 'resume_forward' and (
+            evidence.get('installation_id') != request['installation_id']
+            or evidence.get('forward_resumed') is not True
+            or evidence.get('predecessor_preserved') is not True
+            or evidence.get('data_journal_changed') is not False
+        ):
+            raise RuntimeError('Forward resume identity or preserved state is unconfirmed')
     elif request["operation"] == "rollback":
         if evidence.get("installation_id") != request["installation_id"] or evidence.get("rolled_back") is not True:
             raise RuntimeError("Operator rollback identity is unconfirmed")
@@ -55,8 +67,10 @@ def main():
     group.add_argument("--apply", action="store_true")
     group.add_argument("--rollback", metavar="INSTALLATION_ID")
     group.add_argument('--retire', metavar='OBSOLETE_INSTALLATION_ID')
+    group.add_argument('--resume-forward', metavar='INTERRUPTED_INSTALLATION_ID')
     parser.add_argument("--expected-snapshot-hash")
     parser.add_argument('--expected-retention-hash')
+    parser.add_argument('--expected-old-snapshot-hash')
     args = parser.parse_args()
     if (args.apply or args.retire) and not re.fullmatch(r"[a-f0-9]{64}", args.expected_snapshot_hash or ""):
         parser.error("Apply requires the previously observed full bundle snapshot hash")
@@ -65,6 +79,9 @@ def main():
     if args.retire and (not re.fullmatch(r'[a-f0-9]{64}', args.retire)
                         or not re.fullmatch(r'[a-f0-9]{64}', args.expected_retention_hash or '')):
         parser.error('Retirement requires the exact obsolete ID and fresh retention hash')
+    if args.resume_forward and (not re.fullmatch(r'[a-f0-9]{64}', args.resume_forward)
+                                or not re.fullmatch(r'[a-f0-9]{64}', args.expected_old_snapshot_hash or '')):
+        parser.error('Forward resume requires the exact interrupted ID and original snapshot hash')
     config = _protected(args.operator_config.resolve(), private=True)
     host = IAPValidationHost.model_validate_json(config.read_text())
     argv, environment = command(host)

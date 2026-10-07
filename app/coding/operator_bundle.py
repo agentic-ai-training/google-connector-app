@@ -285,8 +285,112 @@ def probe_import(directory):
         raise BundleError("reviewed bundle isolated import failed")
 
 
+def reviewed_files(files):
+    """Reproduce a complete candidate tree; no hash-only or caller-passed claim."""
+    if not isinstance(files, dict) or set(files) != set(NAMES):
+        raise BundleError("exact reviewed operator bundle required")
+    for name, source in files.items():
+        if not isinstance(source, str) or not 0 < len(source.encode()) <= 100000:
+            raise BundleError("reviewed source exceeds its bound")
+        compile(source, name, "exec")
+    return {name: {"hash": digest(source.encode()),
+                   "mode": 0o755 if name == "isolated_validation.py" else 0o644}
+            for name, source in files.items()}
+
+
+def resume_forward(request, state, transaction):
+    """Finish this exact recorded update, never restore an older launcher.
+
+    Durable phase writes can lag renames. The actual protected trees decide which
+    step remains, but never authorize a new candidate or removal of unknown data.
+    The caller already owns the host flock and verified no pending host work.
+    """
+    if (transaction is None or request['installation_id'] != transaction['id']
+            or transaction['phase'] == 'rolled_back'
+            or request['expected_old_snapshot_hash'] != digest(canonical(transaction['old']))):
+        raise BundleError('forward resume installation identity differs')
+    new = reviewed_files(request['files'])
+    if new != transaction['new']:
+        raise BundleError('forward resume source differs from recorded candidate')
+    if any(item['phase'] == 'prepared' for item in retirements(state).values()):
+        raise BundleError('bundle retirement needs reconciliation before forward resume')
+    safe(RELEASES, private=True)
+    staged = RELEASES / (transaction['id'] + '.staged')
+    previous = RELEASES / (transaction['id'] + '.previous')
+    entries = list(RELEASES.iterdir())
+    # An interrupted swap temporarily has one extra staging tree. No new release
+    # allocation or retention-limit increase is granted by recovery.
+    if len(entries) > 9:
+        raise BundleError('forward resume retention inventory exceeds bound')
+    for path in entries:
+        safe(path)
+        if path.name == 'transaction.json' and path.is_file():
+            continue
+        if path == staged and path.is_dir():
+            continue
+        if not path.is_dir() or not re.fullmatch(r'[a-f0-9]{64}\.previous', path.name):
+            raise BundleError('forward resume has an untracked retention object')
+        snapshot(path)
+    current = snapshot(ROOT) if ROOT.exists() or ROOT.is_symlink() else None
+    if current not in (None, transaction['old'], new):
+        raise BundleError('forward resume refuses an unrecognized current bundle')
+    if previous.exists() or previous.is_symlink():
+        verified(previous, transaction['old'])
+        if current == transaction['old']:
+            raise BundleError('forward resume has contradictory old-tree ownership')
+    elif current != transaction['old']:
+        raise BundleError('forward resume is missing its protected predecessor')
+    if ((transaction['phase'] in {'published', 'committed'} and current != new)
+            or (transaction['phase'] == 'root_saved' and current == transaction['old'])):
+        raise BundleError('forward resume durable phase contradicts its trees')
+    if current == new:
+        if staged.exists() or staged.is_symlink():
+            raise BundleError('forward resume staging destination is occupied')
+        probe_import(ROOT)
+    else:
+        if staged.exists() or staged.is_symlink():
+            remaining = snapshot(staged, allow_incomplete=True)
+            if any(new.get(name) != metadata for name, metadata in remaining.items()):
+                raise BundleError('forward resume staged prefix differs')
+        else:
+            if current is None:
+                raise BundleError('forward resume lost its complete staging tree')
+            staged.mkdir(mode=0o755)
+            sync(RELEASES)
+            remaining = {}
+        if current is None and remaining != new:
+            raise BundleError('forward resume saved root lacks a complete staging tree')
+        for name, source in request['files'].items():
+            if name not in remaining:
+                write(staged / name, source.encode(), new[name]['mode'])
+        verified(staged, new)
+        probe_import(staged)
+        sync(staged)
+        if current is not None:
+            os.rename(ROOT, previous)
+            sync(ROOT.parent)
+            sync(RELEASES)
+        set_phase(transaction, 'root_saved')
+        os.rename(staged, ROOT)
+        sync(ROOT.parent)
+        sync(RELEASES)
+        set_phase(transaction, 'published')
+        verified(ROOT, new)
+        probe_import(ROOT)
+    verified(previous, transaction['old'])
+    verified(ROOT, new)
+    set_phase(transaction, 'committed')
+    return {'operation': 'resume_forward', 'installation_id': transaction['id'],
+            'journal_idle': True, 'forward_resumed': True, 'predecessor_preserved': True,
+            'hashes': {name: value['hash'] for name, value in new.items()},
+            'isolated_import_passed': True, 'policy_changed': False,
+            'workload_executed': False, 'data_journal_changed': False}
+
+
 def locked_operation(request, state):
     existing = record() if RELEASES.exists() else None
+    if request['operation'] == 'resume_forward':
+        return resume_forward(request, state, existing)
     if request["operation"] == "rollback":
         if any(item['phase'] == 'prepared' for item in retirements(state).values()):
             raise BundleError('bundle retirement needs reconciliation before rollback')
@@ -300,8 +404,11 @@ def locked_operation(request, state):
                 raise BundleError("interrupted installation has an unrecognized bundle")
             return {"operation": "probe", "journal_idle": True, "interrupted": True,
                     "installation_id": existing["id"], "phase": existing["phase"],
+                    "old_snapshot_hash": digest(canonical(existing['old'])),
+                    "candidate_snapshot_hash": digest(canonical(existing['new'])),
+                    "forward_resume_supported": set(existing['new']) == set(NAMES),
                     "snapshot_hash": digest(canonical(current)) if current else None}
-        raise BundleError("interrupted installation requires explicit rollback")
+        raise BundleError("interrupted installation requires explicit rollback or exact forward resume")
     current = snapshot(ROOT)
     fingerprint = digest(canonical(current))
     audit = retirements(state)
@@ -319,14 +426,7 @@ def locked_operation(request, state):
     if any(item['phase'] == 'prepared' for item in audit.values()):
         raise BundleError('bundle retirement needs reconciliation before installation')
     files = request["files"]
-    if not isinstance(files, dict) or set(files) != set(NAMES):
-        raise BundleError("exact reviewed operator bundle required")
-    for name, source in files.items():
-        if not isinstance(source, str) or not 0 < len(source.encode()) <= 100000:
-            raise BundleError("reviewed source exceeds its bound")
-        compile(source, name, "exec")
-    new = {name: {"hash": digest(source.encode()), "mode": 0o755 if name == "isolated_validation.py" else 0o644}
-           for name, source in files.items()}
+    new = reviewed_files(files)
     if existing and existing["phase"] == "committed" and current == new == existing["new"]:
         return {"operation": "apply", "installation_id": existing["id"], "journal_idle": True,
                 "hashes": {name: value["hash"] for name, value in new.items()},
@@ -368,10 +468,13 @@ def locked_operation(request, state):
 
 
 def operate(request):
-    if not isinstance(request, dict) or request.get("operation") not in {"probe", "apply", "rollback", "retire"}:
+    if not isinstance(request, dict) or request.get("operation") not in {
+        "probe", "apply", "rollback", "retire", "resume_forward",
+    }:
         raise BundleError("invalid operator bundle operation")
     fields = {"probe": {"operation"}, "apply": {"operation", "expected_snapshot_hash", "files"},
               "rollback": {"operation", "installation_id"},
+              "resume_forward": {"operation", "installation_id", "expected_old_snapshot_hash", "files"},
               "retire": {"operation", "installation_id", "expected_snapshot_hash", "expected_retention_hash"}}[request["operation"]]
     if set(request) != fields:
         raise BundleError("invalid operator installation envelope")
@@ -433,7 +536,7 @@ def encode_request(request):
     body = canonical(request)
     if len(body) <= MAX_FRAME:
         return body
-    if request.get('operation') != 'apply' or len(body) > MAX_DECODED_FRAME:
+    if request.get('operation') not in {'apply', 'resume_forward'} or len(body) > MAX_DECODED_FRAME:
         raise BundleError('decoded operator frame exceeds bound')
     frame = canonical({'version': 2, 'encoding': 'zlib-base64', 'decoded_bytes': len(body),
                        'decoded_sha256': digest(body),
@@ -472,7 +575,7 @@ def decode_request(body):
                 or decoder.unused_data or not decoder.eof or digest(expanded) != request['decoded_sha256']):
             raise BundleError('compressed operator content differs')
         request = json.loads(expanded, object_pairs_hook=unique)
-        if not isinstance(request, dict) or request.get('operation') != 'apply':
+        if not isinstance(request, dict) or request.get('operation') not in {'apply', 'resume_forward'}:
             raise BundleError('compressed operator operation differs')
     return request
 

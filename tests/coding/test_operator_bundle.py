@@ -232,8 +232,125 @@ def test_lost_phase_write_after_directory_rename_still_recovers(host, monkeypatc
     assert bundle.snapshot(host.root) == host.old
 
 
+def forward_request(host, identity):
+    return {'operation': 'resume_forward', 'installation_id': identity,
+            'expected_old_snapshot_hash': bundle.digest(bundle.canonical(host.old)),
+            'files': host.request['files']}
+
+
+@pytest.mark.parametrize('boundary', ['prepared', 'partial_stage', 'root_saved', 'published', 'lost_phase'])
+def test_exact_forward_resume_preserves_import_and_packaging_history(host, monkeypatch, boundary):
+    with sqlite3.connect(host.state / 'jobs.sqlite3') as connection:
+        connection.execute("CREATE TABLE toolchain_imports(id TEXT,phase TEXT)")
+        connection.execute("INSERT INTO toolchain_imports VALUES('fixed-import','cancelled')")
+        connection.execute("INSERT INTO jobs VALUES('cleaned','image_packaging')")
+    (host.state / 'packaging-jobs').mkdir(mode=0o700)
+    data_before = (host.state / 'jobs.sqlite3').read_bytes()
+    real_phase, real_write = bundle.set_phase, bundle.write
+
+    def phase(transaction, value):
+        if boundary == 'lost_phase' and value == 'root_saved':
+            raise InterruptedError('rename survived without phase write')
+        real_phase(transaction, value)
+        if boundary == value:
+            raise InterruptedError('recorded boundary')
+
+    def write(path, *args, **kwargs):
+        real_write(path, *args, **kwargs)
+        if boundary == 'partial_stage' and path.parent.name.endswith('.staged'):
+            raise InterruptedError('only first exact file copied')
+
+    monkeypatch.setattr(bundle, 'set_phase', phase)
+    monkeypatch.setattr(bundle, 'write', write)
+    with pytest.raises(InterruptedError):
+        bundle.operate(host.request)
+    monkeypatch.setattr(bundle, 'set_phase', real_phase)
+    monkeypatch.setattr(bundle, 'write', real_write)
+    probe = bundle.operate({'operation': 'probe'})
+    assert probe['old_snapshot_hash'] == bundle.digest(bundle.canonical(host.old))
+    assert probe['forward_resume_supported'] is True and probe['journal_idle'] is True
+    with pytest.raises(bundle.BundleError, match='forward-compatible'):
+        bundle.operate({'operation': 'rollback', 'installation_id': probe['installation_id']})
+    request = forward_request(host, probe['installation_id'])
+    assert bundle.decode_request(bundle.encode_request(request)) == request
+    result = bundle.operate(request)
+    assert verify(request, result)['forward_resumed'] is True
+    assert bundle.snapshot(host.releases / (probe['installation_id'] + '.previous')) == host.old
+    assert set(bundle.snapshot(host.root)) == set(bundle.NAMES)
+    assert (host.state / 'jobs.sqlite3').read_bytes() == data_before
+    assert (host.state / 'packaging-jobs').is_dir()
+    assert bundle.operate(request) == result
+
+
+@pytest.mark.parametrize('fault', ['identity', 'old_hash', 'candidate', 'partial_mutation',
+                                  'foreign_stage', 'previous_mutation', 'missing_stage',
+                                  'active_import', 'active_job', 'phase'])
+def test_forward_resume_rejects_changed_or_ambiguous_authority(host, monkeypatch, fault):
+    real_phase = bundle.set_phase
+
+    def phase(transaction, value):
+        real_phase(transaction, value)
+        if value == 'root_saved':
+            raise InterruptedError('protected rename boundary')
+
+    monkeypatch.setattr(bundle, 'set_phase', phase)
+    with pytest.raises(InterruptedError):
+        bundle.operate(host.request)
+    monkeypatch.setattr(bundle, 'set_phase', real_phase)
+    transaction = bundle.record()
+    request = forward_request(host, transaction['id'])
+    staged = host.releases / (transaction['id'] + '.staged')
+    previous = host.releases / (transaction['id'] + '.previous')
+    if fault == 'identity':
+        request['installation_id'] = '0' * 64
+    elif fault == 'old_hash':
+        request['expected_old_snapshot_hash'] = '0' * 64
+    elif fault == 'candidate':
+        request['files'] = {**request['files'], 'build_artifact.py': '# changed candidate\n'}
+    elif fault == 'partial_mutation':
+        (staged / 'build_artifact.py').write_text('# unrelated\n')
+    elif fault == 'foreign_stage':
+        (staged / 'user-data.txt').write_text('preserve\n')
+    elif fault == 'previous_mutation':
+        (previous / 'build_artifact.py').write_text('# unrelated\n')
+    elif fault == 'missing_stage':
+        (staged / 'build_artifact.py').unlink()
+    elif fault == 'active_import':
+        with sqlite3.connect(host.state / 'jobs.sqlite3') as connection:
+            connection.execute("CREATE TABLE toolchain_imports(id TEXT,phase TEXT)")
+            connection.execute("INSERT INTO toolchain_imports VALUES('uncertain','load_uncertain')")
+    elif fault == 'active_job':
+        with sqlite3.connect(host.state / 'jobs.sqlite3') as connection:
+            connection.execute("INSERT INTO jobs VALUES('cleanup_uncertain','validation')")
+    else:
+        bundle.set_phase(transaction, 'published')
+    before = (host.state / 'jobs.sqlite3').read_bytes()
+    with pytest.raises(bundle.BundleError):
+        bundle.operate(request)
+    assert (host.state / 'jobs.sqlite3').read_bytes() == before
+    assert not host.root.exists()
+    assert previous.exists()
+
+
+def test_forward_resume_cli_preserves_specific_identity_and_complete_source(host):
+    request = payload(SimpleNamespace(resume_forward='a' * 64,
+                                     expected_old_snapshot_hash='b' * 64))
+    assert request['operation'] == 'resume_forward' and set(request['files']) == set(bundle.NAMES)
+    with pytest.raises(RuntimeError, match='identity'):
+        verify(request, {'operation': 'resume_forward', 'hashes': {
+            name: hashlib.sha256(source.encode()).hexdigest() for name, source in request['files'].items()},
+            'isolated_import_passed': True, 'policy_changed': False, 'workload_executed': False})
+
+
+@pytest.mark.parametrize('recovery', ['rollback', 'forward'])
 @pytest.mark.parametrize("after", ["save_old", "publish_new"])
-def test_abrupt_process_death_after_rename_recovers_without_finally(host, after):
+def test_abrupt_process_death_after_rename_recovers_without_finally(host, after, recovery):
+    if recovery == 'forward':
+        with sqlite3.connect(host.state / 'jobs.sqlite3') as connection:
+            connection.execute("CREATE TABLE toolchain_imports(id TEXT,phase TEXT)")
+            connection.execute("INSERT INTO toolchain_imports VALUES('retained-import','cancelled')")
+            connection.execute("INSERT INTO jobs VALUES('cleaned','image_packaging')")
+    data_before = (host.state / 'jobs.sqlite3').read_bytes()
     source = Path(bundle.__file__)
     program = "\n".join([
         "import json,os,pathlib,sys",
@@ -258,7 +375,33 @@ def test_abrupt_process_death_after_rename_recovers_without_finally(host, after)
     probe = bundle.operate({"operation": "probe"})
     assert probe["interrupted"] is True
     assert host.root.exists() is (after == "publish_new")
-    bundle.operate({"operation": "rollback", "installation_id": probe["installation_id"]})
+    if recovery == 'rollback':
+        bundle.operate({"operation": "rollback", "installation_id": probe["installation_id"]})
+        assert bundle.snapshot(host.root) == host.old
+    else:
+        bundle.operate(forward_request(host, probe['installation_id']))
+        assert set(bundle.snapshot(host.root)) == set(bundle.NAMES)
+        assert bundle.snapshot(host.releases / (probe['installation_id'] + '.previous')) == host.old
+    assert (host.state / 'jobs.sqlite3').read_bytes() == data_before
+
+
+def test_forward_resume_owns_same_exclusive_slot(host):
+    result = bundle.operate(host.request)
+    request = forward_request(host, result['installation_id'])
+    lock = os.open(host.state / 'slot.lock', os.O_RDWR)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            bundle.operate(request)
+    finally:
+        os.close(lock)
+
+
+def test_forward_resume_cannot_revive_a_rolled_back_candidate(host):
+    result = bundle.operate(host.request)
+    bundle.operate({'operation': 'rollback', 'installation_id': result['installation_id']})
+    with pytest.raises(bundle.BundleError, match='identity'):
+        bundle.operate(forward_request(host, result['installation_id']))
     assert bundle.snapshot(host.root) == host.old
 
 

@@ -1,4 +1,4 @@
-# Protected host bundle installation and rollback
+# Protected host bundle installation, forward recovery and rollback
 
 This is an **operator** workflow, never a model-selected command or generated-app
 tool. It updates reviewed stdlib files on the existing VM through pinned IAP/SSH.
@@ -13,7 +13,7 @@ was dispatched. The new installer preserves the 256,000-byte wire cap. Large app
 frames use a version-2 zlib/base64 envelope with declared count/SHA-256 and a separate
 384,000-byte decoded ceiling. Decompression is limited before allocation; trailing
 streams, incomplete streams, wrong sizes/hashes, duplicate keys and compressed
-non-apply operations are rejected. Historical exact seven/eleven-file transactions
+operations other than apply/exact forward resume are rejected. Historical exact seven/eleven-file transactions
 remain readable; a new install requires the exact current twelve-file inventory.
 No missing helper is ignored or installed outside the reviewed complete transaction.
 
@@ -89,8 +89,65 @@ Only the exact twelve explicit known filenames are accepted by the new source fo
 a new installation. Saved transactions accept the exact historical seven/eleven-file
 inventory or the current inventory, with typed hash/mode evidence and a rederived ID.
 Arbitrary partial inventories are not compatible transactions. A lost response does **not**
-authorize blind retry. Probe again; if it reports `interrupted=true`, recover the
-exact installation:
+authorize blind retry. Probe again; if it reports `interrupted=true`, inspect its
+exact installation ID, phase, `old_snapshot_hash`, and `candidate_snapshot_hash`.
+
+### Exact forward recovery (local implementation, not yet a live rollout)
+
+The current installer has an explicit `resume_forward` operation for completing the
+**same** recorded twelve-file candidate. It does not restore an older launcher and
+does not create a different release. This addresses the recovery gap where rollback
+is prohibited because import/packaging history must remain readable.
+
+```sh
+python -m scripts.install_packaging_bundle \
+  --operator-config .gca-local/validation-transport.json \
+  --resume-forward "$OBSERVED_INSTALLATION_ID" \
+  --expected-old-snapshot-hash "$OBSERVED_OLD_SNAPSHOT_HASH"
+```
+
+Use the exact source revision of the interrupted candidate. The client sends the
+whole candidate; the host compiles and hashes it, requires equality with the recorded
+new-tree inventory, and rechecks actual old/staged/current trees under the same host
+flock. A partial stage is completed only before the original root has been saved and
+only when every existing file has its expected hash/mode. After the old root is saved,
+a complete verified staging tree must already exist. A published candidate is
+rehashed and imported again rather than swapped a second time.
+
+```text
+recorded candidate + exact source + original hash + idle host slot
+    -> inspect actual trees (phase can lag one rename)
+       -> old root: finish exact staged prefix -> import -> save predecessor
+       -> root absent: require exact predecessor + complete stage
+       -> new root: require exact predecessor + no occupied stage
+    -> publish/reverify/import -> committed
+```
+
+Pending/uncertain imports, unresolved jobs, changed source, symlinks/hard links,
+foreign staged data, missing predecessor/stage, contradictory phases, unfinished
+retirement and rolled-back transactions are rejected. Cancelled import history and
+cleaned packaging history remain intact; neither the SQLite journal nor protected
+policy is changed. Recovery may temporarily observe the existing staging tree, not
+raise the eight-entry release-retention allowance or allocate a new release. Torn
+temporary control files are unrecognized data requiring operator review; this path
+does not silently remove them. Real child-process `os._exit` tests exercise both
+directory-renaming crash boundaries with forward recovery and retained history.
+These tests are local filesystem/SQLite evidence, not live VM or power-loss proof.
+
+Verification checkpoint (7 October 2026): 1,050 coding tests passed with verified
+loopback PostgreSQL and no skips; 257 focused host-bundle/import/load/journal tests
+passed. Flake8, targeted Bandit and whitespace checks passed. The sole full-suite
+warning remains the existing user-owned Vertex dependency deprecation. A fresh
+read-only IAP probe still reports installation `529bc18...bbe4e`, snapshot
+`c39a8d...449d`, an idle journal, no pending imports/retirements, and eight retained
+release entries. No new bundle, image load, role approval or policy edit was applied
+to the VM. The active predecessor remains protected; retention must be reviewed
+before a future new installation.
+
+### Historical rollback (only when journal/history permits)
+
+For a recorded candidate without retained import/packaging history, the older exact
+rollback operation remains available:
 
 ```sh
 python -m scripts.install_packaging_bundle \
@@ -100,8 +157,9 @@ python -m scripts.install_packaging_bundle \
 
 Rollback is refused while any job is unresolved or when packaging history/staging
 exists. Restoring an old bundle after packaging could remove cleanup capability.
-That state requires a reviewed forward-compatible repair, not deleting records or
-using a bypass flag.
+That state requires exact forward recovery for an interrupted current candidate,
+or a separately reviewed new forward-compatible repair. Never delete records or
+use a bypass flag. A committed update is not permission to revert to its old code.
 
 The 6 October journal-barrier rollout is separately read-back verified as installation
 `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`, snapshot

@@ -2632,6 +2632,15 @@ changes become production evidence.
   decoded compressed-apply format. The VM remains on the eleven-file custody release.
   This is not live loading, Node/Java execution, publication or final app proof;
   the full requirement is still unchecked.
+  The next local checkpoint adds explicit forward recovery of the exact recorded
+  twelve-file candidate after an interrupted bundle install. Full source hashes,
+  original tree hash, predecessor custody and actual staged/current trees are
+  reverified under the existing journal flock. Cancelled import/cleaned packaging
+  history survives; pending jobs/imports still deny mutation. No new release,
+  changed policy, hidden rollback or journal deletion is authorized. Tests include
+  actual child-process death after both directory renames, partial staging and
+  lost phase writes. The VM remains on the eleven-file custody release; complete
+  Node/Java sandbox proofs, publication and application deployment remain open.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately
