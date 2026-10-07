@@ -75,8 +75,9 @@ IMPORT_PHASES = {
     "archive_verified": {"load_started", "cancelled"},
     "load_started": {"load_uncertain", "loaded"},
     "load_uncertain": {"loaded"},
-    "loaded": {"proof_pending"},
-    "proof_pending": {'publishing'}, 'publishing': {'enrolled'}, 'enrolled': set(),
+    "loaded": {"proof_pending", "rejected"},
+    "proof_pending": {'publishing', 'rejected'}, 'publishing': {'enrolled'}, 'enrolled': set(),
+    'rejected': set(),
     "cancelled": {"archive_verified"},
 }
 MAX_TOOLCHAIN_IMPORTS = 8
@@ -311,8 +312,9 @@ class Journal:
 
     def require_available(self, binding: dict | None = None):
         imports = self.toolchain_imports()
-        if any(row["phase"] not in {'cancelled', 'enrolled'} for row in imports):
+        if any(row["phase"] not in {'cancelled', 'enrolled', 'rejected'} for row in imports):
             raise IsolationError("Host slot held by an unreconciled toolchain import")
+        self.verify_rejections(imports)
         if any(row['phase'] == 'enrolled' for row in imports):
             self.verify_publications(imports)
         if binding and self.db.execute("SELECT 1 FROM dispatch_claims WHERE claim_id=?",
@@ -342,10 +344,68 @@ class Journal:
                        for name, body in value['documents'].items())
                 or value['binding'].get('policy_sha256') != item['intent']['policy_sha256']
                 or value['binding'].get('registry_sha256') != item['intent']['registry_sha256']
+                or item['intent']['version'] == 2 and value['binding'].get('bundle_sha256') != item['intent']['bundle_sha256']
                 or value['hashes']['policy_old'] != item['intent']['policy_sha256']
                 or value['hashes']['registry_old'] != item['intent']['registry_sha256']):
             raise IsolationError('Publication plan source/configuration lineage differs')
         return value, row['plan_sha256']
+
+    def rejection_proofs(self, identity):
+        """Hash bounded immutable proof rows and their cleaned job identities.
+
+        This is also usable by the read-only installer. It performs no Docker,
+        systemd or native process action and never treats absent results as pass.
+        """
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='toolchain_proof_cases'").fetchone():
+            return hashlib.sha256(_canonical_json([])).hexdigest()
+        rows = self.db.execute('SELECT * FROM toolchain_proof_cases WHERE import_id=? '
+                               'ORDER BY case_name,attempt LIMIT 7', (identity,)).fetchall()
+        if len(rows) > 6:
+            raise IsolationError('Rejected proof inventory exceeds bound')
+        snapshot = []
+        for row in rows:
+            job = self.db.execute('SELECT * FROM jobs WHERE id=?', (row['job_id'],)).fetchone()
+            if job is None or job['state'] != 'cleaned' or row['result'] is not None and len(row['result']) > 8192:
+                raise IsolationError('Rejected proof cleanup or result bound differs')
+            snapshot.append({'proof': dict(row), 'job': dict(job)})
+        return hashlib.sha256(_canonical_json(snapshot)).hexdigest()
+
+    def verify_rejections(self, imports=None):
+        imports = self.toolchain_imports() if imports is None else imports
+        rejected = [row for row in imports if row['phase'] == 'rejected']
+        if not rejected:
+            return
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='toolchain_rejections'").fetchone():
+            raise IsolationError('Rejected import has no verified rejection receipt')
+        rows = self.db.execute('SELECT * FROM toolchain_rejections LIMIT 9').fetchall()
+        known = {row['id'] for row in imports}
+        if len(rows) > 8 or any(row['import_id'] not in known for row in rows):
+            raise IsolationError('Rejection receipt inventory differs')
+        for item in rejected:
+            row = next((r for r in rows if r['import_id'] == item['id']), None)
+            if (row is None or not isinstance(row['receipt'], str) or not 1 <= len(row['receipt'].encode()) <= 8192
+                    or hashlib.sha256(row['receipt'].encode()).hexdigest() != row['receipt_sha256']):
+                raise IsolationError('Rejection receipt fingerprint differs')
+            receipt = json.loads(row['receipt'])
+            fields = {'version', 'intent_id', 'binding', 'custody_sha256', 'load_sha256', 'proofs_sha256',
+                      'image_approved', 'configuration_published', 'custody_retained', 'image_retained'}
+            binding = receipt.get('binding') if isinstance(receipt, dict) else None
+            history = item['observations']
+            if (not isinstance(receipt, dict) or set(receipt) != fields
+                    or type(receipt['version']) is not int or receipt['version'] != 1
+                    or receipt['intent_id'] != item['id'] or receipt['image_approved'] is not False
+                    or receipt['configuration_published'] is not False or receipt['custody_retained'] is not True
+                    or receipt['image_retained'] is not True or not isinstance(binding, dict)
+                    or set(binding) != {'bundle_sha256', 'policy_sha256', 'registry_sha256'}
+                    or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
+                           for value in (*binding.values(), *(receipt[key] for key in
+                                                             ('custody_sha256', 'load_sha256', 'proofs_sha256'))))
+                    or any(binding[key] != item['intent'][key] for key in ('policy_sha256', 'registry_sha256'))
+                    or item['intent']['version'] == 2 and binding['bundle_sha256'] != item['intent']['bundle_sha256']
+                    or len(history) < 2 or history[-2]['phase'] not in {'loaded', 'proof_pending'}
+                    or history[-1]['evidence_sha256'] != row['receipt_sha256']
+                    or self.rejection_proofs(item['id']) != receipt['proofs_sha256']):
+                raise IsolationError('Rejected receipt/proof lineage differs')
 
     def verify_publications(self, imports=None):
         imports = self.toolchain_imports() if imports is None else imports
@@ -401,8 +461,11 @@ class Journal:
         fields = {"version", "role", "host_instance_id", "image_id", "archive_sha256",
                   "archive_bytes", "recipe_sha256", "policy_sha256", "registry_sha256",
                   "stop_unix"}
+        version = value.get('version') if isinstance(value, dict) else None
+        if version == 2:
+            fields.add('bundle_sha256')
         if (not isinstance(value, dict) or set(value) != fields
-                or type(value["version"]) is not int or value["version"] != 1
+                or type(version) is not int or version not in (1, 2)
                 or not isinstance(value["role"], str) or value["role"] not in {"react", "spring"}
                 or not isinstance(value["host_instance_id"], str)
                 or not re.fullmatch(r"[1-9][0-9]{0,19}", value["host_instance_id"])
@@ -412,7 +475,8 @@ class Journal:
                 or not 1024 <= value["archive_bytes"] <= 512 * 1024 * 1024
                 or type(value["stop_unix"]) is not int or value["stop_unix"] <= 0):
             raise IsolationError("Toolchain import intent differs from bounded contract")
-        for field in ("archive_sha256", "recipe_sha256", "policy_sha256", "registry_sha256"):
+        for field in ("archive_sha256", "recipe_sha256", "policy_sha256", "registry_sha256",
+                      *(('bundle_sha256',) if version == 2 else ())):
             if not isinstance(value[field], str) or not re.fullmatch(r"[a-f0-9]{64}", value[field]):
                 raise IsolationError("Toolchain import custody fingerprint is invalid")
         body = json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -453,7 +517,7 @@ class Journal:
                 raise IsolationError("Toolchain import journal phase differs")
             result.append({"id": identity, "intent": intent, "phase": previous,
                            "observations": observations, "image_approved": False})
-        if sum(item["phase"] not in {'cancelled', 'enrolled'} for item in result) > 1:
+        if sum(item["phase"] not in {'cancelled', 'enrolled', 'rejected'} for item in result) > 1:
             raise IsolationError("Toolchain import journal has overlapping maintenance")
         return result
 

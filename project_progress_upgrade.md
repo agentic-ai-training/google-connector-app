@@ -2681,6 +2681,20 @@ changes become production evidence.
   flock. Invalid or unreadable enrollment stays pending; no old-source rollback is
   granted. A fresh read-only VM probe still shows eleven files and snapshot
   `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+  The following recovery checkpoint adds explicit rejection for definitely completed
+  unpublished loads only. It preserves image/archive/proofs, verifies native cleanup
+  and retained receipts before releasing maintenance, and rejects phase-only claims.
+  Ambiguous loads and partial publication remain reserved. New v2 intents bind the
+  reviewed source bundle; bounded ID-only terminal custody reuse avoids re-upload
+  without a hard link, Docker action or deletion. Real process-death tests cover the
+  receipt-before-CAS and completed-lost-response boundaries. These are local recovery
+  changes, not completion of live host proofs, funded enrollment or generated-app
+  deployment. A fresh live read-only probe confirmed journal idle and no pending
+  import, with the same eleven-file snapshot; the VM deadline/resources are unchanged.
+  Final local recovery verification: 1,254 coding tests passed without skips against
+  disposable local PostgreSQL schemas; 255 focused recovery/staging/gateway/installer/
+  transport tests and Flake8/Bandit/whitespace checks passed. These results do not
+  substitute for the pending live toolchain, deployment or original scope acceptance.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

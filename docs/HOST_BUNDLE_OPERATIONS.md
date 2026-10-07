@@ -28,6 +28,15 @@ drifted or unreadable history remains pending. This permits verified completed
 enrollment to coexist with later source updates without authorizing rollback into
 an older launcher that lacks the retained-import/publication barriers.
 
+The next local recovery checkpoint also recognizes `rejected`, but only after
+read-only verification of its immutable receipt, journal CAS and retained cleaned
+proof/job snapshot. An uncertain load or partial publication is still nonterminal.
+No old reader may silently ignore rejection history. New import identities bind
+the reviewed source bundle (v2); retained v1 identities remain compatible. An
+explicit ID-only custody reuse can avoid another upload without granting loading
+authority or deleting any retained bytes. See `OFFLINE_TOOLCHAINS.md` for the
+operator rejection/reuse protocol and the distinction from image approval.
+
 ```text
 read-only probe: exact old-tree hash + idle host journal
         |

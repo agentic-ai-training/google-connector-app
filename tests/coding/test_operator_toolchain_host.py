@@ -56,6 +56,7 @@ def test_probe_prepare_receive_remain_custody_only_and_preserve_registry_and_pol
     item = prepared(target)
     assert item["intent"]["stop_unix"] == host.STOP_UNIX
     assert item["intent"]["host_instance_id"] == host.TARGET_INSTANCE
+    assert item['intent']['version'] == 2 and item['intent']['bundle_sha256'] == 'a' * 64
     receipt = host.operate(request("receive", intent_id=item["id"]), io.BytesIO(target.body))
     assert receipt["custody"]["archive"]["image_loaded"] is False
     assert receipt["custody"]["archive"]["image_approved"] is False

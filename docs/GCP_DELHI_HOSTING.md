@@ -449,3 +449,13 @@ sandbox leftovers. VM policy still approves only Python compilation. There was n
 new resource, production migration, financial enrollment, model call or deadline
 extension. Existing VM usage still consumes credits. The September report remains
 insufficient to reconcile accrued October usage or activate a funded production pool.
+
+The complete 19 September–5 October SKU report was subsequently reconciled in
+[the 7 October cost record](DELHI_BILLING_RECONCILIATION_2026_10_07.md). It does not
+automatically fund a central capacity pool or extend the existing STOP. The next
+local fourteen-file maintenance controller adds post-load fixed proofs, verified
+two-file publication, and explicit non-approving rejection with source-bound intent
+v2 and protected retained-custody reuse. Ambiguous Docker operations remain reserved;
+rejection does not delete an image/archive or roll back partial publication. See
+[offline toolchains](OFFLINE_TOOLCHAINS.md) and
+[host bundle operations](HOST_BUNDLE_OPERATIONS.md) for exact live/local evidence.

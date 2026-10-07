@@ -151,11 +151,13 @@ def operate(request, stream):
     common = {"version", "operation", "bundle_sha256"}
     operations = {"probe": set(), "prepare": {"role", "policy_sha256", "registry_sha256"},
                   "receive": {"intent_id"},
+                  "reuse_custody": {"intent_id", "source_intent_id"},
                   "load_prepare": {"intent_id"}, "load_dispatch": {"intent_id"},
                   "load_observe": {"intent_id"},
                   "proof_run": {"intent_id", "case"}, "proof_observe": {"intent_id"},
                   "publish_prepare": {"intent_id"},
                   "publish": {"intent_id", "plan_sha256"},
+                  "reject": {"intent_id"},
                   "cancel_preload": {"intent_id", "expected_phase"},
                   "quarantine": {"intent_id", "partial_sha256", "partial_bytes"}}
     if (not isinstance(request, dict) or not isinstance(request.get("operation"), str)
@@ -185,7 +187,8 @@ def operate(request, stream):
             if (not isinstance(role, str) or role not in REVIEWED_ARCHIVES
                     or request["policy_sha256"] != policy_hash or request["registry_sha256"] != registry_hash):
                 raise OperatorToolchainError("reviewed catalog or configuration changed")
-            intent = {"version": 1, "role": role, "host_instance_id": TARGET_INSTANCE,
+            intent = {"version": 2, "bundle_sha256": request['bundle_sha256'],
+                      "role": role, "host_instance_id": TARGET_INSTANCE,
                       "policy_sha256": policy_hash, "registry_sha256": registry_hash,
                       "stop_unix": STOP_UNIX, **REVIEWED_ARCHIVES[role]}
             return {"operation": "prepare", "reservation": journal.begin_toolchain_import(intent),
@@ -218,13 +221,24 @@ def operate(request, stream):
                                          request['bundle_sha256'], POLICY, REGISTRY)
             return {'operation': request['operation'], 'publication': result,
                     'production_policy_changed': False, 'validation_policy_changed': True, 'image_approved': True}
+        if request['operation'] == 'reject':
+            binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
+                       'registry_sha256': registry_hash}
+            result = publication.reject(journal, identity, binding, POLICY, REGISTRY)
+            return {'operation': 'reject', 'rejection': result, 'production_policy_changed': False,
+                    'validation_policy_changed': False, 'image_approved': False}
         if (intent["host_instance_id"] != TARGET_INSTANCE or intent["stop_unix"] != STOP_UNIX
                 or intent["policy_sha256"] != policy_hash or intent["registry_sha256"] != registry_hash
+                or intent['version'] == 2 and intent['bundle_sha256'] != request['bundle_sha256']
                 or any(intent.get(key) != value for key, value in REVIEWED_ARCHIVES[intent["role"]].items())):
             raise OperatorToolchainError("reserved operator intent or configuration changed")
         if request["operation"] == "receive":
             return {"operation": "receive", "custody": custody.stage_archive(journal, identity, stream),
                     "production_policy_changed": False}
+        if request['operation'] == 'reuse_custody':
+            return {'operation': 'reuse_custody',
+                    'custody': custody.reuse_custody(journal, identity, request['source_intent_id']),
+                    'production_policy_changed': False}
         if request['operation'].startswith('load_'):
             binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
                        'registry_sha256': registry_hash}

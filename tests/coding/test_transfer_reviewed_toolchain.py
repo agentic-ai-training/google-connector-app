@@ -60,6 +60,30 @@ def test_default_probe_is_only_one_fixed_control_operation(transport):
     assert transport.processes[0].waited
 
 
+@pytest.mark.parametrize('fault', [None, 'approval', 'published', 'custody', 'hash', 'identity'])
+def test_rejection_client_never_confuses_terminal_recovery_with_approval(transport, fault):
+    result = {'version': 1, 'intent_id': 'b' * 64, 'image_approved': False, 'configuration_published': False,
+              'custody_retained': True, 'image_retained': True, 'replayed_observation': False,
+              'custody_sha256': 'c' * 64, 'load_sha256': 'd' * 64, 'proofs_sha256': 'e' * 64}
+    if fault == 'approval':
+        result['image_approved'] = True
+    elif fault == 'published':
+        result['configuration_published'] = True
+    elif fault == 'custody':
+        result['custody_retained'] = False
+    elif fault == 'hash':
+        result['load_sha256'] = 'invalid'
+    elif fault == 'identity':
+        result['intent_id'] = 'a' * 64
+    transport.results.append(evidence('reject', rejection=result, image_approved=False, validation_policy_changed=False))
+    if fault:
+        with pytest.raises(RuntimeError, match='rejection evidence'):
+            client.rpc(None, 'reject', intent_id='b' * 64)
+    else:
+        assert client.rpc(None, 'reject', intent_id='b' * 64)['rejection'] == result
+    assert len(transport.processes) == 1
+
+
 def test_prepare_role_is_a_control_field_and_never_an_export_instruction(transport):
     transport.results.append(evidence("prepare", reservation={"phase": "prepared"}))
     client.rpc(None, "prepare", role="react", policy_sha256="b" * 64, registry_sha256="c" * 64)

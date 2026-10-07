@@ -3720,3 +3720,40 @@ power-loss behavior or live Linux runtime enforcement. Every file/data boundary 
 flushed with `fsync`, but filesystem/provider guarantees still constrain durability.
 Implementation: [publisher](../app/coding/toolchain_publication.py) and
 [admission verifier](../app/coding/isolated_validation.py).
+
+### Deep dictionary: negative authorization, terminal rejection and source-bound retry
+
+**Terminal rejection** is a finite-state-machine outcome, not a synonym for success.
+An operator can abandon a definitely completed but unpublished toolchain while
+retaining all evidence. `rejected` means "do not approve this transaction," not
+"delete its image" or "the Docker call never happened." `load_uncertain` cannot
+transition to it, because an uncertain side effect still needs reconciliation.
+
+```text
+uncertain side effect -> reserved -> independently reconcile
+completed load -> failed/aborted fixture proof -> audited rejection -> no approval
+completed load -> all verified fixtures -> governed publication -> role approval
+```
+
+**Negative authorization** records what authority was NOT granted. A rejection
+receipt explicitly has `image_approved=False` and `configuration_published=False`.
+Consumers verify the root-protected receipt, terminal CAS and retained proof/job
+hash rather than inferring permission from a friendly status label. This is the
+same separation needed for an agent's refusal, partial result or failed verifier:
+none may be presented as successful execution of the requested operation.
+
+**Source-bound retry identity** extends the canonical import key with the reviewed
+controller hash. In Python, `sha256(canonical_json(intent_v2)).hexdigest()` yields a
+different identity for a different controller even if the image bytes are the same.
+The old intent stays terminal; a new reviewed transaction can reuse independently
+verified bytes through a bounded copy. This is not an implicit retry of an uncertain
+effect and does not extend time or financial authority.
+
+**Snapshot integrity** hashes canonical retained proof rows plus their cleaned job
+identities. With at most six attempts per import and eight imports, verification is
+bounded O(N + P + B), where N is imports, P is retained proof/job rows, and B is the
+bounded bytes hashed. Archive copying/reverification is O(A) I/O and bounded-buffer
+space for archive size A. Hard links are prohibited: sharing one mutable inode would
+couple the old evidence to the new transaction and undermine independent custody.
+Receipt persistence before terminal CAS permits exact recovery after process death;
+missing or changed evidence fails closed instead of fabricating a passing result.

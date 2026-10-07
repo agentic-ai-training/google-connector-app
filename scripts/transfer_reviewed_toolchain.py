@@ -157,7 +157,7 @@ def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
         if (not isinstance(evidence, dict) or evidence.get("operation") != request["operation"]
                 or evidence.get("production_policy_changed") is not False):
             raise RuntimeError("host custody evidence differs")
-        if operation == "receive":
+        if operation in {"receive", "reuse_custody"}:
             result = evidence.get("custody", {})
             if (not isinstance(result, dict) or not isinstance(result.get("archive"), dict)
                     or result.get("intent_id") != values.get("intent_id")
@@ -191,6 +191,18 @@ def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
                     or any(not isinstance(result.get(key), str) or not re.fullmatch(r'[a-f0-9]{64}', result[key])
                            for key in ('policy_sha256', 'registry_sha256'))):
                 raise RuntimeError('host verified publication evidence differs')
+        if operation == 'reject':
+            result = evidence.get('rejection')
+            if (not isinstance(result, dict) or result.get('intent_id') != values.get('intent_id')
+                    or type(result.get('version')) is not int or result.get('version') != 1
+                    or result.get('image_approved') is not False or evidence.get('image_approved') is not False
+                    or result.get('configuration_published') is not False
+                    or evidence.get('validation_policy_changed') is not False
+                    or result.get('custody_retained') is not True or result.get('image_retained') is not True
+                    or type(result.get('replayed_observation')) is not bool
+                    or any(not isinstance(result.get(key), str) or not re.fullmatch(r'[a-f0-9]{64}', result[key])
+                           for key in ('custody_sha256', 'load_sha256', 'proofs_sha256'))):
+                raise RuntimeError('host verified rejection evidence differs')
         return evidence
     finally:
         signal.alarm(0)
@@ -204,10 +216,12 @@ def main():
     parser.add_argument("--operator-config", type=Path, required=True)
     parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload",
                                               "load_prepare", "load_dispatch", "load_observe",
-                                              "proof_run", "proof_observe", "publish_prepare", "publish"),
+                                              "proof_run", "proof_observe", "publish_prepare", "publish", "reject",
+                                              "reuse_custody"),
                         default="probe")
     parser.add_argument("--role", choices=("react", "spring"))
     parser.add_argument("--intent-id")
+    parser.add_argument('--source-intent-id')
     parser.add_argument("--policy-sha256")
     parser.add_argument("--registry-sha256")
     parser.add_argument('--plan-sha256')
@@ -230,6 +244,10 @@ def main():
         if not re.fullmatch(r"[a-f0-9]{64}", args.intent_id or ""):
             parser.error("operation requires the exact reserved intent ID")
         values["intent_id"] = args.intent_id
+        if args.operation == 'reuse_custody':
+            if not re.fullmatch(r'[a-f0-9]{64}', args.source_intent_id or ''):
+                parser.error('reuse requires the exact retained source intent ID')
+            values['source_intent_id'] = args.source_intent_id
         if args.operation == 'publish':
             if not re.fullmatch(r'[a-f0-9]{64}', args.plan_sha256 or ''):
                 parser.error('publication requires the exact independently reviewed preparation hash')

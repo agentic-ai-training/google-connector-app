@@ -128,7 +128,7 @@ def context(journal, identity, *, readback=False):
     item = next((row for row in journal.toolchain_imports() if row["id"] == identity), None)
     phases = {"prepared", "archive_verified"}
     if readback:
-        phases |= {'cancelled', 'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled'}
+        phases |= {'cancelled', 'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled', 'rejected'}
     if item is None or item["phase"] not in phases:
         raise ToolchainStagingError("import phase does not permit staging")
     protected(journal.directory, private=True)
@@ -348,3 +348,29 @@ def stage_archive(journal, identity, source=None, *, timeout_seconds=120):
     else:
         journal.record_toolchain_import(identity, "prepared", "archive_verified", checksum(canonical(receipt)))
     return receipt
+
+
+def reuse_custody(journal, identity, source_identity, *, timeout_seconds=120):
+    """Copy exact protected retained bytes to a fresh source-bound intent.
+
+    No caller path, hard link, image loading or deletion is supported. The source
+    must be terminal and independently reverified; all normal destination quota,
+    expiry, partial-file and readback checks still apply.
+    """
+    if any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
+           for value in (identity, source_identity)):
+        raise ToolchainStagingError('reuse requires exact retained intent IDs')
+    rows = {row['id']: row for row in journal.toolchain_imports()}
+    destination, source = rows.get(identity), rows.get(source_identity)
+    fields = ('role', 'host_instance_id', 'image_id', 'archive_sha256', 'archive_bytes', 'recipe_sha256', 'stop_unix')
+    if (identity == source_identity or destination is None or source is None
+            or destination['phase'] not in {'prepared', 'archive_verified'}
+            or source['phase'] not in {'cancelled', 'rejected', 'enrolled'}
+            or any(destination['intent'][key] != source['intent'][key] for key in fields)):
+        raise ToolchainStagingError('reuse requires matching terminal source and fresh destination')
+    journal.verify_rejections()
+    journal.verify_publications()
+    verify_retained_custody(journal, source_identity, timeout_seconds=timeout_seconds)
+    _, directory = context(journal, source_identity, readback=True)
+    with file_stream(directory / 'archive.tar') as stream:
+        return stage_archive(journal, identity, stream, timeout_seconds=timeout_seconds)

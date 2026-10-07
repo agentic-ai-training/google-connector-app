@@ -195,3 +195,69 @@ def publish(journal, identity, fingerprint, bundle_hash, policy_path, registry_p
     journal.record_toolchain_import(identity, 'publishing', 'enrolled', custody.checksum(custody.canonical(receipt)))
     journal.verify_publications()
     return {**receipt, 'replayed_observation': False}
+
+
+def reject(journal, identity, binding, policy_path, registry_path):
+    """Explicit operator abandonment, not approval, rollback or image deletion.
+
+    A positive completed Docker receipt AND current immutable image readback are
+    mandatory. Uncertain loads and partial publication can never enter this path.
+    Receipt commit precedes terminal CAS so a lost response is safely observable.
+    """
+    row = loader.item(journal, identity)
+    if row['phase'] == 'rejected':
+        journal.verify_rejections()
+        saved = journal.db.execute('SELECT receipt FROM toolchain_rejections WHERE import_id=?',
+                                   (identity,)).fetchone()
+        return {**json.loads(saved['receipt']), 'replayed_observation': True}
+    row = loader.verify_binding(journal, identity, binding)
+    if row['phase'] not in {'loaded', 'proof_pending'}:
+        raise ToolchainPublicationError('only definitely completed unpublished loads may be rejected')
+    if journal.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
+        raise ToolchainPublicationError('unfinished execution blocks rejection')
+    for name, path in (('policy', policy_path), ('registry', registry_path)):
+        if custody.checksum(read_configuration(path)[0]) != binding[name + '_sha256']:
+            raise ToolchainPublicationError('rejection cannot conceal configuration drift')
+    if loader.reconcile(journal, identity, binding).get('load_verified') is not True:
+        raise ToolchainPublicationError('rejection requires positive load completion and image readback')
+    retained = custody.verify_retained_custody(journal, identity)
+    fingerprint = custody.checksum(custody.canonical(binding))
+    if proof.schema(journal, create=False):
+        for case in journal.db.execute('SELECT * FROM toolchain_proof_cases WHERE import_id=?', (identity,)):
+            if case['binding_sha256'] != fingerprint:
+                raise ToolchainPublicationError('rejection proof source binding differs')
+            proof._verified(journal, case, fingerprint)
+            job = journal.db.execute('SELECT * FROM jobs WHERE id=?', (case['job_id'],)).fetchone()
+            if job is None or job['state'] != 'cleaned':
+                raise ToolchainPublicationError('rejection needs identity-safe fixture cleanup')
+            if job['container_id']:
+                proof.native.require_native_cleanup(job['container_id'])
+    receipt = {'version': 1, 'intent_id': identity, 'binding': binding,
+               'custody_sha256': custody.checksum(custody.canonical(retained)),
+               'load_sha256': custody.checksum(custody.canonical(custody.document(
+                   loader.directory(journal, identity) / 'result.json'))),
+               'proofs_sha256': journal.rejection_proofs(identity),
+               'image_approved': False, 'configuration_published': False,
+               'custody_retained': True, 'image_retained': True}
+    body = custody.canonical(receipt).decode()
+    if len(body.encode()) > 8192:
+        raise ToolchainPublicationError('rejection receipt exceeds bound')
+    with journal.db:
+        journal.db.execute('CREATE TABLE IF NOT EXISTS toolchain_rejections('
+                           'import_id TEXT PRIMARY KEY,receipt_sha256 TEXT NOT NULL,receipt TEXT NOT NULL)')
+    rows = journal.db.execute('SELECT * FROM toolchain_rejections LIMIT 9').fetchall()
+    known = {item['id'] for item in journal.toolchain_imports()}
+    if (len(rows) > 8 or any(item['import_id'] not in known or not isinstance(item['receipt'], str)
+                           or not 1 <= len(item['receipt'].encode()) <= 8192
+                           or custody.checksum(item['receipt'].encode()) != item['receipt_sha256'] for item in rows)):
+        raise ToolchainPublicationError('rejection inventory or fingerprint differs')
+    saved = next((item for item in rows if item['import_id'] == identity), None)
+    if saved is not None and saved['receipt'] != body:
+        raise ToolchainPublicationError('retained rejection receipt changed; reconcile instead of overwriting')
+    checksum = custody.checksum(body.encode())
+    if saved is None:
+        with journal.db:
+            journal.db.execute('INSERT INTO toolchain_rejections VALUES(?,?,?)', (identity, checksum, body))
+    journal.record_toolchain_import(identity, row['phase'], 'rejected', checksum)
+    journal.verify_rejections()
+    return {**receipt, 'replayed_observation': False}

@@ -167,6 +167,58 @@ validation/deployment/Chat proof remain open. Before loading, also review the re
 route for a completed image whose fixed host proof cannot pass; uncertain daemon
 operations must never be released merely to unblock progress.
 
+### Explicit failed-proof recovery (local controller, 7–8 October)
+
+`reject` is an operator-only terminal decision for an unpublished `loaded` or
+`proof_pending` import. It requires the positive completed daemon receipt, current
+immutable image readback, unchanged original configuration, reverified archive and
+identity-safe cleanup of every fixture job/native sandbox. A failed or absent test
+result is retained as such, never converted to a pass. The image and archive remain;
+no profile, runtime base, financial capacity or application is approved.
+
+```text
+loaded / proof_pending -> bounded rejection receipt committed -> rejected
+                                 crash: same decision resumes safely
+load_started / load_uncertain -> reconciliation only, NOT rejection
+publishing -> exact forward publication only, NOT rejection/rollback
+```
+
+Admission and installer mutation independently verify the rejection receipt hash,
+terminal journal transition and unchanged retained proof/job snapshot. Merely
+writing `rejected` cannot free the slot. Later separately approved configuration
+updates do not invalidate historical rejection; they retain their own publication
+gate. No bytes are deleted, and no uncertain Docker action is replayed.
+
+New reservations use import intent v2, including the reviewed controller bundle
+hash. Historical v1 identities remain readable. A different reviewed controller
+therefore gets a different intent rather than resurrecting a rejected transaction.
+The existing eight-intent/sixteen-observation limits and fixed STOP still apply.
+`reuse_custody` accepts only destination/source intent IDs, verifies the exact
+terminal source and matching role/image/archive/recipe/host/STOP, and copies root-
+protected bytes through normal destination quota, fsync and hash readback. It never
+hard-links, uploads, loads an image or discards the old evidence.
+
+```sh
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation reject --intent-id "$COMPLETED_UNPUBLISHED_IMPORT_ID"
+
+# First prepare the fresh source-bound destination using current configuration.
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation reuse_custody --intent-id "$FRESH_IMPORT_ID" \
+  --source-intent-id "$RETAINED_TERMINAL_IMPORT_ID"
+```
+
+These commands require the reviewed fourteen-file controller to be installed;
+they are not a claim of live load, proof, publication or deployment completion.
+Final local verification for this recovery checkpoint: **1,254 coding tests passed**
+against disposable loopback PostgreSQL schemas, with no skips and the existing
+Vertex SDK deprecation warning. Flake8, Bandit and whitespace checks passed;
+Bandit reported only unused suppression warnings. The 255 targeted recovery,
+staging, gateway, installer and transport tests also passed. Real process death
+is covered, while Docker/systemd/native operations in these tests remain mocked.
+
 Completed enrolled history is also checked by the bundle installer through a protected
 current-source reader and read-only SQLite under its already-owned flock. During an
 interrupted directory swap it may use only the exact recorded predecessor reader.

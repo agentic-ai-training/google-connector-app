@@ -322,6 +322,10 @@ def verify_enrolled(connection, state):
     journal = reader.__new__(reader)
     journal.directory, journal.db, journal.lock = state, connection, None
     journal.verify_publications()
+    if callable(getattr(journal, 'verify_rejections', None)):
+        journal.verify_rejections()
+    elif connection.execute("SELECT 1 FROM toolchain_imports WHERE phase='rejected' LIMIT 1").fetchone():
+        raise BundleError('protected source cannot interpret rejection history')
 
 
 def reviewed_files(files):
@@ -541,8 +545,8 @@ def operate(request):
                 # loss. Old bundles lack this barrier, so rollback after any import
                 # history requires a forward-compatible operator review.
                 imports = connection.execute("SELECT phase FROM toolchain_imports LIMIT 9").fetchall()
-                pending_imports = len(imports) > 8 or any(row[0] not in {'cancelled', 'enrolled'} for row in imports)
-                if not pending_imports and any(row[0] == 'enrolled' for row in imports):
+                pending_imports = len(imports) > 8 or any(row[0] not in {'cancelled', 'enrolled', 'rejected'} for row in imports)
+                if not pending_imports and any(row[0] in {'enrolled', 'rejected'} for row in imports):
                     try:
                         verify_enrolled(connection, state)
                     except (RuntimeError, OSError, ValueError, KeyError, TypeError, sqlite3.Error):

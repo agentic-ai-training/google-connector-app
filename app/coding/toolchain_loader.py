@@ -102,6 +102,7 @@ def verify_binding(journal, identity, binding):
             or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
                    for value in binding.values())
             or any(binding[key] != row['intent'][key] for key in ('policy_sha256', 'registry_sha256'))
+            or row['intent']['version'] == 2 and binding['bundle_sha256'] != row['intent']['bundle_sha256']
             or any(row['intent'].get(key) != value for key, value in REVIEWED_ARCHIVES[row['intent']['role']].items())):
         raise ToolchainLoadError('reserved load catalog or configuration differs')
     return row
