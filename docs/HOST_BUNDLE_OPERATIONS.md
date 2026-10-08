@@ -130,6 +130,54 @@ Flake8 and whitespace checks passed after the projection change. These prove the
 readback correction, not installation of the correction or reconciliation of the
 live reserved import; no second Docker load or fixture execution was requested.
 
+### Audited transient readback repair (local preparation)
+
+`scripts.repair_toolchain_readback` is a separate operator-only IAP controller,
+not an ordinary bundle installation or model tool. It requires the exact c312172
+fourteen-file snapshot and loader hash; no arbitrary patch, path or command can be
+provided. It derives only the two optional-field lookups from those protected
+source bytes. The repair program's actual Linux command-line source hash is also
+verified. A transient no-write receipt validator, derived from the same source,
+checks the original execution claim/unit/receipt before any audit or state change.
+
+```text
+positive original daemon receipt + exact original claim/source/configuration
+    -> audit plan durably committed (old/new verifier + validator/controller hashes)
+    -> independently inspect exact current image
+    -> recover exact receipt update + journal CAS
+    -> loaded: STILL RESERVED, no role approval
+    -> separately explicit reject_repaired: retained terminal rejection, no approval
+```
+
+The installed dependency closure is unchanged. The original import and execution
+binding remain immutable; the supplemental audit records the changed observer
+instead of claiming that the original verifier ran successfully. No Docker load,
+source installation, fixture, file deletion, policy publication or cloud resource
+change is invoked by repair. A live worker, negative/absent daemon receipt, altered
+claim/configuration/custody or earlier fixture execution blocks preparation.
+Retry accepts only the same plan, verifier/controller hashes and exact before/after
+receipt states. Foreign staging bytes are preserved for review.
+
+The explicit `reject_repaired` option is only for abandoning the old unpublished
+verifier transaction after positive reconciliation. It retains the image/archive
+and original completion evidence; a fresh source-bound transaction must still
+validate any later role approval. This is not compensation of a user application.
+
+```sh
+python -m scripts.repair_toolchain_readback \
+  --operator-config .gca-local/validation-transport.json \
+  --operation repair_readback \
+  --intent-id 341dd8fd9ee3cc0ab781027bf705300f27c72fee97f1b62909097371738d4e50 \
+  --expected-snapshot-hash 512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4
+```
+
+Local checks include 47 tests with real protected SQLite/custody and actual process
+death after audit persistence, receipt replacement, loaded CAS and terminal rejection.
+Docker/systemd are mocked in these tests: live repair is a separate evidence step.
+Final local verification: 1,301 coding tests passed against disposable loopback
+PostgreSQL with no skips, plus Flake8/Bandit/whitespace checks. Only the existing
+Vertex SDK deprecation and unused suppression warnings remained.
+
 ## Commands and preceding custody checkpoint
 
 The preceding eleven-file installation was

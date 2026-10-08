@@ -2703,6 +2703,16 @@ changes become production evidence.
   `load_uncertain` after optional-Entrypoint template failure. The local projection
   correction is not installed. Finish audited same-import/source-bound readback
   repair without replaying load or bypassing maintenance before fixtures/publication.
+  The next local checkpoint supplies a separate exact-c312172 operator-only transient
+  repair controller. It binds original execution provenance separately from corrected
+  verifier/validator/controller hashes in a bounded write-ahead audit; reconciliation
+  invokes no new load and remains reserved. Explicit negative retirement is separate
+  from approval. Forty-seven local tests include process death after audit, receipt,
+  loaded CAS and rejection, with systemd/Docker mocked. Live repair remains unproven
+  until the fixed host operation and retained audit are independently inspected.
+  Final local preparation verification: 1,301 coding tests passed without skips
+  against disposable loopback PostgreSQL; Flake8, Bandit and whitespace checks
+  passed. These are not live native-toolchain or generated-application acceptance.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

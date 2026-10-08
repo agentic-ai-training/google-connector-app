@@ -3757,3 +3757,34 @@ space for archive size A. Hard links are prohibited: sharing one mutable inode w
 couple the old evidence to the new transaction and undermine independent custody.
 Receipt persistence before terminal CAS permits exact recovery after process death;
 missing or changed evidence fails closed instead of fabricating a passing result.
+
+### Deep dictionary: execution provenance versus observer provenance
+
+**Execution provenance** identifies the code, input, claim and image used when an
+effect occurred. **Observer provenance** identifies the verifier that later examined
+that effect. They are related but are not interchangeable. A broken image-readback
+template does not prove that a previously acknowledged Docker load failed, and
+repairing the template does not justify rewriting the original execution identity.
+
+An audited repair keeps the original source/binding and completion receipt, then
+records the corrected verifier, validator and repair-controller hashes separately:
+
+```text
+immutable execution claim + original completed-effect receipt
+                      |
+          independently versioned observer
+                      |
+      durable audit + exact before/after receipt states
+                      |
+       reconciled effect (not application/profile approval)
+```
+
+**Write-ahead repair plan** is the recovery analogue of a database write-ahead log:
+persist the exact intended receipt transition before replacing the receipt or
+advancing its state machine. On restart, compare bytes with the recorded before/after
+states; resume only that decision. A missing result is not success. A foreign partial
+file is not a retry checkpoint. The repair audit is bounded by eight records and
+8 KiB per record, with O(N + B) verification of records and bounded bytes; archive
+reverification remains O(A) I/O. An exclusive existing host flock prevents multiple
+repair owners from racing. No learning model, provider key or arbitrary shell is
+needed to make these integrity decisions.
