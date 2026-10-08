@@ -2744,6 +2744,19 @@ changes become production evidence.
   Style/security/diff checks passed. New-source adoption, Python recovery, native
   React/Spring fixtures, verified role publication and full app/Chat proof remain
   unchecked; this evidence does not complete the original scope.
+  Cross-source handover preparation: local `load_adopt` now binds exact current
+  image metadata, both v2 source bindings/custody hashes, terminal source rejection,
+  positive completion and auxiliary repair/restoration history in an immutable
+  adoption plan. It uses the separate crash-recoverable `adopting` state, creates
+  no fake Docker worker/receipt and preserves native proof/publication gates.
+  All 332 focused loader/adoption/recovery/publication tests passed; style/security/
+  diff checks passed. Initial full regression was refused at 319 MiB free disk;
+  after headroom recovered to about 1.6 GiB, all 1,492 coding tests passed without
+  skips on disposable loopback PostgreSQL. Independent Python recovery preflight
+  rehashed its approved 46,237,696-byte archive and confirmed exact image absence
+  and available maintenance, without loading/changing configuration.
+  This new closure is not installed, no VM adoption
+  or native fixture proof is claimed, and the checklist remains unchecked.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

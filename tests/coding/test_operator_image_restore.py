@@ -27,7 +27,8 @@ def target(broken, monkeypatch):
     monkeypatch.setattr(repair, 'installed_source', lambda custody: old_source())
     monkeypatch.setattr(cleanup, 'STOP_UNIX', loader.item(value.journal, value.identity)['intent']['stop_unix'])
     monkeypatch.setattr(cleanup, 'settings', lambda operation: cleanup.AFTER.copy())
-    monkeypatch.setattr(restore.os, 'statvfs', lambda path: SimpleNamespace(f_bavail=8 * 1024**3, f_frsize=1))
+    monkeypatch.setattr(restore.os, 'statvfs', lambda path: SimpleNamespace(
+        f_blocks=12 * 1024**3, f_bfree=8 * 1024**3, f_bavail=8 * 1024**3, f_frsize=1))
     def inspect(argv, **kwargs):
         if argv[0] == loader.SYSTEMCTL:
             original = loader.unit_name(value.identity) in argv

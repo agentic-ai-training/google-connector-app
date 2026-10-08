@@ -128,7 +128,8 @@ def context(journal, identity, *, readback=False):
     item = next((row for row in journal.toolchain_imports() if row["id"] == identity), None)
     phases = {"prepared", "archive_verified"}
     if readback:
-        phases |= {'cancelled', 'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled', 'rejected'}
+        phases |= {'cancelled', 'load_started', 'load_uncertain', 'adopting', 'loaded', 'proof_pending',
+                   'publishing', 'enrolled', 'rejected'}
     if item is None or item["phase"] not in phases:
         raise ToolchainStagingError("import phase does not permit staging")
     protected(journal.directory, private=True)

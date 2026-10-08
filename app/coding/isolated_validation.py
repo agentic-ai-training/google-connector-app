@@ -72,7 +72,8 @@ VALIDATION_POLICY = Path('/etc/gca-validation/policy.json')
 CLEAN_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "CI": "true"}
 IMPORT_PHASES = {
     "prepared": {"archive_verified", "cancelled"},
-    "archive_verified": {"load_started", "cancelled"},
+    "archive_verified": {"load_started", "adopting", "cancelled"},
+    "adopting": {"loaded"},
     "load_started": {"load_uncertain", "loaded"},
     "load_uncertain": {"loaded"},
     "loaded": {"proof_pending", "rejected"},
@@ -572,7 +573,7 @@ class Journal:
                     or not any(entry['phase'] == 'archive_verified'
                                and entry['evidence_sha256'] == evidence_sha256 for entry in history)):
                 raise IsolationError('Cancelled import needs exact unexpired verified custody')
-        if phase == "load_started" and item["intent"]["stop_unix"] <= now:
+        if phase in {"load_started", "adopting"} and item["intent"]["stop_unix"] <= now:
             raise IsolationError("Toolchain import host allocation expired")
         history.append({"phase": phase, "evidence_sha256": evidence_sha256, "at": now})
         with self.db:

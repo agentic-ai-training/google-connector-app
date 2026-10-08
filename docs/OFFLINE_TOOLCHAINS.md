@@ -683,3 +683,17 @@ Spring fixtures, verified role publication and generated-app deployment are stil
 open. The follow-up passed 182 focused tests and 1,436 full coding regression tests
 without skips on disposable loopback PostgreSQL schemas. It is not full-goal
 acceptance.
+
+### Cross-source adoption preparation
+
+The local operator gateway now supports typed `load_adopt` for exact retained
+content from a terminally rejected completed import under a new reviewed source
+binding. It writes an adoption plan before the `adopting -> loaded` transition and
+does not create a fictional new load/worker receipt. Current-image readback,
+original completion/rejection/custody and auxiliary repair/restoration provenance
+are revalidated; all native fixtures remain required before publication.
+The focused 332-test regression and full 1,492-test coding suite passed without
+skips. The initial full run was refused at 319 MiB local free disk; after headroom
+rose to about 1.6 GiB it completed, without user/Docker data deletion. This is not
+installed/live adoption proof. See
+[handover contract](HOST_BUNDLE_OPERATIONS.md#reviewed-cross-source-adoption--local-preparation-8-october).

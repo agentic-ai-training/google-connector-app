@@ -154,6 +154,7 @@ def operate(request, stream):
                   "reuse_custody": {"intent_id", "source_intent_id"},
                   "load_prepare": {"intent_id"}, "load_dispatch": {"intent_id"},
                   "load_observe": {"intent_id"},
+                  "load_adopt": {"intent_id", "source_intent_id"},
                   "proof_run": {"intent_id", "case"}, "proof_observe": {"intent_id"},
                   "publish_prepare": {"intent_id"},
                   "publish": {"intent_id", "plan_sha256"},
@@ -242,6 +243,10 @@ def operate(request, stream):
         if request['operation'].startswith('load_'):
             binding = {'bundle_sha256': request['bundle_sha256'], 'policy_sha256': policy_hash,
                        'registry_sha256': registry_hash}
+            if request['operation'] == 'load_adopt':
+                return {'operation': 'load_adopt',
+                        'load': loader.adopt(journal, identity, request['source_intent_id'], binding),
+                        'production_policy_changed': False, 'image_approved': False}
             action = {'load_prepare': loader.prepare, 'load_dispatch': loader.dispatch,
                       'load_observe': loader.reconcile}[request['operation']]
             return {'operation': request['operation'], 'load': action(journal, identity, binding),

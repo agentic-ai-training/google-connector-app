@@ -21,11 +21,9 @@ REAL_RUN = subprocess.run
 
 
 def old_source():
-    value = Path(loader.__file__).read_text()
-    for before, after in repair.REPLACEMENTS:
-        value = value.replace(after, before)
-    assert repair.digest(value.encode()) == repair.OLD_LOADER
-    return value.encode()
+    value = (Path(__file__).parents[1] / 'fixtures' / 'toolchain_loader_c312172.txt').read_bytes()
+    assert repair.digest(value) == repair.OLD_LOADER
+    return value
 
 
 @pytest.fixture
@@ -33,7 +31,10 @@ def broken(host, monkeypatch):
     policy, registry = host.state / 'policy.json', host.state / 'registry.json'
     policy.write_bytes(custody.canonical({'version': 2, 'runtime': 'runsc', 'state_directory': str(host.state),
                                        'images': {'python_compile': 'sha256:' + 'a' * 64}}))
-    registry.write_bytes(custody.canonical({'version': 1, 'images': {}}))
+    python = 'sha256:' + 'a' * 64
+    legacy = {'archive_path': str(host.state / ('a' * 64 + '.tar')), 'archive_sha256': 'a' * 64,
+              'archive_bytes': 100, 'repository_digest': 'docker.io/example/python@' + python}
+    registry.write_bytes(custody.canonical({'version': 1, 'images': {python: legacy}}))
     policy.chmod(0o600)
     registry.chmod(0o600)
     original = loader.item(host.journal, host.identity)

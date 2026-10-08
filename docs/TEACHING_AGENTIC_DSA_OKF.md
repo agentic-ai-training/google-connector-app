@@ -3861,3 +3861,20 @@ O(B) time over B bytes; the bounded restoration inventory is at most eight recor
 The project's live 8 October restoration used this distinction. Repair/closure
 did not reload or approve an image; cross-source adoption and native proofs remain
 separate work, not consequences inferred from a successful restoration.
+
+**Completed-load adoption** transfers the right to validate the same immutable
+content under a new reviewed controller version; it does not invent another
+execution. Model the lineage as a bounded DAG whose edge binds the old completion,
+terminal rejection and custody to a new intent. Reject self-edges, cycles, differing
+content/host/deadline and unknown prior execution. Each edge has a canonical hash;
+the current image is independently observed before use. For at most eight retained
+imports, traversal and cycle detection are O(V + E), while archive rehashing is O(B)
+over B retained bytes. The project's `seen` tuple bounds recursion; it is not a
+general claim that arbitrary cyclic workflows are safe.
+
+**State versus effect**: `loaded` means verified content is available for proof,
+not necessarily that this particular controller ran `docker load`. Record the
+origin separately (`daemon load` versus `completed_load_adoption`). A write-ahead
+`adopting` state blocks unrelated work until reconciliation. A database CAS can
+advance bookkeeping after a crash without repeating the external side effect.
+This distinction prevents false audit statements and unnecessary costly retries.

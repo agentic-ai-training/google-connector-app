@@ -301,6 +301,67 @@ central dispatch, application behavior and Chat URL proof remain incomplete.
 
 ## Commands and preceding custody checkpoint
 
+### Reviewed cross-source adoption — local preparation, 8 October
+
+`load_adopt` is a distinct operator gateway operation, not Docker loading. It
+requires a new v2 source-bound reservation with verified retained custody and a
+terminally rejected, definitely completed prior reservation for the exact same
+role/image/archive/recipe/host/policy/registry/deadline. The previous worker must
+be terminal and current immutable image metadata must match. Unknown completion,
+missing images, new load controls/units, unfinished jobs or changed configuration
+cannot authorize adoption.
+
+The immutable `toolchain_adoptions` plan binds both source versions, both custody
+hashes, the source completion/rejection, auxiliary repair/restoration history and
+current metadata. It is persisted before CAS transitions
+`archive_verified -> adopting -> loaded`. `adopting` remains a maintenance barrier,
+not workload authority. Process death after audit, intermediate CAS or final CAS
+recovers that same plan without a new daemon RPC. Adoption creates **no fabricated
+dispatch/claim/result files**. Returned evidence explicitly says
+`load_origin=completed_load_adoption`, `docker_load_invoked=false` and
+`image_approved=false`. Publication still requires all three independent native
+fixture results; subsequent rejection hashes the typed adoption receipt itself.
+
+```text
+terminal old source-bound load + custody + exact current image
+                                  |
+new source bundle -> new intent -> reuse custody -> immutable adoption plan
+                                  |
+                         adopting -> loaded
+                                  |
+native positive tests + native build + deliberate negative test
+                                  |
+                 verified publication (separate authority)
+```
+
+Only after the new full closure is installed and independently probed:
+
+```sh
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation load_adopt \
+  --intent-id "$NEW_SOURCE_BOUND_INTENT" \
+  --source-intent-id "$TERMINALLY_REJECTED_COMPLETED_SOURCE"
+```
+
+Local focused validation: **332 tests passed**, covering adoption, repaired source
+compatibility, ordinary loading, native-fixture/publication integration with mocked
+host operations, and restoration. Flake8/Bandit/diff checks passed. The immutable
+c312172 verifier is now retained as a hash-checked text fixture, so extending the
+current loader cannot change historical repair tests. Initial full regression was
+refused at 319 MiB local free disk; after headroom rose to about 1.6 GiB, the full
+suite passed **1,492 tests without skips** using disposable loopback PostgreSQL
+schemas, with one existing Vertex SDK deprecation warning. No user/Docker data was
+deleted. No new closure installation, adoption on the VM, native proof or role
+approval is claimed by this preparation checkpoint.
+
+A separate read-only Python recovery preflight verified the approved 46,237,696-byte
+archive, SHA `36723f7fff07fb1712479bdbf5b09a31d67f38b0a45af4648e1c00b1e80d3778`,
+and exact daemon absence of the already-approved Python image. It verified an
+available maintenance slot and unchanged source/configuration/deadline. It invoked
+no load. Configuration is read with the configuration reader, not a canonical
+receipt reader: the protected legacy registry may use valid noncanonical JSON.
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

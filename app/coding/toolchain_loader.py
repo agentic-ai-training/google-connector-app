@@ -130,6 +130,8 @@ def enforcement(identity):
 
 def prepare(journal, identity, binding):
     row = verify_binding(journal, identity, binding)
+    if adoption_receipt(journal, identity) is not None:
+        raise ToolchainLoadError('retained adoption is observation-only; no load dispatch')
     if row['phase'] not in {'cancelled', 'archive_verified'}:
         raise ToolchainLoadError('load preparation requires never-started verified custody')
     if row['intent']['stop_unix'] <= int(time.time()):
@@ -283,11 +285,194 @@ def run_worker(journal, identity, token, binding):
     return terminal
 
 
-def reconcile(journal, identity, binding):
+def adoption_receipt(journal, identity):
+    """Typed adoption evidence is not a fabricated new daemon/worker receipt."""
+    if not journal.db.execute("SELECT 1 FROM sqlite_master WHERE name='toolchain_adoptions'").fetchone():
+        return None
+    rows = journal.db.execute('SELECT * FROM toolchain_adoptions LIMIT 9').fetchall()
+    known = {row['id'] for row in journal.toolchain_imports()}
+    if len(rows) > 8:
+        raise ToolchainLoadError('adoption inventory exceeds bound')
+    found = None
+    for row in rows:
+        body = row['plan']
+        if (row['import_id'] not in known or not isinstance(body, str) or not 0 < len(body.encode()) <= 8192
+                or custody.checksum(body.encode()) != row['plan_sha256']):
+            raise ToolchainLoadError('adoption audit fingerprint differs')
+        value = json.loads(body)
+        if not isinstance(value, dict) or custody.canonical(value).decode() != body:
+            raise ToolchainLoadError('adoption audit is not canonical')
+        if row['import_id'] == identity:
+            found = value
+    return found
+
+
+def completion_receipt(journal, identity):
+    adopted = adoption_receipt(journal, identity)
+    return adopted if adopted is not None else custody.document(directory(journal, identity) / 'result.json')
+
+
+def auxiliary_history(journal, identity, result):
+    """Retain repaired/restored causal history separately from original completion."""
+    history, repaired, restored = {}, None, None
+    queries = {'toolchain_readback_repairs': 'SELECT * FROM toolchain_readback_repairs LIMIT 9',
+               'toolchain_restorations': 'SELECT * FROM toolchain_restorations LIMIT 9'}
+    for table, query in queries.items():
+        if not journal.db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
+            continue
+        rows = journal.db.execute(query).fetchall()
+        known = {row['id'] for row in journal.toolchain_imports()}
+        if len(rows) > 8 or any(row['import_id'] not in known for row in rows):
+            raise ToolchainLoadError('auxiliary completion inventory differs')
+        selected = next((row for row in rows if row['import_id'] == identity), None)
+        if selected is None:
+            continue
+        names = ('plan', 'claim', 'result') if table == 'toolchain_restorations' else ('plan',)
+        docs = {}
+        for name in names:
+            body = selected[name]
+            if not isinstance(body, str) or not 0 < len(body.encode()) <= 8192:
+                raise ToolchainLoadError('auxiliary completion is incomplete')
+            value = json.loads(body)
+            if not isinstance(value, dict) or custody.canonical(value).decode() != body:
+                raise ToolchainLoadError('auxiliary completion is not canonical')
+            docs[name] = value
+        if custody.checksum(selected['plan'].encode()) != selected['plan_sha256']:
+            raise ToolchainLoadError('auxiliary plan fingerprint differs')
+        if table == 'toolchain_readback_repairs':
+            repaired = docs['plan']
+            control = directory(journal, identity)
+            source = item(journal, identity)['intent']
+            if (repaired.get('after') != result or repaired.get('intent_id') != identity
+                    or repaired.get('binding') != {key: source[key] for key in
+                                                   ('bundle_sha256', 'policy_sha256', 'registry_sha256')}
+                    or repaired.get('claim_sha256') != custody.checksum(custody.canonical(custody.document(control/'claim.json')))
+                    or repaired.get('dispatch_sha256') != custody.checksum(custody.canonical(custody.document(control/'dispatch.json')))
+                    or repaired.get('custody_sha256') != custody.checksum(custody.canonical(
+                        custody.verify_retained_custody(journal, identity)))):
+                raise ToolchainLoadError('repaired source completion differs')
+        if table == 'toolchain_restorations':
+            plan, claim, receipt = (docs[name] for name in names)
+            if (receipt.get('intent_id') != identity or receipt.get('image') != result.get('image')
+                    or receipt.get('image_approved') is not False or receipt.get('failure_stage') is not None
+                    or any(receipt.get(key) is not True for key in ('docker_load_invoked',
+                           'daemon_completion_acknowledged', 'image_readback_verified'))
+                    or claim.get('plan_sha256') != selected['plan_sha256']
+                    or receipt.get('plan_sha256') != selected['plan_sha256']
+                    or receipt.get('claim_sha256') != custody.checksum(custody.canonical(claim))
+                    or plan.get('intent_id') != identity):
+                raise ToolchainLoadError('restored source completion differs')
+            restored = {'plan_sha256': selected['plan_sha256'],
+                        'claim_sha256': custody.checksum(custody.canonical(claim)),
+                        'result_sha256': custody.checksum(custody.canonical(receipt)),
+                        'controller_sha256': plan.get('controller_sha256')}
+            if (not isinstance(claim.get('invocation_id'), str)
+                    or not re.fullmatch(r'[a-f0-9]{32}', claim['invocation_id'])):
+                raise ToolchainLoadError('restoration terminal identity differs')
+            observed = subprocess.run(  # nosec B603
+                [SYSTEMCTL, 'show', 'gca-toolchain-restore-' + identity + '.service', '--no-pager',
+                 '--property=LoadState', '--property=MainPID', '--property=InvocationID'],
+                env=CLEAN_ENV, capture_output=True, timeout=10, check=False)
+            if len(observed.stdout) > 4096:
+                raise ToolchainLoadError('restoration terminal observation exceeds bound')
+            values = {}
+            for line in observed.stdout.decode('ascii').splitlines():
+                key, sep, value = line.partition('=')
+                if not sep or key in values:
+                    raise ToolchainLoadError('restoration terminal observation differs')
+                values[key] = value
+            if (set(values) != {'LoadState', 'MainPID', 'InvocationID'} or values['MainPID'] != '0'
+                    or values['LoadState'] not in {'loaded', 'not-found'}
+                    or observed.returncode and values['LoadState'] != 'not-found'
+                    or values['LoadState'] == 'loaded' and values['InvocationID'] != claim['invocation_id']):
+                raise ToolchainLoadError('restoration worker is not terminal')
+        history[table] = {name: custody.checksum(custody.canonical(value)) for name, value in docs.items()}
+    expected = custody.checksum(custody.canonical(restored)) if restored is not None else None
+    if repaired is not None and repaired.get('restoration_evidence_sha256') != expected:
+        raise ToolchainLoadError('repair and restoration causal fingerprint differs')
+    return custody.checksum(custody.canonical(history))
+
+
+def adoption_plan(journal, identity, source_identity, binding, *, seen=()):
+    row = verify_binding(journal, identity, binding)
+    source = item(journal, source_identity)
+    if (source_identity == identity or source_identity in seen or len(seen) >= 8
+            or row['intent']['version'] != 2 or source['intent']['version'] != 2
+            or source['phase'] != 'rejected' or source['intent']['bundle_sha256'] == binding['bundle_sha256']
+            or any(source['intent'][key] != row['intent'][key] for key in
+                   ('role', 'host_instance_id', 'stop_unix', 'policy_sha256', 'registry_sha256',
+                    *REVIEWED_ARCHIVES[row['intent']['role']]))
+            or journal.db.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone()):
+        raise ToolchainLoadError('adoption requires same-content terminal source and new reviewed binding')
+    journal.verify_rejections()
+    source_binding = {key: source['intent'][key] for key in binding}
+    completed = completion_receipt(journal, source_identity)
+    if adoption_receipt(journal, source_identity) is None and (
+            completed.get('daemon_completion_acknowledged') is not True
+            or completed.get('image_readback_verified') is not True or completed.get('image_approved') is not False):
+        raise ToolchainLoadError('source has no positive immutable completion receipt')
+    verified = reconcile(journal, source_identity, source_binding, _seen=(*seen, identity))
+    if verified.get('load_verified') is not True or verified['unit']['MainPID'] != '0':
+        raise ToolchainLoadError('source completion or terminal worker is unconfirmed')
+    rejection = journal.db.execute('SELECT * FROM toolchain_rejections WHERE import_id=?', (source_identity,)).fetchone()
+    source_custody = custody.verify_retained_custody(journal, source_identity)
+    if json.loads(rejection['receipt'])['load_sha256'] != custody.checksum(custody.canonical(completed)):
+        raise ToolchainLoadError('source rejection does not bind exact completion')
+    retained = custody.verify_retained_custody(journal, identity)
+    actual = image(row['intent']['role'], row['intent']['image_id'])
+    return {'version': 1, 'origin': 'completed_load_adoption', 'intent_id': identity,
+            'source_intent_id': source_identity, 'binding': binding, 'source_binding': source_binding,
+            'source_completion_sha256': custody.checksum(custody.canonical(completed)),
+            'source_rejection_sha256': rejection['receipt_sha256'],
+            'source_custody_sha256': custody.checksum(custody.canonical(source_custody)),
+            'source_auxiliary_sha256': auxiliary_history(journal, source_identity, completed),
+            'custody_sha256': custody.checksum(custody.canonical(retained)),
+            'image': actual, 'docker_load_invoked': False, 'image_approved': False}
+
+
+def adopt(journal, identity, source_identity, binding, *, _seen=()):
+    """Source handover, never load replay or policy approval; durable plan before CAS."""
+    row = verify_binding(journal, identity, binding)
+    previous = adoption_receipt(journal, identity)
+    if previous is None:
+        if row['phase'] != 'archive_verified' or row['intent']['stop_unix'] <= int(time.time()):
+            raise ToolchainLoadError('adoption requires unexpired never-loaded verified custody')
+        control = journal.directory / 'toolchain-loads' / identity
+        if control.exists() or control.is_symlink() or unit(identity)['LoadState'] != 'not-found':
+            raise ToolchainLoadError('new adoption already has load control or unit authority')
+    plan = adoption_plan(journal, identity, source_identity, binding, seen=_seen)
+    if previous is not None and previous != plan:
+        raise ToolchainLoadError('retained adoption lineage changed')
+    body = custody.canonical(plan)
+    if len(body) > 8192:
+        raise ToolchainLoadError('adoption plan exceeds bound')
+    fingerprint = custody.checksum(body)
+    if previous is None:
+        with journal.db:
+            journal.db.execute('CREATE TABLE IF NOT EXISTS toolchain_adoptions('
+                               'import_id TEXT PRIMARY KEY,plan_sha256 TEXT NOT NULL,plan TEXT NOT NULL)')
+            journal.db.execute('INSERT INTO toolchain_adoptions VALUES(?,?,?)', (identity, fingerprint, body.decode()))
+    if row['phase'] == 'archive_verified':
+        row = journal.record_toolchain_import(identity, 'archive_verified', 'adopting', fingerprint)
+    if row['phase'] == 'adopting':
+        row = journal.record_toolchain_import(identity, 'adopting', 'loaded', fingerprint)
+    if (row['phase'] not in {'loaded', 'proof_pending', 'publishing', 'enrolled', 'rejected'}
+            or not any(entry['phase'] == 'adopting' and entry['evidence_sha256'] == fingerprint
+                       for entry in row['observations'])):
+        raise ToolchainLoadError('adoption phase lineage differs')
+    return {'intent_id': identity, 'phase': row['phase'], 'unit': unit(source_identity), 'load_verified': True,
+            'load_origin': 'completed_load_adoption', 'source_intent_id': source_identity,
+            'adoption_plan_sha256': fingerprint, 'docker_load_invoked': False, 'image_approved': False}
+
+
+def reconcile(journal, identity, binding, *, _seen=()):
     """No Docker load. A positive protected terminal receipt is required."""
     row = verify_binding(journal, identity, binding)
+    adopted = adoption_receipt(journal, identity)
+    if adopted is not None:
+        return adopt(journal, identity, adopted.get('source_intent_id'), binding, _seen=_seen)
     observed = unit(identity)
-    if row['phase'] not in {'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled'}:
+    if row['phase'] not in {'load_started', 'load_uncertain', 'loaded', 'proof_pending', 'publishing', 'enrolled', 'rejected'}:
         return {'phase': row['phase'], 'unit': observed, 'image_approved': False}
     control = directory(journal, identity)
     receipt_path = control / 'result.json'

@@ -234,8 +234,9 @@ def reject(journal, identity, binding, policy_path, registry_path):
                 proof.native.require_native_cleanup(job['container_id'])
     receipt = {'version': 1, 'intent_id': identity, 'binding': binding,
                'custody_sha256': custody.checksum(custody.canonical(retained)),
-               'load_sha256': custody.checksum(custody.canonical(custody.document(
-                   loader.directory(journal, identity) / 'result.json'))),
+               'load_sha256': custody.checksum(custody.canonical(
+                   loader.completion_receipt(journal, identity) if hasattr(loader, 'completion_receipt') else
+                   custody.document(loader.directory(journal, identity) / 'result.json'))),
                'proofs_sha256': journal.rejection_proofs(identity),
                'image_approved': False, 'configuration_published': False,
                'custody_retained': True, 'image_retained': True}

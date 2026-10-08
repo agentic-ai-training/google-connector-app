@@ -97,6 +97,19 @@ def proof_evidence(evidence, operation, identity, case=None):
             raise RuntimeError('host fixed-fixture evidence differs')
 
 
+def adoption_evidence(evidence, identity, source_identity):
+    value = evidence.get('load')
+    if (not isinstance(value, dict) or value.get('intent_id') != identity
+            or value.get('source_intent_id') != source_identity
+            or value.get('load_origin') != 'completed_load_adoption' or value.get('load_verified') is not True
+            or value.get('docker_load_invoked') is not False or value.get('image_approved') is not False
+            or evidence.get('image_approved') is not False or evidence.get('production_policy_changed') is not False
+            or value.get('phase') not in {'loaded', 'proof_pending', 'publishing', 'enrolled', 'rejected'}
+            or not isinstance(value.get('adoption_plan_sha256'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', value['adoption_plan_sha256'])):
+        raise RuntimeError('host completed-load adoption evidence differs')
+
+
 def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
     """No automatic retries. Client loss leaves the host reservation for inspection."""
     request, control = envelope(operation, **values)
@@ -171,6 +184,8 @@ def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
                 raise RuntimeError("host image identity differs from reviewed role")
         if operation in {'proof_run', 'proof_observe'}:
             proof_evidence(evidence, operation, values.get('intent_id'), values.get('case'))
+        if operation == 'load_adopt':
+            adoption_evidence(evidence, values.get('intent_id'), values.get('source_intent_id'))
         if operation == 'publish_prepare':
             result = evidence.get('publication')
             if (not isinstance(result, dict) or result.get('intent_id') != values.get('intent_id')
@@ -215,7 +230,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--operator-config", type=Path, required=True)
     parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload",
-                                              "load_prepare", "load_dispatch", "load_observe",
+                                              "load_prepare", "load_dispatch", "load_observe", "load_adopt",
                                               "proof_run", "proof_observe", "publish_prepare", "publish", "reject",
                                               "reuse_custody"),
                         default="probe")
@@ -244,7 +259,7 @@ def main():
         if not re.fullmatch(r"[a-f0-9]{64}", args.intent_id or ""):
             parser.error("operation requires the exact reserved intent ID")
         values["intent_id"] = args.intent_id
-        if args.operation == 'reuse_custody':
+        if args.operation in {'reuse_custody', 'load_adopt'}:
             if not re.fullmatch(r'[a-f0-9]{64}', args.source_intent_id or ''):
                 parser.error('reuse requires the exact retained source intent ID')
             values['source_intent_id'] = args.source_intent_id
