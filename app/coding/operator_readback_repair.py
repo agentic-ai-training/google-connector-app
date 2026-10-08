@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import runpy
 import stat
+import subprocess  # nosec B404
 import sys
 import types
 
@@ -23,6 +24,7 @@ SQL = '''CREATE TABLE IF NOT EXISTS toolchain_readback_repairs(
     import_id TEXT PRIMARY KEY,plan_sha256 TEXT NOT NULL,plan TEXT NOT NULL)'''
 REPLACEMENTS = (('.Config.Entrypoint', '(index .Config "Entrypoint")'),
                 ('.Config.Volumes', '(index .Config "Volumes")'))
+RESTORE_V1_CONTROLLER = '4d5df079af64b0440ce864992b2de746a86c4243157668e0fffdc3354cce30b7'
 
 
 class ReadbackRepairError(ValueError):
@@ -104,6 +106,88 @@ def saved_plan(journal, identity):
     return found
 
 
+def restoration_evidence(journal, identity, binding, before, actual, installed):
+    """Bind separate restoration provenance; never imply an uninterrupted old image."""
+    if not journal.db.execute("SELECT 1 FROM sqlite_master WHERE name='toolchain_restorations'").fetchone():
+        return None
+    rows = journal.db.execute('SELECT * FROM toolchain_restorations LIMIT 9').fetchall()
+    known = {row['id'] for row in journal.toolchain_imports()}
+    if len(rows) > 8 or any(row['import_id'] not in known for row in rows):
+        raise ReadbackRepairError('restoration provenance inventory differs')
+    row = next((row for row in rows if row['import_id'] == identity), None)
+    if row is None:
+        return None
+    documents = {}
+    for name in ('plan', 'claim', 'result'):
+        body = row[name]
+        if not isinstance(body, str) or not 0 < len(body.encode()) <= MAX_PLAN:
+            raise ReadbackRepairError('restoration provenance is incomplete')
+        value = json.loads(body)
+        if not isinstance(value, dict) or canonical(value).decode() != body:
+            raise ReadbackRepairError('restoration provenance is not canonical')
+        documents[name] = value
+    plan, claim, result = (documents[name] for name in ('plan', 'claim', 'result'))
+    directory = installed.directory(journal, identity)
+    item = installed.item(journal, identity)
+    unit_name = 'gca-toolchain-restore-' + identity + '.service'
+    plan_fields = {'version', 'intent_id', 'unit', 'controller_sha256', 'stop_unix', 'image_absence',
+                   'binding', 'original_loader_sha256', 'image_id', 'original_load_sha256',
+                   'original_claim_sha256', 'original_dispatch_sha256', 'custody_sha256'}
+    if (set(plan) != plan_fields or type(plan['version']) is not int or plan['version'] != 1
+            or digest(row['plan'].encode()) != row['plan_sha256'] or plan['intent_id'] != identity
+            or plan['controller_sha256'] != RESTORE_V1_CONTROLLER or plan['unit'] != unit_name
+            or plan['binding'] != binding or plan['original_loader_sha256'] != OLD_LOADER
+            or plan['stop_unix'] != item['intent']['stop_unix'] or plan['image_id'] != actual['id']
+            or plan['original_load_sha256'] != digest(canonical(before))
+            or plan['original_claim_sha256'] != digest(canonical(installed.custody.document(directory/'claim.json')))
+            or plan['original_dispatch_sha256'] != digest(canonical(installed.custody.document(directory/'dispatch.json')))
+            or plan['custody_sha256'] != digest(canonical(installed.custody.verify_retained_custody(journal, identity)))
+            or not isinstance(plan['image_absence'], dict)
+            or set(plan['image_absence']) != {'image_id', 'missing', 'observed_at_unix'}
+            or plan['image_absence']['image_id'] != actual['id'] or plan['image_absence']['missing'] is not True
+            or type(plan['image_absence']['observed_at_unix']) is not int
+            or not 0 < plan['image_absence']['observed_at_unix'] < plan['stop_unix']):
+        raise ReadbackRepairError('restoration execution/source lineage differs')
+    if (set(claim) != {'version', 'plan_sha256', 'unit', 'process', 'invocation_id', 'enforcement'}
+            or type(claim['version']) is not int or claim['version'] != 1
+            or claim['plan_sha256'] != row['plan_sha256'] or claim['unit'] != unit_name
+            or not isinstance(claim['process'], dict) or set(claim['process']) != {'boot_id', 'pid', 'start_ticks'}
+            or not isinstance(claim['process']['boot_id'], str)
+            or not re.fullmatch(installed.BOOT_ID, claim['process']['boot_id'])
+            or type(claim['process']['pid']) is not int or not 1 < claim['process']['pid'] < 2**31
+            or type(claim['process']['start_ticks']) is not int or not 0 < claim['process']['start_ticks'] < 2**64
+            or not isinstance(claim['invocation_id'], str) or not re.fullmatch('[a-f0-9]{32}', claim['invocation_id'])
+            or claim['enforcement'] not in ({**installed.UNIT_LIMITS, 'CPUQuotaPerSecUSec': quota,
+                                           'Slice': 'gca-packaging.slice'} for quota in ('1s', '1000000'))):
+        raise ReadbackRepairError('restoration retained claim differs')
+    if (set(result) != {'version', 'intent_id', 'plan_sha256', 'claim_sha256', 'docker_load_invoked',
+                       'daemon_completion_acknowledged', 'image_readback_verified', 'image',
+                       'failure_stage', 'image_approved'}
+            or type(result['version']) is not int or result['version'] != 1 or result['intent_id'] != identity
+            or result['plan_sha256'] != row['plan_sha256'] or result['claim_sha256'] != digest(canonical(claim))
+            or any(result[key] is not True for key in ('docker_load_invoked', 'daemon_completion_acknowledged',
+                                                     'image_readback_verified'))
+            or result['image'] != actual or result['failure_stage'] is not None or result['image_approved'] is not False):
+        raise ReadbackRepairError('restoration has no exact positive completion receipt')
+    observed = subprocess.run(  # nosec B603
+        [installed.SYSTEMCTL, 'show', unit_name, '--no-pager', '--property=LoadState',
+         '--property=MainPID', '--property=InvocationID'], env=installed.CLEAN_ENV,
+        capture_output=True, timeout=10, check=False)
+    unit = {}
+    for line in observed.stdout.decode('ascii').splitlines():
+        key, sep, value = line.partition('=')
+        if not sep or key in unit:
+            raise ReadbackRepairError('restoration terminal unit observation differs')
+        unit[key] = value
+    if (len(observed.stdout) > 4096 or set(unit) != {'LoadState', 'MainPID', 'InvocationID'}
+            or unit['LoadState'] not in {'loaded', 'not-found'} or unit['MainPID'] != '0'
+            or observed.returncode and unit['LoadState'] != 'not-found'
+            or unit['LoadState'] == 'loaded' and unit['InvocationID'] != claim['invocation_id']):
+        raise ReadbackRepairError('restoration has not completed its retained unit')
+    return digest(canonical({'plan_sha256': row['plan_sha256'], 'claim_sha256': digest(canonical(claim)),
+                             'result_sha256': digest(canonical(result)), 'controller_sha256': RESTORE_V1_CONTROLLER}))
+
+
 def repair(journal, identity, binding, original, installed, publisher, policy, registry, controller_hash,
            *, close=False):
     """Only the operator wrapper supplies protected dependencies and fixed paths."""
@@ -149,6 +233,8 @@ def repair(journal, identity, binding, original, installed, publisher, policy, r
                 'dispatch_sha256': digest(canonical(custody.document(directory / 'dispatch.json'))),
                 'claim_sha256': digest(canonical(custody.document(directory / 'claim.json'))),
                 'custody_sha256': digest(canonical(custody.verify_retained_custody(journal, identity))),
+                'restoration_evidence_sha256': restoration_evidence(
+                    journal, identity, binding, receipt, actual, installed),
                 'before': receipt, 'after': after}
         body = canonical(plan)
         if len(body) > MAX_PLAN:
@@ -162,7 +248,8 @@ def repair(journal, identity, binding, original, installed, publisher, policy, r
     if (not isinstance(plan, dict) or set(plan) != {'version', 'intent_id', 'binding', 'original_loader_sha256',
                                                   'corrected_loader_sha256', 'receipt_validator_sha256',
                                                   'controller_sha256', 'dispatch_sha256',
-                                                  'claim_sha256', 'custody_sha256', 'before', 'after'}
+                                                  'claim_sha256', 'custody_sha256', 'restoration_evidence_sha256',
+                                                  'before', 'after'}
             or type(plan['version']) is not int or plan['version'] != 1 or plan['intent_id'] != identity
             or plan['binding'] != binding or plan['original_loader_sha256'] != digest(original)
             or plan['corrected_loader_sha256'] != verifier_hash or plan['controller_sha256'] != controller_hash
@@ -174,6 +261,9 @@ def repair(journal, identity, binding, original, installed, publisher, policy, r
             or plan['claim_sha256'] != digest(canonical(custody.document(directory / 'claim.json')))
             or plan['custody_sha256'] != digest(canonical(custody.verify_retained_custody(journal, identity)))):
         raise ReadbackRepairError('retained repair/source/load evidence changed')
+    if plan['restoration_evidence_sha256'] != restoration_evidence(
+            journal, identity, binding, plan['before'], plan['after']['image'], installed):
+        raise ReadbackRepairError('retained restoration fingerprint changed')
     for pending in directory.glob('*.pending'):
         if pending.name != 'result.pending' or receipt != plan['before']:
             raise ReadbackRepairError('unsettled load control differs from retained repair')

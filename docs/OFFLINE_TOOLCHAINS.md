@@ -665,3 +665,21 @@ cleanup still needs ownership coordination. See [host operations](HOST_BUNDLE_OP
 for exact evidence and remaining audited restoration/fixture/publication steps.
 The full coding suite passed 1,338 tests without skips; live role acceptance remains
 unchecked.
+
+### Later 8 October restoration checkpoint
+
+React availability is now independently verified again. A distinct audited
+restoration unit loaded the retained archive once after exact absence and positive
+prior completion were established. Its source/plan/claim/result and exited-worker
+evidence are retained. A provenance-aware optional-field repair then verified the
+old receipt and explicit rejection closed that unpublished transaction, releasing
+maintenance without approval or changing policy/source. No load ran during repair
+or rejection. See [exact host evidence](HOST_BUNDLE_OPERATIONS.md#8-october-restoration-and-terminal-reconciliation).
+
+This does not authorize old-source proof execution or pretend a new-source import
+already completed a load. A reviewed cross-source completed-load adoption path
+and native fixed-fixture proof are next. Python remains unavailable/unverified;
+Spring fixtures, verified role publication and generated-app deployment are still
+open. The follow-up passed 182 focused tests and 1,436 full coding regression tests
+without skips on disposable loopback PostgreSQL schemas. It is not full-goal
+acceptance.

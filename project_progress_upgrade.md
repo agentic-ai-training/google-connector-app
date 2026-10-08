@@ -2728,6 +2728,22 @@ changes become production evidence.
   and cleanup/execution-owner coordination remain required before live fixtures;
   the ordinary pending-import barrier is not bypassed. All 1,338 coding tests passed
   without skips on disposable loopback PostgreSQL; style/security/diff checks passed.
+  Later 8 October live recovery: a distinct write-ahead restoration plan and
+  single-use systemd claim restored the retained React archive once, independently
+  confirming daemon completion, current image metadata and worker exit. The exact
+  historical controller is content-addressed locally. A separately reviewed
+  readback audit now binds both original and restoration provenance; independent
+  verification confirmed no configuration/approval change. Explicit terminal
+  rejection closed the old unpublished import and a fresh read-only probe verified
+  maintenance available, retained custody, unchanged fourteen-file source/policy/
+  registry, VM identity/deadline and six healthy infrastructure containers. Repair
+  and rejection invoked no Docker load. All 182 focused restoration/readback/cleanup
+  tests passed, including real process-death tests with mocked host dependencies;
+  all 1,436 coding tests also passed without skips using disposable loopback
+  PostgreSQL schemas (one existing Vertex SDK deprecation warning).
+  Style/security/diff checks passed. New-source adoption, Python recovery, native
+  React/Spring fixtures, verified role publication and full app/Chat proof remain
+  unchecked; this evidence does not complete the original scope.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

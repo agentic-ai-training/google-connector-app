@@ -239,6 +239,66 @@ generated-app deployment remain unproven. Local checks: **1,338 coding tests pas
 without skips on loopback PostgreSQL; Flake8/Bandit/diff passed with existing
 dependency/unused-suppression warnings only. These are not full-goal acceptance.
 
+### 8 October restoration and terminal reconciliation
+
+The preceding absent-image checkpoint is superseded for **React only**. The
+operator-only `scripts.restore_reviewed_toolchain` prepared an immutable root
+SQLite plan, claimed a distinct systemd unit once before the RPC, restored the
+retained exact public archive, and independently verified current metadata and
+worker exit. The original import/load receipt was not rewritten by restoration.
+No generated code, provider key, policy approval or new resource entered the unit.
+It is bounded by the existing packaging slice, one CPU/1 GiB/no swap/32 tasks,
+300-second lifetime and the unchanged VM deadline. Exact daemon absence is required;
+authentication/template/network errors do not authorize a load. Unknown claimed
+outcomes are observation-only, never automatic replay.
+
+| Evidence | SHA-256 / identity |
+| --- | --- |
+| Restoration plan | `f54189a9fa591b6540756e4fb311e72a83235660448436aea3fe34d82c7a372f` |
+| Exact restoration controller | `4d5df079af64b0440ce864992b2de746a86c4243157668e0fffdc3354cce30b7` |
+| Restoration result | `d1df1a0b71416875cbb83f902f1def32b1344f2bd692cfc0c3ab77ab2ec61bd8` |
+| Restoration unit invocation | `2d88b522eea341a1a1f52206710b6eaa` |
+| Repair controller | `9a74ba1c9a3b278a918b24654714e109dafb01752ec01649f0f462c8a29f33d2` |
+| Repair plan | `96aadf8f17a26d5fa27205549fd08a9c3f190dd59d92b1af9336de175e5d424b` |
+| Restoration provenance bound into repair | `dac0615324276d90a763a56f11c93186aa6181a633ecb810d38a601780b79643` |
+
+The restoration finished `success`, `ExecMainStatus=0`, `MainPID=0`. Its exact
+51,601-byte source is retained as local Git blob
+`ca4a087323268b58968caa33aa7610dfeef71253` under
+`refs/gca/operator-restorations/<controller-sha256>`. Historical observation uses
+`--reviewed-program-sha256`, never regenerates a different controller from newer
+helper files. The allowlist, source hash, size and compilation are checked before
+transport; Git replacement objects and user/global config are disabled.
+
+The separately reviewed repair binds original receipts plus the complete
+restoration plan/claim/result lineage. A changed source, claim, enforcement,
+image, receipt or nonterminal worker prevents repair. Independent readback then
+confirmed the repaired receipt and hashes, zero unfinished jobs and six healthy
+Coolify containers. Explicit `reject_repaired` terminally closed the unpublished
+old-source import; a second read-only probe verified rejection, archive custody
+and `require_available()`. This is **negative retirement, not role enrollment**.
+
+```text
+old load definitely completed -> external cleanup -> exact image absence
+                                         |
+audit restoration -> single-use claim -> one load -> receipt + worker exit
+                                         |
+repair audit binds BOTH histories -> truthful readback -> reject old import
+                                         |
+maintenance available; archive/image/audits retained; approval still false
+                                         |
+new-source completed-load adoption + native fixtures + verified publication
+```
+
+Local focused validation: **182 tests passed**, including abrupt real process
+death with mocked Docker/systemd, incomplete/changed restoration rejection and
+historical-source custody tests. Flake8/Bandit/whitespace checks passed. These
+tests are distinct from the live evidence above. The full coding regression suite
+passed **1,436 tests without skips** against disposable loopback PostgreSQL schemas,
+with one existing Vertex SDK deprecation warning. Python restoration, reviewed
+cross-source adoption, native React/Spring fixtures, role publication, funded
+central dispatch, application behavior and Chat URL proof remain incomplete.
+
 ## Commands and preceding custody checkpoint
 
 The preceding eleven-file installation was

@@ -5,21 +5,28 @@
 The VM is on the fourteen-file `c312172` closure, snapshot
 `512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.
 All six Coolify infrastructure containers independently read back running/healthy.
-The React import remains `load_uncertain`: its prior load completed normally, but
-the image is currently absent from Docker. The Python validation image is absent
-too. Coolify's successful 8 October midnight cleanup record contains both exact
-image IDs; Docker itself has not restarted since 20 September. Protected React
-archive custody remains verified. Historical Python passes below are not proof
-of current readiness.
+Coolify's successful 8 October midnight cleanup removed the reviewed React and
+Python validation images; Docker itself has not restarted since 20 September.
+React was subsequently restored by a separately audited, single-use operator
+unit. Positive daemon completion, exact current image readback and worker exit
+were verified. The original import was repaired with explicit restoration
+provenance and then terminally rejected (not approved), retaining archive/audits
+and releasing maintenance. Python availability remains unproven; historical Python
+passes below are not proof of current readiness.
 
 An audited operator guard changed only forced daily cleanup to threshold-based
 cleanup at the existing 80% threshold. Independent settings/audit readback passed;
 volume/network deletion remains off and application-image retention stays enabled.
-No image was restored, no second load or role approval occurred, and source,
-policy/registry, resource allocation and STOP are unchanged. See
-[host operations](HOST_BUNDLE_OPERATIONS.md) for the exact root audit and pending
-restoration, cleanup-owner coordination and live proof requirements. The full local
-coding suite passed 1,338 tests without skips; the overall goal remains incomplete.
+The restoration was a new retained decision after definite prior completion and
+exact absence, not a retry of an uncertain RPC. Repair/closure themselves invoked
+no Docker load. No role approval, source installation, policy/registry change,
+resource expansion or STOP extension occurred. See
+[host operations](HOST_BUNDLE_OPERATIONS.md#8-october-restoration-and-terminal-reconciliation)
+for exact evidence. A new source-bound adoption path, Python recovery, cleanup-owner
+coordination, native fixtures and app deployment remain pending. This follow-up
+passed 182 focused tests and **1,436 coding tests without skips**, using disposable
+loopback PostgreSQL schemas; one existing Vertex SDK deprecation warning remained.
+The overall goal remains incomplete.
 
 ## Historical toolchain-custody checkpoint — 6 October 2026
 

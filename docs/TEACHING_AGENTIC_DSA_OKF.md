@@ -3832,3 +3832,32 @@ Changing forced cleanup to threshold cleanup reduces immediate interference, but
 is not proof against manual or threshold-triggered deletion. A production design
 must coordinate cleanup with validation/deployment owners and verify availability
 at dispatch. It must never report completion from historical image presence alone.
+
+**Restoration provenance** distinguishes the original execution history from a
+later recovery of the same immutable content. A cryptographic content ID identifies
+bytes, not the event that placed those bytes on a host. Keep two append-only causal
+chains and join them through explicit hashes, rather than attributing the second
+load to the first worker. This is a small provenance DAG:
+
+```text
+original input -> original claim -> original positive completion
+       |                         -> external deletion
+       +-> absence observation -> restoration plan -> claim -> positive receipt
+                                                            + worker exit
+original receipt + restoration chain + current image -> audited readback repair
+```
+
+**Single-use recovery capability** is an authority that can be consumed at most
+once. Commit the claim before invoking the side effect. If the worker dies after
+claim but before a trustworthy receipt, observe/reconcile instead of invoking it
+again. SQL `UPDATE ... WHERE claim IS NULL` is a compare-and-set, not an exactly-once
+guarantee for the remote Docker daemon. A missing receipt means uncertainty.
+
+**Historical executable custody** preserves the exact reviewed controller that
+actually ran. A later helper edit must not alter the provenance of an earlier
+unit. Store its immutable bytes under a content hash and verify the allowlist,
+hash, length and parsing before any historical observation. Hash verification is
+O(B) time over B bytes; the bounded restoration inventory is at most eight records.
+The project's live 8 October restoration used this distinction. Repair/closure
+did not reload or approve an image; cross-source adoption and native proofs remain
+separate work, not consequences inferred from a successful restoration.
