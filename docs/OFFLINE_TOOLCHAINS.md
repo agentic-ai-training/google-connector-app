@@ -647,3 +647,21 @@ real loopback PostgreSQL, without skips, before the final two end-marker cases w
 added. Those cases and the final focused archive/probe suite were separately run.
 Focused Flake8/Bandit and diff checks passed. This is not trusted CI or production
 execution evidence; the single existing google-genai deprecation warning remains.
+
+## 8 October availability correction
+
+Archive custody and Docker availability are separate. The current retained React
+archive still verifies, but Coolify's midnight cleanup removed unused/tagless
+images, including the React and Python validation images. The original load has
+a positive daemon-completion receipt; its current reserved import is not approved.
+An optional-field/source-reader repair cannot substitute for restoring missing
+content. No second Docker load was requested in this checkpoint.
+
+An audited fixed-server guard now uses threshold-based rather than forced daily
+cleanup, retaining the 80% threshold, volume/network protections and application
+image retention. Independent actual-host readback passed, and six Coolify containers
+remain healthy. This is not complete operator-image retention: manual or threshold
+cleanup still needs ownership coordination. See [host operations](HOST_BUNDLE_OPERATIONS.md)
+for exact evidence and remaining audited restoration/fixture/publication steps.
+The full coding suite passed 1,338 tests without skips; live role acceptance remains
+unchecked.

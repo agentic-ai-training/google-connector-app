@@ -2713,6 +2713,21 @@ changes become production evidence.
   Final local preparation verification: 1,301 coding tests passed without skips
   against disposable loopback PostgreSQL; Flake8, Bandit and whitespace checks
   passed. These are not live native-toolchain or generated-application acceptance.
+  8 October follow-up: the first repair stopped before audit because protected
+  public 0644 source was incorrectly read through the private custody reader. A
+  separate fixed-path/hash/inode-verified reader now handles source without weakening
+  archive/receipt privacy (16 new tests). Fresh host checks then found the reviewed
+  React and Python images absent. Coolify's successful midnight cleanup execution
+  18 contains both exact IDs; installed code prunes unused/tagless images and forced
+  daily cleanup was enabled. An audited operator-only guard changed only forced
+  cleanup to threshold-based cleanup (80%), retaining volume/network protections and
+  application image retention. Independent readback verified its immutable plan,
+  six healthy Coolify containers, unchanged source/policy/registry and retained
+  `load_uncertain` import. React archive custody still verifies. No image restoration,
+  second load, role approval or deployment occurred. Separately audited restoration
+  and cleanup/execution-owner coordination remain required before live fixtures;
+  the ordinary pending-import barrier is not bypassed. All 1,338 coding tests passed
+  without skips on disposable loopback PostgreSQL; style/security/diff checks passed.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

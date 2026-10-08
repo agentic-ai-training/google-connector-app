@@ -1,6 +1,27 @@
 # Delhi generated-application host — approved provisioning runbook
 
-## Latest toolchain-custody checkpoint — 6 October 2026
+## Latest verified host checkpoint — 8 October 2026
+
+The VM is on the fourteen-file `c312172` closure, snapshot
+`512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.
+All six Coolify infrastructure containers independently read back running/healthy.
+The React import remains `load_uncertain`: its prior load completed normally, but
+the image is currently absent from Docker. The Python validation image is absent
+too. Coolify's successful 8 October midnight cleanup record contains both exact
+image IDs; Docker itself has not restarted since 20 September. Protected React
+archive custody remains verified. Historical Python passes below are not proof
+of current readiness.
+
+An audited operator guard changed only forced daily cleanup to threshold-based
+cleanup at the existing 80% threshold. Independent settings/audit readback passed;
+volume/network deletion remains off and application-image retention stays enabled.
+No image was restored, no second load or role approval occurred, and source,
+policy/registry, resource allocation and STOP are unchanged. See
+[host operations](HOST_BUNDLE_OPERATIONS.md) for the exact root audit and pending
+restoration, cleanup-owner coordination and live proof requirements. The full local
+coding suite passed 1,338 tests without skips; the overall goal remains incomplete.
+
+## Historical toolchain-custody checkpoint — 6 October 2026
 
 Subsequent work adds the **local** durable load-unit controller, bounded compressed
 installer, fixed-fixture proof and verified-publication controllers (fourteen-file
@@ -475,3 +496,10 @@ absent optional `Entrypoint` key. A corrected optional lookup passed actual read
 only VM metadata/recipe checks and 176 relevant local regressions, but is not
 installed over the reserved import. Audited same-import readback repair is the
 next operation; no reload, approval, fixture or generated deployment is claimed.
+
+The subsequent 8 October check supersedes that next-operation assumption: the
+repair first exposed a public-source/private-reader mismatch (now corrected), then
+current immutable readback found the image missing after external cleanup. It
+stopped before committing any repair audit. Therefore a separately audited exact-
+content restoration is now required before same-import reconciliation can succeed.
+The pending-maintenance barrier must not be bypassed or the old load blindly replayed.

@@ -3788,3 +3788,47 @@ file is not a retry checkpoint. The repair audit is bounded by eight records and
 reverification remains O(A) I/O. An exclusive existing host flock prevents multiple
 repair owners from racing. No learning model, provider key or arbitrary shell is
 needed to make these integrity decisions.
+
+### Deep dictionary: code protection, data privacy and external garbage collection
+
+**Protected** and **private** are different predicates. Protected operator code may
+be readable (0644) but must not be writable by other users, replaced by a symbolic
+link, multiply linked or changed from its reviewed hash. Private receipt/archive
+custody additionally forbids group/other read bits (0600). Reusing a private reader
+for protected public code rejects valid source; weakening it globally exposes data.
+Use separate bounded readers and check an opened descriptor with `fstat`, not only
+the earlier pathname. A replacement-between-check-and-open test verifies the
+TOCTOU boundary. Metadata checks are O(1); hashing B source bytes is O(B).
+
+**External garbage collection** is a state-changing controller outside the agent's
+own state machine. A durable success receipt does not guarantee that a Docker image
+still exists: Coolify can later prune an unused image. Persisted identity, execution
+completion and current availability must be tracked separately.
+
+```text
+reviewed bytes -> durable load claim -> normal daemon completion
+                                        |
+                               external cleanup controller
+                                        |
+                                image no longer available
+                                        |
+                exact absence evidence + retained input + audit
+                                        |
+                    governed restoration, not blind RPC retry
+```
+
+**Write-ahead configuration CAS** stores the exact approved before/after settings
+before changing an external controller. The cleanup guard changes one Boolean
+(`force_docker_cleanup`) and preserves its schedule, threshold, volume/network
+protections and image-retention setting. A database transaction locks and compares
+the current row; an independent read confirms the result before the root receipt
+is committed. A lost response can reconcile the same decision. Foreign settings
+or a mismatched audit require review, not an overwrite. The fixed six-setting map
+has O(1) comparison cost; its bounded canonical JSON hash costs O(B).
+
+**Maintenance-owner coordination** means all actors that can destroy a runtime
+artifact must respect its leases/retention—not merely the process that creates it.
+Changing forced cleanup to threshold cleanup reduces immediate interference, but
+is not proof against manual or threshold-triggered deletion. A production design
+must coordinate cleanup with validation/deployment owners and verify availability
+at dispatch. It must never report completion from historical image presence alone.

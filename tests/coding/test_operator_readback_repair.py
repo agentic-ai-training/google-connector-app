@@ -1,6 +1,7 @@
 """Real protected receipts/SQLite; mocked systemd/Docker, never live host proof."""
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -136,6 +137,48 @@ def test_foreign_code_cannot_become_the_verifier_adapter():
     for body in (old_source() + b'\n', b'pass\n'):
         with pytest.raises(repair.ReadbackRepairError, match='exact reviewed'):
             repair.corrected_source(body)
+
+
+@pytest.mark.parametrize('mode', [0o600, 0o644])
+def test_operator_source_reader_accepts_protected_public_code_without_relaxing_custody(host, monkeypatch, mode):
+    monkeypatch.setattr(repair, 'ROOT', host.state)
+    path = host.state / 'toolchain_loader.py'
+    path.write_bytes(old_source())
+    path.chmod(mode)
+    assert repair.installed_source(custody) == old_source()
+    if mode == 0o644:
+        with pytest.raises(custody.ToolchainStagingError, match='not private'):
+            custody.file_stream(path)
+
+
+@pytest.mark.parametrize('fault', ['writable', 'symlink', 'hardlink', 'changed', 'oversize', 'race'])
+def test_operator_source_reader_rejects_unprotected_or_changed_source(host, monkeypatch, fault):
+    monkeypatch.setattr(repair, 'ROOT', host.state)
+    path = host.state / 'toolchain_loader.py'
+    path.write_bytes(old_source())
+    path.chmod(0o644)
+    if fault == 'writable':
+        path.chmod(0o664)
+    elif fault == 'symlink':
+        actual = host.state / 'other.py'
+        path.rename(actual)
+        path.symlink_to(actual)
+    elif fault == 'hardlink':
+        os.link(path, host.state / 'other.py')
+    elif fault in {'changed', 'oversize'}:
+        path.write_bytes(b'x' * 100001 if fault == 'oversize' else old_source() + b'\n')
+    else:
+        real_open = repair.os.open
+        def swap(filename, flags, *args, **kwargs):
+            if filename == path:
+                replacement = host.state / 'replacement.py'
+                replacement.write_bytes(old_source())
+                replacement.chmod(0o644)
+                os.replace(replacement, path)
+            return real_open(filename, flags, *args, **kwargs)
+        monkeypatch.setattr(repair.os, 'open', swap)
+    with pytest.raises((custody.ToolchainStagingError, repair.ReadbackRepairError)):
+        repair.installed_source(custody)
 
 
 @pytest.mark.parametrize('fault', ['hash', 'plan', 'result', 'controller'])

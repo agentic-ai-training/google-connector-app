@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import stat
 import sys
 import types
 
@@ -34,6 +35,25 @@ def canonical(value):
 
 def digest(body):
     return hashlib.sha256(body).hexdigest()
+
+
+def installed_source(custody):
+    """Read public operator code, never relax private archive/receipt custody."""
+    path = custody.protected(ROOT / 'toolchain_loader.py')
+    before = path.lstat()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as stream:
+        current = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or current.st_uid not in {0, os.geteuid()} or current.st_mode & 0o022
+                or not 0 < current.st_size <= 100000
+                or (before.st_dev, before.st_ino, before.st_mode, before.st_uid, before.st_nlink)
+                != (current.st_dev, current.st_ino, current.st_mode, current.st_uid, current.st_nlink)):
+            raise ReadbackRepairError('protected verifier source inode or bound differs')
+        body = stream.read(100001)
+        if len(body) != current.st_size or digest(body) != OLD_LOADER:
+            raise ReadbackRepairError('protected verifier source fingerprint differs')
+    return body
 
 
 def corrected_source(original):
@@ -217,9 +237,7 @@ def main():
                 or row['intent']['stop_unix'] != gateway['STOP_UNIX']):
             raise ReadbackRepairError('repair cannot change the target or hosting deadline')
         binding = {'bundle_sha256': OLD_SNAPSHOT, 'policy_sha256': policy_hash, 'registry_sha256': registry_hash}
-        source = gateway['custody'].file_stream(ROOT / 'toolchain_loader.py')
-        with source as stream:
-            original = stream.read(100001)
+        original = installed_source(gateway['custody'])
         result = repair(journal, request['intent_id'], binding, original, gateway['loader'],
                         gateway['publication'], gateway['POLICY'], gateway['REGISTRY'],
                         request['controller_sha256'], close=request['operation'] == 'reject_repaired')

@@ -178,6 +178,67 @@ Final local verification: 1,301 coding tests passed against disposable loopback
 PostgreSQL with no skips, plus Flake8/Bandit/whitespace checks. Only the existing
 Vertex SDK deprecation and unused suppression warnings remained.
 
+### 8 October follow-up: public-source reader and independent image cleanup
+
+The first live repair stopped **before** creating an audit: the source reader
+incorrectly used `custody.file_stream`, which deliberately requires private 0600
+data. Installed operator source is protected public 0644 code. The correction adds
+a distinct fixed-path source reader, retaining no-follow open, owner/mode/link/inode,
+size and exact old-source hash checks. Archive and receipt custody remain private;
+their reader is not weakened. Sixteen new tests cover both accepted source modes,
+symlink/hardlink/writeability/content/size rejection and replacement during open.
+
+Subsequent actual-host inspection revealed **a different current failure**:
+`No such image` for the reviewed React index. The Docker inventory contained only
+the six Coolify infrastructure images; the previously approved Python validation
+image was absent too. Docker has not restarted since 20 September. Coolify cleanup
+execution `18` succeeded on `2026-10-08 00:00:06`–`00:00:13` (database timestamps);
+its bounded log contained both exact missing image IDs. Installed cleanup code
+always prunes dangling images and also removes unused non-application images.
+Settings had `force_docker_cleanup=true` with daily `0 0 * * *`, despite an 80%
+disk threshold. Therefore the optional-field fix alone cannot recover current
+image availability. The original normal daemon-completion receipt is retained,
+but it is not current image availability or permission to replay its RPC.
+
+The operator-only `configure_coolify_cleanup` guard now changed **only**
+`force_docker_cleanup` to `false`, with a root-private write-ahead plan and receipt,
+fixed server identity, exact before-state SHA, transactional DB comparison and
+independent readback. Daily checks and the 80% threshold remain. Volume/network
+deletion remain disabled; application image retention remains enabled. It ran no
+cleanup, restored no image and changed no allocation, host policy or source bundle.
+The guard is not a model tool and does not expose any token or database credential.
+
+```text
+forced midnight cleanup -> unused validation/toolchain images disappear
+             |
+root audit -> change to threshold-based cleanup -> independent readback
+             |
+original import STILL RESERVED (not approved or completed)
+             |
+separately audited restoration of exact approved content
+             |
+source-bound repair -> host fixtures -> verified role publication
+```
+
+Live guard plan SHA:
+`80fd177f2612a7cb2bec3e453474ca529f019773fab0425c90c1c82f18dab320`.
+After-settings SHA:
+`af0422634323927f859e9318a9f6aa99ba6000791b621f98ca3d6b67caa67b4e`.
+Independent readback confirmed the unchanged fourteen-file snapshot, policy and
+registry, six running healthy Coolify containers, and the retained `load_uncertain`
+React import. Its 108,749,312-byte archive custody was reverified; no repair audit
+has been committed and no second Docker load was invoked.
+
+The guard prevents **forced daily** removal at low disk usage, not all possible
+deletion. Threshold/manual cleanup still needs coordination with retained operator
+images and the shared execution owner. Missing images must be restored through a
+new audited restoration decision after proving the prior RPC ended; never replay
+an uncertain RPC, forge a successful readback, or bypass the pending bundle barrier.
+Python availability, React/Spring live fixtures, image-retention coordination and
+generated-app deployment remain unproven. Local checks: **1,338 coding tests passed**
+without skips on loopback PostgreSQL; Flake8/Bandit/diff passed with existing
+dependency/unused-suppression warnings only. These are not full-goal acceptance.
+
 ## Commands and preceding custody checkpoint
 
 The preceding eleven-file installation was
