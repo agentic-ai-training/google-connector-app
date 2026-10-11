@@ -274,3 +274,18 @@ Sources: [gVisor installation](https://gvisor.dev/docs/user_guide/install/),
 [Vitest CLI](https://vitest.dev/guide/cli),
 [Maven offline mode](https://maven.apache.org/guides/introduction/introduction-to-repositories),
 [Surefire no-test policy](https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo).
+
+## Native descriptor-limit correction — 11 October 2026
+
+The first instrumented Spring fixture exposed a real Maven/Javac failure:
+`json-path-2.10.0.jar: Too many open files`. Its retained result was read through
+the no-execution diagnostic operation, with source/job/result/native hashes and
+cleanup checked. Spring was not approved. A following reviewed source change gives
+only `spring_test` and `spring_package` 1,024 open files per process (soft and hard);
+all other profiles retain 256. Native readiness verifies the actual guest limits
+as well as Docker metadata before extracting/executing the fixture.
+
+This changes a bounded descriptor dimension, not VM size, budget, execution deadline,
+CPU, memory, network, privileges or persistent mounts. It does not by itself prove
+Spring success. New source-bound positive test/package and deliberate negative
+proofs are required. See the exact receipts in `HOST_BUNDLE_OPERATIONS.md`.

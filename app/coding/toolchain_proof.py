@@ -139,6 +139,7 @@ def verify_container(journal, job, container_id):
     journal.verify_identity(job, container_id)
     spec = json.loads(isolation.docker('inspect', container_id))[0]
     host, config = spec['HostConfig'], spec['Config']
+    file_limit = isolation.OPEN_FILE_LIMITS.get(job.get('profile'), 256)
     if (spec.get('Id') != container_id or spec.get('State', {}).get('Running') is not True
             or any(mount.get('Type') != 'tmpfs' or mount.get('Destination') not in {'/workspace', GUEST_TMP}
                    or mount.get('RW') is not True for mount in spec['Mounts'])
@@ -157,7 +158,7 @@ def verify_container(journal, job, container_id):
             or host.get('LogConfig', {}).get('Type') != 'none'
             or host.get('RestartPolicy', {}).get('Name') not in {'', 'no'}
             or host.get('RestartPolicy', {}).get('MaximumRetryCount') != 0
-            or host.get('Ulimits') != [{'Name': 'nofile', 'Hard': 256, 'Soft': 256}]
+            or host.get('Ulimits') != [{'Name': 'nofile', 'Hard': file_limit, 'Soft': file_limit}]
             or host.get('Tmpfs') != {
                 '/workspace': 'rw,nosuid,nodev,exec,size=256m,mode=1777',
                 GUEST_TMP: 'rw,nosuid,nodev,exec,size=64m,mode=1777'}):
@@ -192,7 +193,12 @@ def readiness(journal, job, container_id):
             raise ToolchainProofError('guest UID/capabilities/privilege filter differs')
     except (KeyError, ValueError) as error:
         raise ToolchainProofError('guest privilege evidence invalid') from error
-    return {**evidence, 'guest_uid': 65532, 'guest_cap_eff': 0, 'guest_no_new_privs': 1}
+    limits = isolation.docker('exec', container_id, '/bin/sh', '-ec', 'ulimit -Sn; ulimit -Hn')
+    expected = str(isolation.OPEN_FILE_LIMITS.get(job.get('profile'), 256))
+    if len(limits) > 128 or limits.decode('ascii').split() != [expected, expected]:
+        raise ToolchainProofError('guest open-file limits differ')
+    return {**evidence, 'guest_uid': 65532, 'guest_cap_eff': 0, 'guest_no_new_privs': 1,
+            'guest_open_files_soft': int(expected), 'guest_open_files_hard': int(expected)}
 
 
 def _verified(journal, row, binding_hash):

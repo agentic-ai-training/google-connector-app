@@ -234,7 +234,7 @@ def test_native_enforcement_and_guest_privileges_are_both_required(monkeypatch):
     journal = SimpleNamespace(verify_identity=lambda *args: None)
     status = 'CapEff:\t0000000000000000\nCapPrm:\t0\nCapBnd:\t0\nNoNewPrivs:\t1\nUid:\t65532 65532 65532 65532\nGid:\t65532 65532 65532 65532\n'
     monkeypatch.setattr(isolation, 'docker', lambda *args: json.dumps([spec]).encode() if args[0] == 'inspect'
-                        else status.encode())
+                        else status.encode() if args[-1] == '/proc/self/status' else b'256\n256\n')
     monkeypatch.setattr(proof.native, 'verify_native_worker', lambda *args: {'memory_max': 1024**3, 'tasks_max': 64})
     import time
     job = {'id': 'd' * 32, 'image': 'sha256:' + 'e' * 64, 'deadline': int(time.time()) + 100}
@@ -242,3 +242,50 @@ def test_native_enforcement_and_guest_privileges_are_both_required(monkeypatch):
     status = status.replace('NoNewPrivs:\t1', 'NoNewPrivs:\t0')
     with pytest.raises(proof.ToolchainProofError, match='guest privilege'):
         proof.readiness(journal, job, spec['Id'])
+
+
+@pytest.mark.parametrize('profile,expected', [('react_test', 256), ('react_build', 256),
+                                             ('spring_test', 1024), ('spring_package', 1024)])
+@pytest.mark.parametrize('actual', [256, 1024, 4096])
+def test_profile_specific_descriptor_metadata_is_exactly_bounded(monkeypatch, profile, expected, actual):
+    spec = sandbox_spec()
+    spec['HostConfig']['Ulimits'] = [{'Name': 'nofile', 'Hard': actual, 'Soft': actual}]
+    journal = SimpleNamespace(verify_identity=lambda *a: None)
+    monkeypatch.setattr(isolation, 'docker', lambda *a: json.dumps([spec]).encode())
+    if actual == expected:
+        assert proof.verify_container(journal, {'profile': profile}, spec['Id']) == spec
+    else:
+        with pytest.raises(proof.ToolchainProofError, match='sandbox enforcement'):
+            proof.verify_container(journal, {'profile': profile}, spec['Id'])
+
+
+@pytest.mark.parametrize('profile,expected', [('react_test', 256), ('spring_test', 1024)])
+@pytest.mark.parametrize('fault', [None, 'unlimited', 'too_high', 'soft_only', 'missing', 'oversize'])
+def test_guest_descriptor_limits_are_observed_before_source_execution(monkeypatch, profile, expected, fault):
+    import time
+    spec = sandbox_spec()
+    spec['HostConfig']['Ulimits'] = [{'Name': 'nofile', 'Hard': expected, 'Soft': expected}]
+    journal = SimpleNamespace(verify_identity=lambda *a: None)
+    status = ('CapEff:\t0\nCapPrm:\t0\nCapBnd:\t0\nNoNewPrivs:\t1\n'
+              'Uid:\t65532 65532 65532 65532\nGid:\t65532 65532 65532 65532\n')
+    limits = f'{expected}\n{expected}\n'.encode()
+    if fault == 'unlimited':
+        limits = b'unlimited\nunlimited\n'
+    elif fault == 'too_high':
+        limits = b'4096\n4096\n'
+    elif fault == 'soft_only':
+        limits = f'{expected}\n'.encode()
+    elif fault == 'missing':
+        limits = b''
+    elif fault == 'oversize':
+        limits = b'1' * 129
+    monkeypatch.setattr(isolation, 'docker', lambda *args: json.dumps([spec]).encode() if args[0] == 'inspect'
+                        else status.encode() if args[-1] == '/proc/self/status' else limits)
+    monkeypatch.setattr(proof.native, 'verify_native_worker', lambda *a: {'memory_max': 1024**3, 'tasks_max': 64})
+    job = {'id': 'd' * 32, 'image': 'sha256:' + 'e' * 64, 'profile': profile, 'deadline': int(time.time()) + 100}
+    if fault:
+        with pytest.raises(proof.ToolchainProofError, match='open-file limits'):
+            proof.readiness(journal, job, spec['Id'])
+    else:
+        result = proof.readiness(journal, job, spec['Id'])
+        assert result['guest_open_files_soft'] == result['guest_open_files_hard'] == expected

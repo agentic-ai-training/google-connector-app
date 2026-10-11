@@ -2783,6 +2783,21 @@ changes become production evidence.
   skips on disposable loopback PostgreSQL, plus style/security/diff checks. One
   existing Vertex SDK deprecation warning remained. No Spring success or production
   activation is inferred from these local tests.
+  The complete be3a641 diagnostic closure was installed/read back as snapshot
+  `1ed9ac7575dd2ffe613538bdb2c1e00055af4bf50b115e66ee3398b848b12307`,
+  with unchanged policy/registry and existing React enrollment. It executed no
+  workload. One verified obsolete code backup was retired while preserving the
+  latest predecessor and all data. A fresh Spring intent is required for diagnostic
+  execution; the old failed result is not rewritten.
+  The first instrumented native retry retained the exact Maven/Javac error:
+  `json-path-2.10.0.jar: Too many open files`. Cleanup and result/native lineage were
+  verified and the unpublished import rejected. A new reviewed change keeps all
+  resource/security boundaries while raising only Spring's bounded per-process
+  soft/hard descriptor limit from 256 to 1,024, with guest readback before execution.
+  This is not yet native success or broader goal completion.
+  The descriptor correction passed 330 focused tests and all 1,554 coding tests
+  without skips against disposable loopback PostgreSQL, plus style/security/diff
+  checks. One existing Vertex SDK deprecation warning remained.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

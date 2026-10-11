@@ -435,6 +435,52 @@ tampering, failed results, legacy unavailable output, bounded Unicode/control
 excerpts and the no-execution/no-approval gateway/client contract. These are local
 regression results, not proof that the subsequent Spring native test succeeds.
 
+The diagnostic closure `be3a641` was subsequently installed as
+`0150b9a3440623091f500fe4ffebbd8ee30f9430a8a7cb927685a41819fef9d6`,
+snapshot `1ed9ac7575dd2ffe613538bdb2c1e00055af4bf50b115e66ee3398b848b12307`.
+Independent gateway readback verified the full closure, unchanged policy/registry,
+old Spring rejection and existing React enrollment. Installation executed no
+workload. The obsolete seven-file copy
+`529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`
+was retired beforehand under fresh active/retention hashes; active code, the latest
+predecessor and all data/journals/artifacts were preserved.
+
+Read diagnostics for the exact current source/configuration-bound reservation:
+
+```sh
+python -m scripts.transfer_reviewed_toolchain \
+  --operator-config .gca-local/validation-transport.json \
+  --operation proof_diagnostics --intent-id "$CURRENT_RESERVED_INTENT"
+```
+
+This operation does not accept source bytes, shell commands or rerun instructions.
+It reports the latest attempt for each fixed case, not merely the first passing
+attempt. A changed source/configuration requires explicit handover; do not rewrite
+an older binding or claim unavailable historical logs are recoverable.
+
+The diagnostic native Spring attempt (`c0ccc001acd82dfa5e62bbe286f916f5129257d06cf33627856c4c23d086e701`,
+job `36532c3eae164cefa37efe1b235e6319`) adopted the completed image without a new
+Docker load. Its retained result SHA is
+`21e346e015ca20315f20158b8de5e14a6d0033837b9a3bff2476da70b611cd68`.
+Read-only diagnostics now establish the actual failure: Maven's test compilation
+could not open `json-path-2.10.0.jar`, reporting **Too many open files**. This is
+concrete evidence for the latest attempt; it is not a reconstructed log of the
+earlier uninstrumented job. Cleanup was verified and this import was explicitly
+rejected, retaining all evidence without Spring approval.
+
+The follow-up gives only `spring_test`/`spring_package` a bounded 1,024-descriptor
+soft/hard limit; other validation profiles remain at 256. Native proof checks
+both Docker metadata and the actual guest soft/hard limits before source execution.
+CPU, memory, task count, UID, read-only root, tmpfs, no-network and cleanup constraints
+remain unchanged. Compilation/test/package success and deliberate failure must be
+reproved after this reviewed source handover; larger descriptor limits are not
+themselves success evidence.
+
+The descriptor correction passed **330 focused tests** and **1,554 full coding
+tests without skips** on disposable loopback PostgreSQL, plus Flake8/Bandit/diff
+checks (one existing Vertex SDK deprecation warning). Both lower/unbounded/wrong
+guest limits and wrong per-profile Docker metadata are rejected by the tests.
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

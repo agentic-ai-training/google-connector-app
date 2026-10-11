@@ -51,6 +51,9 @@ PROFILES = {
                                   "-Dmaven.repo.local=/opt/maven-repo",
                                   "-DfailIfNoTests=true", "package")),
 }
+# Maven/Javac holds dependency JARs open during compilation. Keep its resource
+# envelope bounded but do not reuse the smaller synthetic/Node descriptor limit.
+OPEN_FILE_LIMITS = {"spring_test": 1024, "spring_package": 1024}
 PREPARE_COMMANDS = {
     "react_test": ("npm", "ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund",
                    "--cache=/opt/npm-cache"),
@@ -1168,7 +1171,8 @@ def _execute_archive(source: bytes, profile: str, timeout: int, policy: dict, jo
             f"--label=gca.scope={journal.scope}", f"--label=gca.job={job['id']}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             "--user=65532:65532", "--memory=1g", "--memory-swap=1g",
-            "--cpus=1", "--pids-limit=" + ('64' if proof_cgroup else '128'), "--ulimit=nofile=256:256",
+            "--cpus=1", "--pids-limit=" + ('64' if proof_cgroup else '128'),
+            "--ulimit=nofile=" + ':'.join([str(OPEN_FILE_LIMITS.get(profile, 256))] * 2),
             *(["--cgroup-parent=" + proof_cgroup, "--ipc=private", "--cgroupns=private"]
               if proof_cgroup else []),
             # Tests/builds intentionally execute binaries/native modules produced

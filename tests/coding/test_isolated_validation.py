@@ -201,6 +201,7 @@ def test_validator_copies_snapshot_without_host_mount_or_credentials(tmp_path, m
     assert "--runtime=runsc" in create
     assert "--network=none" in create
     assert "--pull=never" in create
+    assert "--ulimit=nofile=256:256" in create
     assert "--tmpfs=/workspace:rw,nosuid,nodev,exec,size=256m,mode=1777" in create
     assert "--tmpfs=/tmp:rw,nosuid,nodev,exec,size=64m,mode=1777" in create
     assert not any(item.startswith(("--mount", "--volume")) for item in create)
@@ -435,6 +436,8 @@ def test_generated_profiles_run_only_fixed_offline_commands(tmp_path, monkeypatc
     assert result["success"] is True
     assert [command[0] for command in commands] == expected
     assert any("--network=none" in args for args, _ in calls if args[0] == "create")
+    limit = 1024 if profile.startswith('spring_') else 256
+    assert any(f'--ulimit=nofile={limit}:{limit}' in args for args, _ in calls if args[0] == 'create')
     assert calls[-1][0][:3] == ("rm", "--force", "--volumes")
 
 

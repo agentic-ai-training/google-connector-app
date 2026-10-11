@@ -2,7 +2,7 @@
 
 ## Latest verified toolchain checkpoint — 11 October 2026
 
-The active fourteen-file closure is `ca86020`, snapshot
+The React enrollment was verified on the fourteen-file `ca86020` closure, snapshot
 `8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`,
 installed as `cf3fc740139edd5faad2598279c75dbc292bad37b60c3a4ca209a2bd5a9b3edb`.
 React import `492f3a01417ca8dcc51f27d1f1ad3ab0fd5fd7b769165b7ad99ad68fe3fe1559`
@@ -35,8 +35,21 @@ approved. The import was explicitly terminally rejected, preserving its image,
 custody and audit while releasing maintenance. The old proof implementation did
 not retain stdout/stderr, so the underlying test error cannot be recovered from
 that receipt alone. A bounded, atomic, hash-bound diagnostic-retention change is
-being validated before a new source-bound attempt; no root cause is inferred from
-the exit code or fixture result hash.
+now installed before a new source-bound attempt; no root cause is inferred from
+the exit code or fixture result hash. The latest full closure is `be3a641`, snapshot
+`1ed9ac7575dd2ffe613538bdb2c1e00055af4bf50b115e66ee3398b848b12307`,
+installation `0150b9a3440623091f500fe4ffebbd8ee30f9430a8a7cb927685a41819fef9d6`.
+Independent gateway readback verified its exact source, unchanged policy/registry
+and existing React enrollment. The local diagnostic closure passed 334 focused
+tests and all 1,530 coding tests without skips, plus style/security/diff checks.
+
+A subsequent instrumented native Spring attempt retained the real error:
+Maven/Javac reported `json-path-2.10.0.jar: Too many open files`. It failed with
+verified cleanup and was explicitly rejected without approval. The next reviewed
+closure changes only Spring validation's bounded soft/hard descriptor limit from
+256 to 1,024 and adds actual guest-limit checks. This cause is proved for that
+instrumented attempt, not retroactively asserted for the discarded earlier output.
+Native proof/publication after this source change remain required.
 
 ## Historical restoration checkpoint — 8 October 2026
 

@@ -3919,3 +3919,28 @@ without their separate redaction, consent and retention controls.
 new one. The diagnostic endpoint is separate from the existing proof observation,
 so adding logs does not silently alter already-published proof-plan hashes. Missing
 historical output is reported as unavailable, not invented or retroactively filled.
+
+### Deep dictionary: file descriptors and resource-vector admission
+
+**File descriptor (FD)** is a process-local integer referring to an open kernel
+resource, such as a file, socket or pipe. It is not an OCI image descriptor. Java
+compilers can hold many dependency JARs open concurrently. The native Spring
+fixture's `Too many open files` result showed a real FD-resource failure rather
+than a model or OAuth failure.
+
+**Soft versus hard `RLIMIT_NOFILE`**: the soft limit is the currently effective
+ceiling; the hard limit bounds how far the process may raise it. Verify both in
+the actual guest, not just the requested container configuration. Python's
+`resource.getrlimit(resource.RLIMIT_NOFILE)` can inspect them on supported Unix
+systems; it should not be used to raise limits in the shared API process.
+This project uses a fixed typed profile to request and verify the sandbox limits.
+
+**Resource vector** extends scalar admission beyond CPU and memory:
+`(CPU, memory, tasks, FDs, storage, duration, network)`. A feasible task must satisfy
+every coordinate. Increasing one bounded coordinate because of measured evidence
+does not justify weakening other coordinates or increasing cloud cost authority.
+The current correction uses 1,024 soft/hard FDs only for Spring test/package
+processes; Node and other validation profiles stay at 256. This is per process,
+not a claim of a 1,024-FD aggregate host ceiling. Task-count, cgroup and memory
+limits remain independent bounds. Membership/policy lookup is O(1), while
+checking a fixed-size vector is O(d), with a small constant dimension d.
