@@ -156,6 +156,7 @@ def operate(request, stream):
                   "load_observe": {"intent_id"},
                   "load_adopt": {"intent_id", "source_intent_id"},
                   "proof_run": {"intent_id", "case"}, "proof_observe": {"intent_id"},
+                  "proof_diagnostics": {"intent_id"},
                   "publish_prepare": {"intent_id"},
                   "publish": {"intent_id", "plan_sha256"},
                   "reject": {"intent_id"},
@@ -261,6 +262,8 @@ def operate(request, stream):
                     raise OperatorToolchainError('fixed proof case differs from reserved role')
                 source = stream.read(proof.FIXTURES[role][case.rsplit('_', 1)[1]][0] + 1)
                 result = proof.run(journal, identity, case, source, binding)
+            elif request['operation'] == 'proof_diagnostics':
+                result = proof.diagnostics(journal, identity, binding)
             else:
                 result = proof.observe(journal, identity, binding)
             return {'operation': request['operation'], 'proof': result,

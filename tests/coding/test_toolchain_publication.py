@@ -95,6 +95,9 @@ def test_incomplete_or_changed_authority_cannot_prepare_candidate(prepared, monk
         path.write_bytes(path.read_bytes() + b' ')
     if fault == 'missing_case':
         with prepared.journal.db:
+            prepared.journal.db.execute('DELETE FROM toolchain_proof_results WHERE job_id IN '
+                                        '(SELECT job_id FROM toolchain_proof_cases WHERE import_id=? AND case_name=?)',
+                                        (prepared.identity, proof.CASES[prepared.role][0]))
             prepared.journal.db.execute('DELETE FROM toolchain_proof_cases WHERE import_id=? AND case_name=?',
                                         (prepared.identity, proof.CASES[prepared.role][0]))
     if fault == 'unfinished_job':

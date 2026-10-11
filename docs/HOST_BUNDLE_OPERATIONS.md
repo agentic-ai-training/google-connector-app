@@ -362,6 +362,79 @@ available maintenance slot and unchanged source/configuration/deadline. It invok
 no load. Configuration is read with the configuration reader, not a canonical
 receipt reader: the protected legacy registry may use valid noncanonical JSON.
 
+### Live adoption and React enrollment — 8 October; rechecked 11 October
+
+The complete `ca86020` closure was installed as
+`cf3fc740139edd5faad2598279c75dbc292bad37b60c3a4ca209a2bd5a9b3edb`,
+snapshot `8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`.
+The obsolete seven-file rollback copy `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`
+was retired under fresh audit before installation; the latest predecessor and all
+data/journals/artifacts were preserved.
+
+New React intent `492f3a01417ca8dcc51f27d1f1ad3ab0fd5fd7b769165b7ad99ad68fe3fe1559`
+reused protected custody from the terminally rejected old intent. Adoption plan
+`b587130d3193de64ca39461727ad00e75c32f30e04c0eeaf46b715ca09ca0c5a`
+was retained and independently checked; no Docker load was invoked. Native cases:
+
+| Case | Job | Expected/observed exit | Cleanup |
+| --- | --- | --- | --- |
+| `react_test_pass` | `07f5632178854f33ac2bb5965c465f0b` | 0 / 0 | verified |
+| `react_build_pass` | `9f13aded53cb4cca9608378e5484076c` | 0 / 0 | verified |
+| `react_test_fail` | `6f40328dcca94fb7a95f7ad0d844f2e0` | 1 / 1, fixed failure marker | verified |
+
+All three are actual Linux gVisor executions, distinct from mocked regression
+coverage. Independently reviewed publication plan
+`bc206f5ab1869f202569e8a424859c45f954e2812c9867b8a115162c01be90b3`
+adds only the two React profiles and their provenance. Post-publication readback
+verified the enrolled ledger, all retained receipts, native cleanup, exact image,
+maintenance availability and six running/healthy infrastructure containers.
+Published policy SHA is
+`86d0d41fc1ddc06e15f9b33b412f2765c074b5da58da7ea1386bcb0c70ca48db`;
+registry SHA is
+`327de3e82664728b4108a3c452242cd11015fdf2f344b8908cc0a0f22840f7e6`.
+The 11 October gateway probe reconfirmed the current source/configuration and
+enrolled ledger. Spring/Python recovery and full generated-app deployment remain
+separate unfinished requirements. STOP `1792430672` remains unchanged.
+
+### Spring first native attempt and diagnostic gap — 11 October
+
+Intent `dbdd8edbc2a2227082231c902817deb9a257e98acc323dd22a307b97ef998c3d`
+reused the cancelled v1 Spring archive. One fixed unit loaded it; independent
+readback verified `MainPID=0`, `Result=success`, exit 0 and invocation
+`8bd00c9dbf1742b9940e95eda9a76326`. The first observation was unconfirmed; inspecting
+the same unit/receipt and observing again confirmed completion. **No second load
+was dispatched.**
+
+Native `spring_test_pass` job `0604acd6b88c46e4909b2f5ba84d094b` returned exit 1,
+`passed=false`, cleanup verified. Result SHA:
+`9b6e20f06a8bcfb9c8b612db2f58199a516fd698ec349136806f07d9e81c05aa`.
+Native enforcement SHA:
+`9d15a7e2ab0f26a08119a535892e5e613c1229b7e3d99811118f0668a2c6c3be`.
+The import was terminally rejected with retained image/custody, not approved.
+Its completed-load SHA is
+`473fe9c9764b7b4cf668984894299e81239c1e558f22a9d0215000e101e94459`.
+
+The old implementation retained only the complete result's hash. It did not retain
+the compiler/test output itself, and Docker logging was deliberately disabled.
+Consequently the exact underlying test error is **unknown**, not proven to be a
+memory, dependency, JVM or gVisor error. Do not claim a cause or bypass the failed
+fixture. The next reviewed closure adds atomic full-result/receipt retention under
+the protected SQLite journal and a separate read-only `proof_diagnostics` operation.
+This does not change the existing proof/publication projection or its hashes.
+Only fixed public fixture output is permitted; no generated/customer input is added.
+Each full result is capped at 2 MiB, at most 48 results are retained, and output
+excerpts are capped by serialized JSON bytes (including Unicode/control escaping).
+Diagnostics verify receipt/result/native-enforcement hashes and cleaned-job lineage.
+Missing historical logs are explicitly marked unavailable, never reconstructed.
+
+Validation of the local diagnostic closure: **334 focused tests** and **1,530 full
+coding tests** passed without skips using disposable loopback PostgreSQL schemas;
+one existing Vertex SDK deprecation warning remained. Flake8, Bandit and diff
+checks passed. Tests cover atomic receipt/result commit failure, hash/inventory
+tampering, failed results, legacy unavailable output, bounded Unicode/control
+excerpts and the no-execution/no-approval gateway/client contract. These are local
+regression results, not proof that the subsequent Spring native test succeeds.
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

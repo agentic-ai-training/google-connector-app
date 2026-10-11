@@ -66,6 +66,20 @@ def test_probe_prepare_receive_remain_custody_only_and_preserve_registry_and_pol
     assert host.operate(request("receive", intent_id=item["id"]), io.BytesIO())["custody"] == receipt["custody"]
 
 
+def test_diagnostic_gateway_has_no_stream_execution_or_configuration_authority(target, monkeypatch):
+    item = prepared(target)
+    monkeypatch.setattr(host.loader, 'REVIEWED_ARCHIVES', host.REVIEWED_ARCHIVES)
+    before = (target.policy.read_bytes(), target.registry.read_bytes())
+    monkeypatch.setattr(host.loader, 'reconcile', lambda *a: pytest.fail('diagnostics cannot load'))
+    monkeypatch.setattr(host.proof, 'run', lambda *a: pytest.fail('diagnostics cannot execute'))
+    result = host.operate(request('proof_diagnostics', intent_id=item['id']), io.BytesIO())
+    assert result['proof']['cases'] == {} and result['proof']['execution_invoked'] is False
+    assert result['image_approved'] is False and result['production_policy_changed'] is False
+    assert (target.policy.read_bytes(), target.registry.read_bytes()) == before
+    with pytest.raises(host.OperatorToolchainError, match='unexpected'):
+        host.operate(request('proof_diagnostics', intent_id=item['id']), io.BytesIO(b'injected code'))
+
+
 @pytest.mark.parametrize("operation", ["load", "approve", "deploy", "shell", "cancel", "publish"])
 def test_custody_gateway_cannot_grant_execution_or_policy_authority(target, operation):
     with pytest.raises(host.OperatorToolchainError, match="authority"):

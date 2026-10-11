@@ -184,7 +184,15 @@ def test_cleaned_failed_fixture_can_be_retained_and_rejected_without_approval(pr
                                       (prepared.identity,)).fetchone()
     result = json.loads(row['result'])
     result.update(passed=False, exit_code=2)
+    # Construct a coherent synthetic failure fixture, not a forged pass receipt.
+    raw = json.loads(prepared.journal.db.execute('SELECT result FROM toolchain_proof_results WHERE job_id=?',
+                                               (row['job_id'],)).fetchone()[0])
+    raw.update(success=False, exit_code=2)
+    raw_body = custody.canonical(raw)
+    result['result_sha256'] = custody.checksum(raw_body)
     with prepared.journal.db:
+        prepared.journal.db.execute('UPDATE toolchain_proof_results SET result=? WHERE job_id=?',
+                                    (raw_body.decode(), row['job_id']))
         prepared.journal.db.execute('UPDATE toolchain_proof_cases SET result=? WHERE job_id=?',
                                     (custody.canonical(result).decode(), row['job_id']))
     assert publication.proof.observe(prepared.journal, prepared.identity, prepared.binding)['all_fixed_cases_passed'] is False

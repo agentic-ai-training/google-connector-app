@@ -1,6 +1,44 @@
 # Delhi generated-application host — approved provisioning runbook
 
-## Latest verified host checkpoint — 8 October 2026
+## Latest verified toolchain checkpoint — 11 October 2026
+
+The active fourteen-file closure is `ca86020`, snapshot
+`8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`,
+installed as `cf3fc740139edd5faad2598279c75dbc292bad37b60c3a4ca209a2bd5a9b3edb`.
+React import `492f3a01417ca8dcc51f27d1f1ad3ab0fd5fd7b769165b7ad99ad68fe3fe1559`
+adopted the definitely completed, restored old import without another Docker load.
+Its native gVisor test, build and deliberate-failure fixtures all passed their
+expected outcomes, with independently verified container cleanup. Publication
+plan `bc206f5ab1869f202569e8a424859c45f954e2812c9867b8a115162c01be90b3`
+was reviewed independently and published on 8 October. It adds only `react_test`
+and `react_build`, preserves existing policy/registry entries and the fixed STOP.
+Independent post-publication readback verified the enrolled phase, exact immutable
+image, all three receipts, cleanup, available maintenance and six healthy Coolify
+containers. The 11 October gateway probe reconfirmed this source and enrolled
+ledger/configuration, not a new execution of those fixtures.
+
+Policy SHA: `86d0d41fc1ddc06e15f9b33b412f2765c074b5da58da7ea1386bcb0c70ca48db`.
+Registry SHA: `327de3e82664728b4108a3c452242cd11015fdf2f344b8908cc0a0f22840f7e6`.
+The full coding regression passed **1,492 tests without skips** after disk headroom
+was restored; no user or Docker data was deleted. Spring enrollment, audited
+Python-image recovery, runtime bases, funded controller integration and the complete
+generated-app/Chat proof remain unfinished. No production core release, paid model
+call, new VM, budget expansion or STOP extension is implied by toolchain approval.
+
+On 11 October, Spring v2 intent
+`dbdd8edbc2a2227082231c902817deb9a257e98acc323dd22a307b97ef998c3d`
+reused the previously retained archive and completed one audited load. The fixed
+worker exited successfully with positive daemon completion and exact image
+readback. The first native `spring_test_pass` fixture instead returned exit 1;
+its receipt correctly records `passed=false` and verified cleanup. Spring was not
+approved. The import was explicitly terminally rejected, preserving its image,
+custody and audit while releasing maintenance. The old proof implementation did
+not retain stdout/stderr, so the underlying test error cannot be recovered from
+that receipt alone. A bounded, atomic, hash-bound diagnostic-retention change is
+being validated before a new source-bound attempt; no root cause is inferred from
+the exit code or fixture result hash.
+
+## Historical restoration checkpoint — 8 October 2026
 
 The VM is on the fourteen-file `c312172` closure, snapshot
 `512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`.

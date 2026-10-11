@@ -2757,6 +2757,32 @@ changes become production evidence.
   and available maintenance, without loading/changing configuration.
   This new closure is not installed, no VM adoption
   or native fixture proof is claimed, and the checklist remains unchecked.
+  Subsequent live progress, 8 October (gateway rechecked 11 October): the complete
+  ca86020 closure was installed/read back as snapshot
+  `8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`.
+  React's new v2 intent reused retained custody and adopted the definitely completed
+  restored image without another Docker load. Native positive test/build and fixed
+  deliberate-failure cases all passed expected outcomes with verified cleanup.
+  Independently reviewed plan
+  `bc206f5ab1869f202569e8a424859c45f954e2812c9867b8a115162c01be90b3`
+  enrolled only React test/build profiles; independent readback checked provenance,
+  exact image, all receipts/cleanup, available maintenance and six healthy Coolify
+  containers. This closes React toolchain enrollment, not the broader unchecked
+  multi-language/profile/deployment requirement. Spring, audited Python recovery,
+  runtime bases, funded controller integration and generated-app/Chat proof remain.
+  11 October: new source-bound Spring custody reuse and one audited load completed
+  with positive daemon/current-image/terminal-worker evidence. Its first native
+  positive test failed (exit 1), with cleanup verified, so Spring was not approved.
+  The import was explicitly rejected, retaining all custody/image/audit evidence.
+  The existing receipt retained a full-result hash but no test output; its exact
+  compiler/test cause remains unknown. Local diagnostic retention now atomically
+  binds bounded fixed-fixture output to its receipt and exposes a separate read-only
+  operation, preserving existing publication hashes. Validate/install this closure
+  and use a new provenance-bound intent before the next diagnostic native attempt.
+  The diagnostic closure passed 334 focused tests and all 1,530 coding tests without
+  skips on disposable loopback PostgreSQL, plus style/security/diff checks. One
+  existing Vertex SDK deprecation warning remained. No Spring success or production
+  activation is inferred from these local tests.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

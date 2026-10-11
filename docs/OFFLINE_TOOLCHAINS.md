@@ -697,3 +697,20 @@ skips. The initial full run was refused at 319 MiB local free disk; after headro
 rose to about 1.6 GiB it completed, without user/Docker data deletion. This is not
 installed/live adoption proof. See
 [handover contract](HOST_BUNDLE_OPERATIONS.md#reviewed-cross-source-adoption--local-preparation-8-october).
+
+The subsequent **live** checkpoint installed the complete closure, adopted the
+restored React image under a new v2 intent without another load, and executed all
+three fixed native React cases successfully (including the expected failing test).
+Independent publication readback verified React test/build enrollment, retained
+provenance, cleanup and six healthy infrastructure containers. This approval does
+not prove Spring, Python recovery, runtime bases or a generated application.
+See [live receipts](HOST_BUNDLE_OPERATIONS.md#live-adoption-and-react-enrollment--8-october-rechecked-11-october).
+
+On 11 October, the first native positive Spring test returned exit 1 with verified
+cleanup. The one Docker load was positively confirmed, but Spring was not approved;
+its unpublished import was explicitly rejected while retaining custody/image/audit.
+The old receipt preserved only the result hash, so the test output and exact cause
+are unavailable. The next reviewed closure adds a separate read-only
+`proof_diagnostics` operation and atomic hash-bound full-result retention. It does
+not change existing proof/publication hashes or weaken a failing-test gate. See
+[failure evidence and diagnostic bounds](HOST_BUNDLE_OPERATIONS.md#spring-first-native-attempt-and-diagnostic-gap--11-october).

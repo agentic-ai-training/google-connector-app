@@ -110,6 +110,34 @@ def adoption_evidence(evidence, identity, source_identity):
         raise RuntimeError('host completed-load adoption evidence differs')
 
 
+def diagnostic_evidence(evidence, identity):
+    result = evidence.get('proof')
+    if (not isinstance(result, dict) or result.get('intent_id') != identity
+            or result.get('version') != 1 or type(result.get('version')) is not int
+            or result.get('execution_invoked') is not False or result.get('image_approved') is not False
+            or evidence.get('image_approved') is not False or not isinstance(result.get('cases'), dict)
+            or not any(set(result['cases']) <= set(group) for group in proof.CASES.values())):
+        raise RuntimeError('host fixed-fixture diagnostic evidence differs')
+    for item in result['cases'].values():
+        if (not isinstance(item, dict) or type(item.get('raw_result_available')) is not bool
+                or type(item.get('receipt_available')) is not bool
+                or not isinstance(item.get('job_id'), str) or not re.fullmatch(r'[a-f0-9]{32}', item['job_id'])
+                or type(item.get('attempt')) is not int or item['attempt'] not in (1, 2)):
+            raise RuntimeError('host fixed-fixture diagnostic evidence differs')
+        if item['raw_result_available'] and (
+                item['receipt_available'] is not True or item.get('cleanup_verified') is not True
+                or any(type(item.get(key)) is not bool for key in
+                       ('passed', 'success', 'diagnostic_excerpt_truncated', 'output_truncated_at_execution'))
+                or type(item.get('exit_code')) is not int
+                or not isinstance(item.get('result_sha256'), str)
+                or not re.fullmatch(r'[a-f0-9]{64}', item['result_sha256'])
+                or any(not isinstance(item.get(key), str) for key in ('stdout', 'stderr'))
+                or sum(len(custody.canonical(item[key])) for key in ('stdout', 'stderr'))
+                > proof.MAX_DIAGNOSTIC_OUTPUT
+                or not isinstance(item.get('executed_commands'), list)):
+            raise RuntimeError('host fixed-fixture diagnostic evidence differs')
+
+
 def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
     """No automatic retries. Client loss leaves the host reservation for inspection."""
     request, control = envelope(operation, **values)
@@ -184,6 +212,8 @@ def rpc(host, operation, *, export_role=None, fixture_role=None, **values):
                 raise RuntimeError("host image identity differs from reviewed role")
         if operation in {'proof_run', 'proof_observe'}:
             proof_evidence(evidence, operation, values.get('intent_id'), values.get('case'))
+        if operation == 'proof_diagnostics':
+            diagnostic_evidence(evidence, values.get('intent_id'))
         if operation == 'load_adopt':
             adoption_evidence(evidence, values.get('intent_id'), values.get('source_intent_id'))
         if operation == 'publish_prepare':
@@ -231,7 +261,8 @@ def main():
     parser.add_argument("--operator-config", type=Path, required=True)
     parser.add_argument("--operation", choices=("probe", "prepare", "receive", "quarantine", "cancel_preload",
                                               "load_prepare", "load_dispatch", "load_observe", "load_adopt",
-                                              "proof_run", "proof_observe", "publish_prepare", "publish", "reject",
+                                              "proof_run", "proof_observe", "proof_diagnostics",
+                                              "publish_prepare", "publish", "reject",
                                               "reuse_custody"),
                         default="probe")
     parser.add_argument("--role", choices=("react", "spring"))

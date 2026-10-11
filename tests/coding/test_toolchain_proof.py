@@ -44,6 +44,7 @@ def execute(host, monkeypatch, *, valid=True, preparation_failed=False):
                 'stdout': '' if positive else proof.FAILURE_MARKER, 'stderr': '',
                 'native_enforcement': {'mocked_only': True},
                 'executed_commands': [list(isolation.PREPARE_COMMANDS.get(profile, ())
+                                           or ('false',)
                                            if preparation_failed else isolation.PROFILES[profile][1])]}
 
     monkeypatch.setattr(isolation, '_execute_archive', run)

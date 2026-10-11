@@ -3878,3 +3878,44 @@ origin separately (`daemon load` versus `completed_load_adoption`). A write-ahea
 `adopting` state blocks unrelated work until reconciliation. A database CAS can
 advance bookkeeping after a crash without repeating the external side effect.
 This distinction prevents false audit statements and unnecessary costly retries.
+
+### Deep dictionary: diagnostic custody and atomic evidence
+
+**A hash is not a log.** SHA-256 can prove that retained bytes match an earlier
+fingerprint, but it cannot recover bytes that were discarded. The first native
+Spring fixture exposed this distinction: its failing result was hashed, while its
+actual compiler/test output was not retained. Exit 1 alone cannot establish a
+dependency, memory, JVM or sandbox root cause.
+
+**Atomic evidence pair** means the full bounded result and its proof receipt commit
+in one SQLite transaction. The receipt binds the result's canonical bytes and
+native-enforcement hash; job/source/binding identities remain separate checks.
+If the transaction fails, neither half commits. A cleaned job with no committed
+result is unavailable evidence, never a successful test.
+
+```text
+fixed public fixture -> isolated execution -> identity-verified cleanup
+                                              |
+                       atomic SQLite transaction
+                       [ full result + receipt(hash(result)) ]
+                                              |
+                verify job/source/binding/hash/native evidence
+                                              |
+                     bounded read-only diagnostic tail
+                     (no execution or approval authority)
+```
+
+**Serialization-aware truncation** budgets the bytes actually transmitted, not
+Python character counts: Unicode and control characters can expand during JSON
+escaping. `diagnostic_tail` uses binary search for the longest suffix whose
+canonical JSON fits the budget. For an excerpt budget K, it makes O(log K)
+comparisons and serializes at most O(K log K) characters; K is fixed and small.
+It keeps terminal error context while explicitly reporting truncation. Full
+fixed-fixture results remain separately capped, hash-bound and protected. This is
+not permission to store private Workspace content or generated-customer logs
+without their separate redaction, consent and retention controls.
+
+**Compatibility projection** preserves an older evidence contract while adding a
+new one. The diagnostic endpoint is separate from the existing proof observation,
+so adding logs does not silently alter already-published proof-plan hashes. Missing
+historical output is reported as unavailable, not invented or retroactively filled.

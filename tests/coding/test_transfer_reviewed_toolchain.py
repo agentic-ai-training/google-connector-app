@@ -228,6 +228,38 @@ def test_wrong_fixture_role_is_rejected_before_any_transport(transport):
     assert transport.processes == []
 
 
+@pytest.mark.parametrize('fault', [None, 'execution', 'approval', 'identity', 'attempt', 'mixed_role', 'output'])
+def test_diagnostic_transport_is_read_only_bounded_and_role_specific(transport, fault):
+    item = {'job_id': 'd' * 32, 'attempt': 1, 'raw_result_available': True, 'receipt_available': True,
+            'passed': False, 'success': False, 'exit_code': 1, 'cleanup_verified': True,
+            'result_sha256': 'e' * 64, 'stdout': 'compile failed', 'stderr': '',
+            'executed_commands': [['mvn', '-o', 'test']], 'diagnostic_excerpt_truncated': False,
+            'output_truncated_at_execution': False}
+    result = {'version': 1, 'intent_id': 'b' * 64, 'phase': 'proof_pending',
+              'execution_invoked': False, 'image_approved': False, 'cases': {'spring_test_pass': item}}
+    if fault == 'execution':
+        result['execution_invoked'] = True
+    elif fault == 'approval':
+        result['image_approved'] = True
+    elif fault == 'identity':
+        result['intent_id'] = 'a' * 64
+    elif fault == 'attempt':
+        item['attempt'] = True
+    elif fault == 'mixed_role':
+        result['cases']['react_test_pass'] = item
+    elif fault == 'output':
+        item['stdout'] = '\U0001f642' * 700
+    transport.results.append(evidence('proof_diagnostics', proof=result, image_approved=False))
+    if fault:
+        with pytest.raises(RuntimeError, match='diagnostic evidence'):
+            client.rpc(None, 'proof_diagnostics', intent_id='b' * 64)
+    else:
+        assert client.rpc(None, 'proof_diagnostics', intent_id='b' * 64)['proof'] == result
+    assert len(transport.processes) == 1
+    stream = io.BytesIO(transport.processes[0].stdin.getvalue())
+    assert gateway.frame(stream)['operation'] == 'proof_diagnostics' and stream.read() == b''
+
+
 @pytest.mark.parametrize('fault', [None, 'configuration_published', 'image_approved', 'intent_id'])
 def test_publication_preparation_cannot_claim_policy_write_or_image_approval(transport, fault):
     result = {'intent_id': 'b' * 64, 'phase': 'prepared', 'plan_sha256': 'c' * 64,

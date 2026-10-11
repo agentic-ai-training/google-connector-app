@@ -33,6 +33,10 @@ SQL = '''CREATE TABLE IF NOT EXISTS toolchain_proof_cases(
     import_id TEXT NOT NULL,case_name TEXT NOT NULL,attempt INTEGER NOT NULL,
     job_id TEXT NOT NULL UNIQUE,source_sha256 TEXT NOT NULL,binding_sha256 TEXT NOT NULL,
     result TEXT,PRIMARY KEY(import_id,case_name,attempt))'''
+RESULT_SQL = '''CREATE TABLE IF NOT EXISTS toolchain_proof_results(
+    job_id TEXT PRIMARY KEY,result TEXT NOT NULL)'''
+MAX_RETAINED_RESULT = 2 * 1024 * 1024
+MAX_DIAGNOSTIC_OUTPUT = 4096
 
 
 class ToolchainProofError(ValueError):
@@ -58,12 +62,77 @@ def schema(journal, *, create=True):
     if create:
         with journal.db:
             journal.db.execute(SQL)
+            journal.db.execute(RESULT_SQL)
     rows = journal.db.execute('SELECT import_id,case_name,attempt FROM toolchain_proof_cases LIMIT 49').fetchall()
     known = {row['id']: row['intent']['role'] for row in journal.toolchain_imports()}
     if len(rows) > 48 or any(row['import_id'] not in known or row['case_name'] not in CASES[known[row['import_id']]]
                             or type(row['attempt']) is not int or row['attempt'] not in (1, 2) for row in rows):
         raise ToolchainProofError('proof inventory or attempt bound differs')
+    result_inventory(journal)
     return True
+
+
+def result_inventory(journal):
+    """Historical receipts may predate raw-result retention; never invent them."""
+    if not journal.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='toolchain_proof_results'").fetchone():
+        return False
+    rows = journal.db.execute('SELECT job_id,length(CAST(result AS BLOB)) AS size '
+                              'FROM toolchain_proof_results LIMIT 49').fetchall()
+    if len(rows) > 48 or any(type(row['size']) is not int or not 1 <= row['size'] <= MAX_RETAINED_RESULT
+                            or not journal.db.execute('SELECT 1 FROM toolchain_proof_cases WHERE job_id=?',
+                                                      (row['job_id'],)).fetchone() for row in rows):
+        raise ToolchainProofError('retained diagnostic inventory or bound differs')
+    return True
+
+
+def result_document(value):
+    """Only fixed public-fixture execution output; no customer source or secrets."""
+    if (not isinstance(value, dict) or any(type(value.get(key)) is not bool
+                                         for key in ('success', 'output_truncated', 'cleanup_verified'))
+            or type(value.get('exit_code')) is not int
+            or any(not isinstance(value.get(key), str) for key in ('stdout', 'stderr'))
+            or sum(len(value[key].encode()) for key in ('stdout', 'stderr')) > isolation.MAX_OUTPUT_BYTES
+            or not isinstance(value.get('native_enforcement'), dict)
+            or not isinstance(value.get('executed_commands'), list)
+            or not 1 <= len(value['executed_commands']) <= 2
+            or any(not isinstance(command, list) or not command
+                   or any(not isinstance(part, str) or len(part) > 4096 for part in command)
+                   for command in value['executed_commands'])):
+        raise ToolchainProofError('fixed fixture diagnostic result differs')
+    body = custody.canonical(value)
+    if not 1 <= len(body) <= MAX_RETAINED_RESULT:
+        raise ToolchainProofError('fixed fixture diagnostic result exceeds bound')
+    return body
+
+
+def retained_result(journal, record, receipt):
+    if not result_inventory(journal):
+        return None
+    raw = journal.db.execute('SELECT result FROM toolchain_proof_results WHERE job_id=?',
+                             (record['job_id'],)).fetchone()
+    if raw is None:
+        return None
+    body = raw['result'].encode()
+    value = json.loads(body, object_pairs_hook=custody.unique_object)
+    if (result_document(value) != body or custody.checksum(body) != receipt['result_sha256']
+            or value['exit_code'] != receipt['exit_code'] or value['cleanup_verified'] is not True
+            or custody.checksum(custody.canonical(value['native_enforcement']))
+            != receipt['native_enforcement_sha256']):
+        raise ToolchainProofError('retained diagnostic result/receipt lineage differs')
+    return value
+
+
+def diagnostic_tail(text, budget):
+    """Budget serialized bytes, including Unicode/control escaping, not characters."""
+    low, high = 0, min(len(text), budget)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(custody.canonical(text[-middle:])) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    return text[-low:] if low else ''
 
 
 def verify_container(journal, job, container_id):
@@ -152,6 +221,7 @@ def _verified(journal, row, binding_hash):
             or any(not isinstance(value[key], str) or not re.fullmatch(r'[a-f0-9]{64}', value[key])
                    for key in ('native_enforcement_sha256', 'result_sha256'))):
         raise ToolchainProofError('retained fixture result lineage differs')
+    retained_result(journal, row, value)
     if job['container_id']:
         native.require_native_cleanup(job['container_id'])
     return value
@@ -210,6 +280,8 @@ def run(journal, identity, case, source, binding):
     if len(body) > 8192:
         raise ToolchainProofError('fixture receipt exceeds bound')
     with journal.db:
+        journal.db.execute('INSERT INTO toolchain_proof_results VALUES(?,?)',
+                           (job['id'], result_document(result).decode()))
         journal.db.execute('UPDATE toolchain_proof_cases SET result=? WHERE job_id=? AND result IS NULL',
                            (body, job['id']))
     return {**receipt, 'image_approved': False, 'replayed_observation': False}
@@ -230,3 +302,40 @@ def observe(journal, identity, binding):
         results[case] = next((result for result in verified if result and result['passed']), None)
     return {'intent_id': identity, 'phase': row['phase'], 'cases': results,
             'all_fixed_cases_passed': all(results.values()), 'image_approved': False}
+
+
+def diagnostics(journal, identity, binding):
+    """Read-only bounded latest-attempt evidence; cannot rerun or approve a case.
+
+    Keep the original observe/publication projection unchanged so older published
+    evidence hashes remain valid. Full results and proof receipts commit atomically.
+    """
+    row = loader.verify_binding(journal, identity, binding)
+    cases = {}
+    if schema(journal, create=False):
+        fingerprint = custody.checksum(custody.canonical(binding))
+        for case in CASES[row['intent']['role']]:
+            record = journal.db.execute('SELECT * FROM toolchain_proof_cases WHERE import_id=? AND case_name=? '
+                                       'ORDER BY attempt DESC LIMIT 1', (identity, case)).fetchone()
+            if record is None:
+                continue
+            receipt = _verified(journal, record, fingerprint)
+            value = retained_result(journal, record, receipt) if receipt else None
+            if receipt is None or value is None:
+                cases[case] = {'job_id': record['job_id'], 'attempt': record['attempt'],
+                               'raw_result_available': False, 'receipt_available': receipt is not None}
+                continue
+            stderr = diagnostic_tail(value['stderr'], MAX_DIAGNOSTIC_OUTPUT // 2)
+            stdout = diagnostic_tail(value['stdout'], MAX_DIAGNOSTIC_OUTPUT - len(custody.canonical(stderr)))
+            cases[case] = {'job_id': record['job_id'], 'attempt': record['attempt'],
+                           'raw_result_available': True, 'receipt_available': True,
+                           'result_sha256': receipt['result_sha256'], 'passed': receipt['passed'],
+                           'exit_code': value['exit_code'], 'success': value['success'],
+                           'executed_commands': value['executed_commands'],
+                           'stdout': stdout, 'stderr': stderr,
+                           'diagnostic_excerpt_truncated': len(stdout) + len(stderr)
+                           < len(value['stdout']) + len(value['stderr']),
+                           'output_truncated_at_execution': value['output_truncated'],
+                           'cleanup_verified': True}
+    return {'version': 1, 'intent_id': identity, 'phase': row['phase'], 'cases': cases,
+            'execution_invoked': False, 'image_approved': False}

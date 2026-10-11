@@ -29,6 +29,17 @@ with a complete twelve-file closure and bounded compressed install protocol. Rea
 process-death tests exercise claim/receipt/SQLite boundaries with mocked RPCs.
 The VM still runs the eleven-file custody release; no load or approval occurred.
 
+Latest verified follow-up (8 October, gateway rechecked 11 October): the full
+fourteen-file `ca86020` closure is installed and independently rehashed. React
+adopted its definitely completed restored image across a reviewed source handover
+without another Docker load. All three fixed native gVisor cases passed expected
+outcomes with verified cleanup; a separate reviewed publication enrolled React
+test/build profiles and immutable provenance. This supersedes the historical
+Node-toolchain-pending statements above for **React only**. It does not activate
+funded user coding, Spring, Python-image recovery, runtime base images, core
+production migration or generated-app/Chat delivery. See the current checkpoint in
+`GCP_DELHI_HOSTING.md` and the retained receipts in `HOST_BUNDLE_OPERATIONS.md`.
+
 ## Sources and precedence
 
 Both supplied texts were read through their endings on 2026-09-12:
