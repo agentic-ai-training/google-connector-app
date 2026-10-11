@@ -714,3 +714,11 @@ are unavailable. The next reviewed closure adds a separate read-only
 `proof_diagnostics` operation and atomic hash-bound full-result retention. It does
 not change existing proof/publication hashes or weaken a failing-test gate. See
 [failure evidence and diagnostic bounds](HOST_BUNDLE_OPERATIONS.md#spring-first-native-attempt-and-diagnostic-gap--11-october).
+
+The instrumented attempt identified Maven/Javac's bounded-file-descriptor failure.
+The Spring-only correction (1,024 soft/hard FDs, verified inside the guest) then
+passed native positive test/package and the fixed deliberate-failure case. Spring
+was separately published and independently verified alongside React, with exact
+images, receipts, cleanup and six healthy infrastructure containers. Both toolchains
+are enrolled; Python recovery and full generated-app/Chat delivery remain unfinished.
+See [Spring enrollment](HOST_BUNDLE_OPERATIONS.md#verified-spring-enrollment--11-october).

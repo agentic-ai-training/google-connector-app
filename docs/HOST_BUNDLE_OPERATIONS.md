@@ -481,6 +481,56 @@ tests without skips** on disposable loopback PostgreSQL, plus Flake8/Bandit/diff
 checks (one existing Vertex SDK deprecation warning). Both lower/unbounded/wrong
 guest limits and wrong per-profile Docker metadata are rejected by the tests.
 
+The full descriptor-corrected closure `2f3ba14` was installed/read back as
+`653048597d29520d60c23b912b8a38f28ebb90174ec1c45c0dec46d0b7da2385`,
+snapshot `c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`,
+without policy/registry changes or workload execution. A second obsolete seven-file
+copy (`c11d29d43f04bf580bfbfb458a6db4f10dcc9e41231f697893d3de688520403e`)
+was retired under fresh hashes before installation, preserving current code,
+the latest predecessor and data. New intent
+`1c4488141c534f5181d40b3dae4da967e1e0d0215305d6e5fcc67e8eae4ba67f`
+reused custody from the rejected diagnostic intent. Adoption plan
+`39b82d8f92782fa4bfd0a1aec585b3db2e464ddab427d21bb1a0dc0ebe938fa9`
+binds that completed-load lineage; no additional Docker load occurred. Native proof
+and publication are still required at this checkpoint.
+
+### Verified Spring enrollment — 11 October
+
+The descriptor-corrected native cases completed with expected outcomes:
+
+| Case | Job | Expected/observed exit | Cleanup |
+| --- | --- | --- | --- |
+| `spring_test_pass` | `5771d45ee6504dabac35c1bb0f035d1b` | 0 / 0 | verified |
+| `spring_package_pass` | `b828fe361be64d75b0a714dac37b75b9` | 0 / 0 | verified |
+| `spring_test_fail` | `ee32ed00163c47db9d3f11063da57f8a` | 1 / 1, fixed failure marker | verified |
+
+All three use binding SHA
+`b2223152b7dc2f739846f576ff45c90cf91366e23b93b6dd61cc78c2569fbc4c`.
+Independent receipt/result readback verified guest soft/hard descriptor limits of
+1,024, unchanged 1 GiB memory/64-task bounds and zero guest capabilities.
+Publication plan
+`a28e45a6f3642cd268d7c74e6f76ca4cfb1e538fcc87d93579372caea1ceef4e`
+was reviewed independently: only `spring_test` and `spring_package` plus their
+provenance were added; all prior policy/registry records and STOP were preserved.
+It was explicitly published, then independently verified with both React/Spring
+enrolled, exact current images, six retained passing case receipts, native cleanup,
+available maintenance and six running/healthy infrastructure containers.
+
+Current policy SHA:
+`afa4901baca18a451e704b275beaebd1c1efcc7edf521debdd5925d9027fda73`.
+Current registry SHA:
+`6eb2f72e3b1b901e1fd9387f144f0612985318070f32df9e0d5c82f84014f345`.
+This proves the fixed React/Spring toolchain cases, not arbitrary generated-app
+behavior, PostgreSQL/cross-language deployment, funded dispatch or Chat delivery.
+
+The separate fresh Python recovery preflight confirmed its exact current image
+absence and rehashed the private 46,237,696-byte approved archive to
+`36723f7fff07fb1712479bdbf5b09a31d67f38b0a45af4648e1c00b1e80d3778`.
+Maintenance was available and the current policy/registry/STOP matched. No load
+occurred. Audited legacy-Python restoration remains the next step; calling an
+ordinary validation profile to trigger its implicit reload would not prove that
+recovery has the required durable authority and single-claim evidence.
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

@@ -2798,6 +2798,23 @@ changes become production evidence.
   The descriptor correction passed 330 focused tests and all 1,554 coding tests
   without skips against disposable loopback PostgreSQL, plus style/security/diff
   checks. One existing Vertex SDK deprecation warning remained.
+  The descriptor-corrected 2f3ba14 closure was installed/read back as snapshot
+  `c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`.
+  A fresh Spring v2 reservation adopted its retained completed-image lineage without
+  another Docker load; native positive/negative/package proofs remain required.
+  Final 11 October follow-up: all three native Spring cases passed expected outcomes
+  with cleanup verified. Independent result/receipt readback checked actual guest
+  limits and retained enforcement. Reviewed publication plan
+  `a28e45a6f3642cd268d7c74e6f76ca4cfb1e538fcc87d93579372caea1ceef4e`
+  enrolled only Spring test/package plus provenance, preserving React/Python entries
+  and STOP. Independent post-publication readback verified both React and Spring
+  enrolled, exact images, all six retained passing receipts, native cleanup, available
+  maintenance and six healthy infrastructure containers. Python recovery, runtime
+  bases, funded integration, PostgreSQL/cross-language profiles and complete
+  generated-app/Chat proof remain open; this broad checklist item is not marked done.
+  Fresh post-publication Python preflight confirmed exact image absence, retained
+  archive/hash/size and available maintenance, with no load. Complete audited
+  legacy-image recovery before treating Python validation as currently ready.
 - [ ] Support repository creation through scoped GitHub App authority and private local
   source bundles. Publish only requested content, without secrets or raw user data.
 - [ ] Preserve two release origins: authorized user-service operations and separately

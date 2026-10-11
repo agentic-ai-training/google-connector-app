@@ -2,6 +2,27 @@
 
 ## Latest verified toolchain checkpoint — 11 October 2026
 
+The active closure is `2f3ba14`, snapshot
+`c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`.
+**React and Spring are both enrolled** after actual native positive test, build/package
+and deliberate-failure proofs. Independent post-publication readback verified both
+immutable images, all six retained case receipts, native cleanup, available
+maintenance and all six running/healthy Coolify containers. The latest policy SHA
+is `afa4901baca18a451e704b275beaebd1c1efcc7edf521debdd5925d9027fda73`;
+registry SHA is `6eb2f72e3b1b901e1fd9387f144f0612985318070f32df9e0d5c82f84014f345`.
+The descriptor correction passed 1,554 coding tests without skips. Python recovery,
+runtime bases, funded controller integration, core production release and the
+complete generated-app/Chat proof remain unfinished. No new resource, paid model
+call, budget expansion or STOP extension occurred. The full goal remains active.
+
+Fresh 11 October Python recovery preflight verified exact daemon image absence,
+the protected 46,237,696-byte archive and SHA
+`36723f7fff07fb1712479bdbf5b09a31d67f38b0a45af4648e1c00b1e80d3778`,
+available maintenance and current policy/registry. It invoked no load. Do not
+trigger the legacy implicit reload as a substitute for audited recovery.
+
+### Enrollment and correction history — 8–11 October
+
 The React enrollment was verified on the fourteen-file `ca86020` closure, snapshot
 `8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`,
 installed as `cf3fc740139edd5faad2598279c75dbc292bad37b60c3a4ca209a2bd5a9b3edb`.
@@ -20,7 +41,7 @@ ledger/configuration, not a new execution of those fixtures.
 Policy SHA: `86d0d41fc1ddc06e15f9b33b412f2765c074b5da58da7ea1386bcb0c70ca48db`.
 Registry SHA: `327de3e82664728b4108a3c452242cd11015fdf2f344b8908cc0a0f22840f7e6`.
 The full coding regression passed **1,492 tests without skips** after disk headroom
-was restored; no user or Docker data was deleted. Spring enrollment, audited
+was restored; no user or Docker data was deleted. At that checkpoint Spring enrollment, audited
 Python-image recovery, runtime bases, funded controller integration and the complete
 generated-app/Chat proof remain unfinished. No production core release, paid model
 call, new VM, budget expansion or STOP extension is implied by toolchain approval.
@@ -36,7 +57,7 @@ custody and audit while releasing maintenance. The old proof implementation did
 not retain stdout/stderr, so the underlying test error cannot be recovered from
 that receipt alone. A bounded, atomic, hash-bound diagnostic-retention change is
 now installed before a new source-bound attempt; no root cause is inferred from
-the exit code or fixture result hash. The latest full closure is `be3a641`, snapshot
+the exit code or fixture result hash. That diagnostic closure was `be3a641`, snapshot
 `1ed9ac7575dd2ffe613538bdb2c1e00055af4bf50b115e66ee3398b848b12307`,
 installation `0150b9a3440623091f500fe4ffebbd8ee30f9430a8a7cb927685a41819fef9d6`.
 Independent gateway readback verified its exact source, unchanged policy/registry
@@ -50,6 +71,19 @@ closure changes only Spring validation's bounded soft/hard descriptor limit from
 256 to 1,024 and adds actual guest-limit checks. This cause is proved for that
 instrumented attempt, not retroactively asserted for the discarded earlier output.
 Native proof/publication after this source change remain required.
+
+The descriptor-corrected `2f3ba14` closure is now installed as
+`653048597d29520d60c23b912b8a38f28ebb90174ec1c45c0dec46d0b7da2385`,
+snapshot `c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`.
+Independent gateway readback verified its source, unchanged policy/registry and
+existing React enrollment. New Spring intent
+`1c4488141c534f5181d40b3dae4da967e1e0d0215305d6e5fcc67e8eae4ba67f`
+reused protected custody and adopted the prior completed image without loading it
+again. Native cases were pending at this intermediate checkpoint.
+They subsequently passed and Spring was enrolled under publication plan
+`a28e45a6f3642cd268d7c74e6f76ca4cfb1e538fcc87d93579372caea1ceef4e`.
+Independent review checked exact profile/registry deltas and guest soft/hard limits
+of 1,024 in all three cases. The final independent readback is summarized above.
 
 ## Historical restoration checkpoint — 8 October 2026
 

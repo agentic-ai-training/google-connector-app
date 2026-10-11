@@ -40,6 +40,15 @@ funded user coding, Spring, Python-image recovery, runtime base images, core
 production migration or generated-app/Chat delivery. See the current checkpoint in
 `GCP_DELHI_HOSTING.md` and the retained receipts in `HOST_BUNDLE_OPERATIONS.md`.
 
+Later on 11 October, native Spring diagnostics established a Maven/Javac
+file-descriptor-limit failure. The reviewed Spring-only capacity correction and
+actual guest-limit checks passed local regression (1,554 coding tests without skips)
+and all three native Spring cases. The current fourteen-file `2f3ba14` closure now
+has independently verified **React and Spring** profile enrollment, immutable image
+provenance and cleanup; six Coolify containers remain healthy. Python-image recovery,
+runtime bases, funded integration and complete generated-app/Chat proof are still
+open. Toolchain enrollment is not activation of the whole target architecture.
+
 ## Sources and precedence
 
 Both supplied texts were read through their endings on 2026-09-12:
