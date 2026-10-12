@@ -722,3 +722,14 @@ was separately published and independently verified alongside React, with exact
 images, receipts, cleanup and six healthy infrastructure containers. Both toolchains
 are enrolled; Python recovery and full generated-app/Chat delivery remain unfinished.
 See [Spring enrollment](HOST_BUNDLE_OPERATIONS.md#verified-spring-enrollment--11-october).
+
+On 12 October, the legacy Python image was separately restored under a singleton
+same-journal reservation with one source-bound systemd dispatch, a write-ahead
+claim, protected open-inode archive custody, positive daemon completion and exact
+image readback. Explicit reconciliation released ownership only after verifying
+the exited matching worker. Real valid/invalid Python probes and replay/cleanup
+checks passed; React/Spring and all six infrastructure containers were rechecked.
+Ordinary validation no longer implicitly reloads a missing legacy image. An
+uncertain recovery stays reserved and is never automatically replayed. This is
+existing-image restoration, not new toolchain approval or application proof.
+See [audited recovery](HOST_BUNDLE_OPERATIONS.md#audited-legacy-python-restoration--12-october-2026).

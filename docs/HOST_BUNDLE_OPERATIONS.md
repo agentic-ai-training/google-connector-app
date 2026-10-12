@@ -531,6 +531,95 @@ occurred. Audited legacy-Python restoration remains the next step; calling an
 ordinary validation profile to trigger its implicit reload would not prove that
 recovery has the required durable authority and single-claim evidence.
 
+After the user cleared local disk space, a fresh check showed 6.1 GiB available.
+The full `tests/coding` suite was rerun against verified loopback PostgreSQL:
+**1,554 passed, no skips, in 44.52 seconds**, with one Google SDK deprecation
+warning. Coding lint and Bandit's medium/high severity checks passed; Bandit also
+emitted existing suppression/comment warnings. The read-only pinned-IAP bundle
+probe reconfirmed snapshot
+`c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`,
+installation `653048597d29520d60c23b912b8a38f28ebb90174ec1c45c0dec46d0b7da2385`,
+an idle journal and no pending toolchain import. This removes the disk-space test
+blocker, but does not restore Python or complete the broader goal.
+
+### Audited legacy Python restoration — 12 October 2026
+
+Source `5944088` removes implicit legacy loading from workload admission and adds
+an explicit singleton restoration ledger. Corrected source `7703dee` verifies the
+existing registry reader's `(raw_bytes, document)` contract. The first preparation
+failed on that contract before creating any ledger row or loading an image;
+independent readback confirmed the absence of recovery mutations.
+
+The complete fourteen-file barrier closure was installed with installation
+`0e6d0195f5b7562384ce1b79ec646360e5cc1b26f12e7023198c81eee913ced8`,
+independently observed snapshot
+`deb340f2f45957b7ec4420224727d7128567e9a1debc93855a10f2e4b5723481`.
+Only the reviewed validation source changed; policy, registry, resource limits and
+STOP were preserved. The verified obsolete `0150b9a...` predecessor copy was
+retired under fresh source/retention hashes; current code, latest predecessor,
+data, journals and image archives were preserved.
+
+The corrected operator program is retained in Git blob
+`0c06afcba38a5e946feea9b5c912ea023ac5c2dd`, under
+`refs/gca/legacy-restorations/129b5eb777639135943c35c62d2abf33ddd3dc0ae9cfe6cd4b3e6919527f8ab0`.
+The CLI can use `--reviewed-program-sha256` to keep observing this exact controller
+after local source changes. No generated code or provider key is involved.
+
+| Evidence | Value |
+| --- | --- |
+| Recovery identity | `1dad05d61eba90764e48ce3073abad0bbb7a27d32e471777c608278ea8112627` |
+| Plan SHA | `cce0783be4aff0344e2b891b824cec3c49209b9fe488fd65d76848451d3c5e2c` |
+| Claim SHA | `b082c406aed9df0779417072cc44294e96ccf7d195542d74e4dcacae2ee35dad` |
+| Result SHA | `4cdc8228faafff2e9ec9e644621864cf741e2d65a968679dd9671d0f55d70d52` |
+| Unit invocation | `b729796652ef4f2095d27c199535c91a` |
+| Positive Python job | `adccce50d1814835965fcff49aa2f308` |
+| Negative Python job | `b9d516d297e24ee88bbb16631c6c2515` |
+
+One fixed, retained systemd worker performed one Docker load. Its write-ahead
+dispatch and claim preceded the RPC. The private archive's full digest and inode
+were verified; Docker inherited that same open file descriptor rather than
+reopening its pathname. Normal daemon completion and exact Linux/AMD64 image
+readback were recorded. Explicit reconciliation independently checked the exited
+worker (`MainPID=0`, success/exit 0), invocation identity and current image, then
+released the shared journal. Timeouts/nonzero loads cannot be cancelled, repeated
+or released merely because an image appears. Only an unused prepared plan may be
+cancelled. This bounded singleton recovery does not authorize future reloads.
+
+The live positive probe compiled public synthetic Python and rejected replay.
+The negative probe returned exit 1 for `answer =` and independently observed
+cleanup; its claim was `c896011d-764c-46d6-8e33-8167f91e2f3f`, source SHA
+`df1f70472a1ebee34f01c9e749aefd30352f6a42c36163fd3adbffd7f485ab33`.
+Both jobs were independently observed as cleaned. A fresh root readback verified
+current Python image presence, React/Spring enrollment and exact images, available
+maintenance, unchanged policy/registry/STOP and six running/healthy Coolify
+containers. No production admission, migration, generated app, Chat delivery,
+paid model call, new cloud resource or budget expansion occurred.
+
+Operator flow (the flags require fresh exact hashes, not placeholders):
+
+```text
+restore_legacy_python_toolchain prepare
+  -> reviewed singleton plan / host reservation
+restore_legacy_python_toolchain dispatch
+  -> one retained unit -> one claim -> one bounded Docker RPC
+restore_legacy_python_toolchain observe
+  -> read the same reservation; never redispatch after observation uncertainty
+restore_legacy_python_toolchain reconcile
+  -> positive receipt + exact image + exited matching worker -> release
+```
+
+Existing workload validation now fails closed when an approved image is missing,
+including a legacy image. Source apply/retire/rollback and new workloads are blocked
+while the legacy reservation lacks valid terminal reconciliation. A missing or
+malformed ledger/receipt is not translated into successful recovery.
+
+Final local verification of the corrected source passed **1,578 coding tests,
+no skips, in 68.73 seconds**, against loopback PostgreSQL, with one existing Google
+SDK deprecation warning. `flake8 app/coding scripts/restore_legacy_python_toolchain.py
+tests/coding --max-line-length=100`, Bandit's medium/high severity checks and
+`git diff --check` passed. The 23 focused restoration tests distinguish mocked
+daemon/systemd boundaries from the separately recorded live evidence above.
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

@@ -3010,3 +3010,22 @@ account information needed. No Vertex model has been trained or live-probed,
 no GCP resource has been provisioned and no new framework has been deployed. The free
 AI Studio SFT claim remains contradicted by official documentation and needs a feasible
 replacement decision. The user's existing `docs/ARCHITECTURE.md` edits are preserved.
+
+Progress 2026-10-12: the user-cleared Mac disk blocker was rechecked (6.1 GiB free
+initially), and the coding regressions were resumed against verified loopback
+PostgreSQL. Sources `5944088` and `7703dee` remove implicit legacy reload, add
+bounded single-claim operator restoration and its same-journal workload/installer
+barriers, and verify the real registry-reader contract. The full fourteen-file
+barrier was installed/read back as snapshot
+`deb340f2f45957b7ec4420224727d7128567e9a1debc93855a10f2e4b5723481`.
+One actual legacy Python load was positively completed and explicitly reconciled;
+native valid/invalid compilation, replay rejection and cleanup passed. Fresh root
+readback confirmed exact Python image, React/Spring enrollment, available host
+ownership and six healthy infrastructure containers. Policy/registry, STOP, cloud
+resources and spending/model authority were unchanged. See the bounded receipts in
+`docs/HOST_BUNDLE_OPERATIONS.md`. This closes audited legacy-image recovery only;
+unchecked runtime-base, funded-controller, full generated-app/Chat, framework,
+candidate lifecycle, training and production-evidence requirements remain open.
+Final corrected-source verification: 1,578 coding regressions passed without
+skips against loopback PostgreSQL (68.73 seconds); coding lint, medium/high severity
+Bandit checks and whitespace validation passed. One existing SDK warning remains.

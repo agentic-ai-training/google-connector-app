@@ -433,3 +433,17 @@ Extended tar headers are rejected before their bodies can be allocated. This is
 pure inspection plus a fixed exporter CLI, not Docker load, VM transfer, enrollment,
 build provenance, approval or execution. Source scanner and fault tests exist;
 protected host import and real Node/Java gVisor checks remain open.
+
+### 12 October: legacy image restoration is a separate control-plane workflow
+
+The legacy Python reload has been removed from the workload-critical path. A
+source/config-bound operator controller uses `legacy_toolchain_restorations` in
+the existing private host journal, under the same flock as validation and source
+installation. Prepared/dispatched/uncertain recovery blocks new work and bundle
+mutation; one write-ahead claim precedes the Docker RPC. Positive daemon receipt,
+exact current image and exited matching unit are required for explicit terminal
+reconciliation. Archive hashing and Docker input share one protected open inode.
+This controller is not callable by generated code or an LLM and changes neither
+image approval nor cloud allocation. Python positive/negative native probes,
+replay and cleanup passed live. React/Spring remain enrolled. The implementation
+does not complete runtime-base approval, funded dispatch or generated-app/Chat proof.

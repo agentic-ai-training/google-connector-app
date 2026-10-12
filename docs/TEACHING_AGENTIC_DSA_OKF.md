@@ -3944,3 +3944,52 @@ processes; Node and other validation profiles stay at 256. This is per process,
 not a claim of a 1,024-FD aggregate host ceiling. Task-count, cgroup and memory
 limits remain independent bounds. Membership/policy lookup is O(1), while
 checking a fixed-size vector is O(d), with a small constant dimension d.
+
+### Deep dictionary: recovery ownership, inode custody and reconciliation
+
+**Write-ahead dispatch versus write-ahead claim.** A dispatch decision is saved
+before asking systemd to start a worker. A worker claim is saved before asking
+Docker to load an image. They protect different failure boundaries: losing the
+dispatch response does not justify starting another unit, and losing a Docker
+response does not justify repeating a potentially completed daemon operation.
+In Python/SQLite, use fixed parameterized statements and a conditional update
+(`WHERE claim IS NULL`) inside a transaction. A row count of one proves ownership
+of that transition, not success of the external action. This is at-most-once
+invocation control, not a universal exactly-once side-effect guarantee.
+
+**Inode custody / TOCTOU (time of check to time of use).** Hashing a path and later
+reopening it may consume different bytes. Open with `os.O_NOFOLLOW`, validate
+`os.fstat(fd)` against protected path metadata, hash through the open descriptor,
+verify metadata again, then seek back to the start. On Linux a fixed trusted CLI
+can inherit the descriptor through `subprocess.run(..., pass_fds=(fd,))` and read
+`/proc/self/fd/<fd>`. The descriptor number is not arbitrary terminal authority:
+this project's operator worker uses it only for its fixed, approved archive.
+Full hashing costs O(n) time for n bytes; streaming uses O(b) memory for buffer b.
+The private archive is never extracted into the application workspace.
+
+**Terminal reconciliation.** Reconciliation joins a durable intent, dispatch,
+worker/process identity, bounded receipt and current external state. Neither
+an old timestamp, `MainPID=0`, nor present image alone proves that a Docker RPC
+completed. Explicit positive completion plus matching image and exited worker are
+needed. A hash chain binds evidence to the original decision; it does not prove
+the truth of unverified facts. The Python-image recovery uses a singleton bounded
+ledger; it is not an unlimited retry queue or approval for new images.
+
+```mermaid
+flowchart TD
+    P[Verified archive and source-bound plan] --> D[Commit dispatch decision]
+    D --> U[Start retained bounded systemd unit]
+    U --> C[Commit single worker claim]
+    C --> L[One Docker load using verified open inode]
+    L --> R[Persist bounded daemon result]
+    R --> V{Positive completion, exact image, matching exited worker?}
+    V -->|Yes| T[Explicit reconciliation releases shared host slot]
+    V -->|Unknown or failure| H[Retain reservation; no automatic replay]
+    T --> W[Run positive and negative validation proofs]
+```
+
+The shared flock serializes host mutation; database CAS-like conditional updates
+make each transition single-use. The recovery reservation also excludes workload
+admission and source installation. A fixture proving these transitions is not a
+live Docker proof; the 12 October operation separately recorded real completion,
+valid/invalid Python execution, replay rejection and native cleanup.

@@ -1,5 +1,21 @@
 # Delhi generated-application host — approved provisioning runbook
 
+## Latest recovery checkpoint — 12 October 2026
+
+The current fourteen-file closure is snapshot
+`deb340f2f45957b7ec4420224727d7128567e9a1debc93855a10f2e4b5723481`.
+The legacy approved Python image was restored through one audited, source-bound
+worker, positively reconciled and tested with valid/invalid synthetic Python,
+replay rejection and independent cleanup. React/Spring enrollment and exact images
+were reverified, maintenance was available and all six Coolify containers were
+running/healthy. Policy and registry hashes below remain unchanged, as does STOP.
+See [the full restoration record](HOST_BUNDLE_OPERATIONS.md#audited-legacy-python-restoration--12-october-2026).
+Runtime bases, funded controller integration, production release and the complete
+generated-app/Chat proof remain unfinished. This does not broaden hosting or model
+spending authority; the existing VM continues to accrue hosting usage.
+The corrected local coding suite passed 1,578 tests without skips, plus lint and
+security checks; one pre-existing Google SDK deprecation warning remains.
+
 ## Latest verified toolchain checkpoint — 11 October 2026
 
 The active closure is `2f3ba14`, snapshot
