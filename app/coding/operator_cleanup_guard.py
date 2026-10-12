@@ -151,6 +151,9 @@ def main():
         if request['operation'] == 'probe':
             result = {'settings': observed, 'settings_sha256': digest(observed), 'provider_write': False}
         else:
+            if (callable(getattr(gateway['isolation'], 'legacy_restoration_pending', None))
+                    and gateway['isolation'].legacy_restoration_pending(journal.db)):
+                raise CleanupGuardError('legacy image restoration blocks cleanup configuration')
             # Maintenance shares the host slot. A retained exited load is allowed,
             # but an active loader must not race an external cleanup-controller edit.
             for row in journal.toolchain_imports():

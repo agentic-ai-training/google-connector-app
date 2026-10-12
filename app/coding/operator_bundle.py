@@ -326,6 +326,10 @@ def verify_enrolled(connection, state):
         journal.verify_rejections()
     elif connection.execute("SELECT 1 FROM toolchain_imports WHERE phase='rejected' LIMIT 1").fetchone():
         raise BundleError('protected source cannot interpret rejection history')
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='legacy_toolchain_restorations'").fetchone():
+        check = namespace.get('legacy_restoration_pending')
+        if not callable(check) or check(connection):
+            raise BundleError('unreconciled legacy restoration prevents bundle mutation')
 
 
 def reviewed_files(files):
@@ -540,12 +544,20 @@ def operate(request):
         with sqlite3.connect("file:" + str(database) + "?mode=ro", uri=True) as connection:
             if connection.execute("SELECT 1 FROM jobs WHERE state<>'cleaned' LIMIT 1").fetchone():
                 raise BundleError("unreconciled host job prevents installation or rollback")
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='legacy_toolchain_restorations'").fetchone():
+                try:
+                    verify_enrolled(connection, state)
+                except (RuntimeError, OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+                    pending_imports = True
+                if pending_imports and request['operation'] != 'probe':
+                    raise BundleError('unreconciled legacy restoration prevents bundle mutation')
             if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='toolchain_imports'").fetchone():
                 # Read-only observer; never expire/delete maintenance on controller
                 # loss. Old bundles lack this barrier, so rollback after any import
                 # history requires a forward-compatible operator review.
                 imports = connection.execute("SELECT phase FROM toolchain_imports LIMIT 9").fetchall()
-                pending_imports = len(imports) > 8 or any(row[0] not in {'cancelled', 'enrolled', 'rejected'} for row in imports)
+                pending_imports = pending_imports or len(imports) > 8 or any(
+                    row[0] not in {'cancelled', 'enrolled', 'rejected'} for row in imports)
                 if not pending_imports and any(row[0] in {'enrolled', 'rejected'} for row in imports):
                     try:
                         verify_enrolled(connection, state)

@@ -58,6 +58,21 @@ def test_full_bundle_swap_preserves_old_tree_and_idempotent_receipt(host):
     assert len(list(host.releases.iterdir())) == 2
 
 
+def test_legacy_restoration_reservation_blocks_all_bundle_mutations(host):
+    with sqlite3.connect(host.state / 'jobs.sqlite3') as connection:
+        connection.execute('CREATE TABLE legacy_toolchain_restorations(plan TEXT)')
+        connection.execute('INSERT INTO legacy_toolchain_restorations VALUES(?)', ('{}',))
+    probe = bundle.operate({'operation': 'probe'})
+    assert not probe['journal_idle'] and probe['toolchain_import_pending']
+    with pytest.raises(bundle.BundleError, match='legacy restoration'):
+        bundle.operate(host.request)
+    with pytest.raises(bundle.BundleError, match='legacy restoration'):
+        bundle.operate({'operation': 'retire', 'installation_id': 'a' * 64,
+                        'expected_snapshot_hash': probe['snapshot_hash'], 'expected_retention_hash': 'b' * 64})
+    with pytest.raises(bundle.BundleError, match='legacy restoration'):
+        bundle.operate({'operation': 'rollback', 'installation_id': 'a' * 64})
+
+
 def historical_installation(host):
     old = bundle.snapshot(host.root)
     for name in bundle.LEGACY_NAMES:

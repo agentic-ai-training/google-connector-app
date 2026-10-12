@@ -249,6 +249,117 @@ def verify_dispatch(binding: dict, policy: dict, source: bytes, profile: str, ti
         raise IsolationError("Dispatch source, host, toolchain or deadline mismatch")
 
 
+def legacy_restoration_pending(connection):
+    """Read-only recovery barrier; source installs and workloads share this check.
+
+    Neither age nor process absence releases uncertain daemon ownership. Only a
+    hash-linked, explicit reconciliation of positive completion (or an unused
+    prepared intent's cancellation) releases the singleton legacy reservation.
+    """
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                              "AND name='legacy_toolchain_restorations'").fetchone():
+        return False
+    rows = connection.execute('SELECT image_id,plan_sha256,plan,dispatch,claim,result,reconciliation '
+                              'FROM legacy_toolchain_restorations LIMIT 2').fetchall()
+    if len(rows) != 1:
+        raise IsolationError('Legacy restoration inventory is invalid')
+    image_id, plan_hash, *documents = tuple(rows[0])
+    if not isinstance(image_id, str) or not re.fullmatch(r'sha256:[a-f0-9]{64}', image_id):
+        raise IsolationError('Legacy restoration image identity is invalid')
+    decoded = []
+    for body in documents:
+        if body is None:
+            decoded.append(None)
+            continue
+        if not isinstance(body, str) or not 1 <= len(body.encode()) <= 8192:
+            raise IsolationError('Legacy restoration evidence exceeds bound')
+        value = json.loads(body)
+        if (not isinstance(value, dict) or _canonical_json(value).decode() != body
+                or type(value.get('version')) is not int or value['version'] != 1):
+            raise IsolationError('Legacy restoration evidence is not canonical')
+        decoded.append(value)
+    plan, dispatch, claim, result, reconciliation = decoded
+    def fingerprint(value):
+        return hashlib.sha256(_canonical_json(value)).hexdigest()
+    if (plan is None or fingerprint(plan) != plan_hash or plan.get('image_id') != image_id
+            or not isinstance(plan.get('identity'), str)
+            or not re.fullmatch('[a-f0-9]{64}', plan['identity'])):
+        raise IsolationError('Legacy restoration plan identity differs')
+    for previous, current, name in ((plan, dispatch, 'plan'), (dispatch, claim, 'dispatch'),
+                                    (claim, result, 'claim')):
+        if current is not None and (previous is None or current.get(name + '_sha256') != fingerprint(previous)
+                                    or current.get('identity') != plan['identity']):
+            raise IsolationError('Legacy restoration evidence lineage differs')
+    unit_name = 'gca-toolchain-restore-' + plan['identity'] + '.service'
+    if dispatch is not None and (
+        set(dispatch) != {'version', 'identity', 'plan_sha256', 'unit', 'dispatched_at_unix'}
+        or dispatch['unit'] != unit_name or type(dispatch['dispatched_at_unix']) is not int
+        or not 0 < dispatch['dispatched_at_unix'] < plan.get('stop_unix', 0)
+    ):
+        raise IsolationError('Legacy restoration dispatch differs')
+    if claim is not None:
+        process, enforcement = claim.get('process'), claim.get('enforcement')
+        limits = {'MemoryMax': '1073741824', 'MemorySwapMax': '0', 'TasksMax': '32',
+                  'NoNewPrivileges': 'yes', 'CapabilityBoundingSet': '', 'ProtectSystem': 'strict',
+                  'ProtectHome': 'yes', 'PrivateTmp': 'yes', 'Slice': 'gca-packaging.slice'}
+        if (set(claim) != {'version', 'identity', 'dispatch_sha256', 'invocation_id', 'process', 'enforcement'}
+                or not isinstance(claim['invocation_id'], str)
+                or not re.fullmatch('[a-f0-9]{32}', claim['invocation_id'])
+                or not isinstance(process, dict) or set(process) != {'boot_id', 'pid', 'start_ticks'}
+                or not isinstance(process['boot_id'], str)
+                or not re.fullmatch('[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+                                    process['boot_id'])
+                or type(process['pid']) is not int or not 1 < process['pid'] < 2**31
+                or type(process['start_ticks']) is not int or not 0 < process['start_ticks'] < 2**64
+                or enforcement not in ({**limits, 'CPUQuotaPerSecUSec': quota} for quota in ('1s', '1000000'))):
+            raise IsolationError('Legacy restoration claim enforcement differs')
+    if result is not None:
+        if (set(result) != {'version', 'identity', 'claim_sha256', 'docker_load_invoked',
+                            'daemon_completion_acknowledged', 'image', 'failure_stage'}
+                or type(result['docker_load_invoked']) is not bool
+                or type(result['daemon_completion_acknowledged']) is not bool
+                or result['daemon_completion_acknowledged'] and not result['docker_load_invoked']
+                or result['failure_stage'] not in {None, 'cleanup_guard', 'image_absence', 'disk_headroom',
+                                                   'archive_custody', 'allocation', 'load_rpc', 'image_readback'}
+                or result['failure_stage'] is None and (
+                    not result['daemon_completion_acknowledged']
+                    or result['image'] != {'Id': image_id, 'Os': 'linux', 'Architecture': 'amd64'})
+                or result['failure_stage'] is not None and result['image'] is not None
+                or result['failure_stage'] == 'image_readback' and not result['daemon_completion_acknowledged']
+                or result['failure_stage'] == 'load_rpc' and result['daemon_completion_acknowledged']
+                or result['failure_stage'] in {'cleanup_guard', 'image_absence', 'disk_headroom',
+                                              'archive_custody', 'allocation'} and result['docker_load_invoked']):
+            raise IsolationError('Legacy restoration result evidence differs')
+    if reconciliation is None:
+        return True
+    if (set(reconciliation) != {'version', 'identity', 'plan_sha256', 'dispatch_sha256',
+                                'claim_sha256', 'result_sha256', 'phase', 'unit'}
+            or reconciliation['identity'] != plan['identity']
+            or reconciliation['plan_sha256'] != plan_hash
+            or reconciliation['dispatch_sha256'] != (fingerprint(dispatch) if dispatch else None)
+            or reconciliation['claim_sha256'] != (fingerprint(claim) if claim else None)
+            or reconciliation['result_sha256'] != (fingerprint(result) if result else None)
+            or not isinstance(reconciliation['unit'], dict)):
+        raise IsolationError('Legacy restoration reconciliation lineage differs')
+    unit = reconciliation['unit']
+    if reconciliation['phase'] == 'cancelled':
+        if (dispatch is not None or claim is not None or result is not None
+                or unit.get('LoadState') != 'not-found' or unit.get('MainPID') != '0'):
+            raise IsolationError('Legacy restoration cancellation is not unused')
+    elif reconciliation['phase'] == 'completed':
+        if (result is None or result.get('daemon_completion_acknowledged') is not True
+                or result.get('docker_load_invoked') is not True
+                or result.get('failure_stage') is not None
+                or result.get('image') != {'Id': image_id, 'Os': 'linux', 'Architecture': 'amd64'}
+                or unit.get('LoadState') != 'loaded' or unit.get('MainPID') != '0'
+                or unit.get('Result') != 'success' or unit.get('ExecMainStatus') != '0'
+                or unit.get('InvocationID') != claim.get('invocation_id')):
+            raise IsolationError('Legacy restoration completion is not positively verified')
+    else:
+        raise IsolationError('Legacy restoration terminal phase is invalid')
+    return False
+
+
 class Journal:
     """Single host slot with crash-persistent intent, separate from financial authority.
 
@@ -315,6 +426,8 @@ class Journal:
         self.db = self.lock = None
 
     def require_available(self, binding: dict | None = None):
+        if legacy_restoration_pending(self.db):
+            raise IsolationError('Host slot held by an unreconciled legacy image restoration')
         imports = self.toolchain_imports()
         if any(row["phase"] not in {'cancelled', 'enrolled', 'rejected'} for row in imports):
             raise IsolationError("Host slot held by an unreconciled toolchain import")
@@ -970,9 +1083,7 @@ def ensure_toolchain_image(image_id: str):
             digest.update(chunk)
     if digest.hexdigest() != record["archive_sha256"]:
         raise IsolationError("Offline toolchain archive digest mismatch")
-    docker("image", "load", "--input", str(archive), timeout=60)
-    if docker("image", "inspect", image_id, "--format", "{{.Id}}").decode().strip() != image_id:
-        raise IsolationError("Reloaded toolchain image identity mismatch")
+    raise IsolationError('Legacy toolchain is missing; explicit audited restoration required')
 
 
 def execute_bounded(args: list[str], timeout: float, *, binary: bool = False,

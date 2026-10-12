@@ -120,7 +120,7 @@ def test_policy_inside_repository_is_not_authority(tmp_path):
 
 
 @pytest.mark.parametrize("tampered", [False, True])
-def test_missing_toolchain_reload_requires_operator_archive_digest(monkeypatch, tampered):
+def test_missing_legacy_toolchain_never_reloads_during_validation(monkeypatch, tampered):
     with tempfile.TemporaryDirectory(prefix=".gca-offline-toolchain-", dir=Path.home()) as directory:
         root = Path(directory)
         body = b"synthetic archive bytes"
@@ -151,9 +151,9 @@ def test_missing_toolchain_reload_requires_operator_archive_digest(monkeypatch, 
                 runner.ensure_toolchain_image(IMAGE)
             assert len(calls) == 1
         else:
-            runner.ensure_toolchain_image(IMAGE)
-            assert calls[1] == ("image", "load", "--input", str(archive))
-            assert not any("pull" in call for call in calls)
+            with pytest.raises(runner.IsolationError, match='explicit audited restoration'):
+                runner.ensure_toolchain_image(IMAGE)
+            assert len(calls) == 1
 
 
 def fake_transport(monkeypatch, *, fail=None, mounts=None):
