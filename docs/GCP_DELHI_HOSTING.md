@@ -1,5 +1,19 @@
 # Delhi generated-application host — approved provisioning runbook
 
+## Latest runtime-candidate checkpoint — 13 October 2026
+
+Source closure snapshot is
+`b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd`.
+Both exact public Nginx/Java 17 OCI candidates were acquired on the existing host
+and independently rehashed, including rootfs diff IDs. They are **not approved**,
+scanned, Docker-loaded or application-tested. No runtime policy was written.
+Python/React/Spring readiness, available journal and six running/healthy Coolify
+containers were rechecked. Policy/registry and STOP remain unchanged.
+All 1,617 coding regressions passed without skips, plus focused/lint/security checks.
+See [runtime candidate evidence](RUNTIME_BASE_CANDIDATES.md).
+Current balance/cost refresh is requested before funded deployment enrollment;
+no model spending, new cloud resource or hosting extension occurred.
+
 ## Latest recovery checkpoint — 12 October 2026
 
 The current fourteen-file closure is snapshot

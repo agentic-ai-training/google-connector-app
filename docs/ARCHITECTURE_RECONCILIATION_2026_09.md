@@ -447,3 +447,16 @@ This controller is not callable by generated code or an LLM and changes neither
 image approval nor cloud allocation. Python positive/negative native probes,
 replay and cleanup passed live. React/Spring remain enrolled. The implementation
 does not complete runtime-base approval, funded dispatch or generated-app/Chat proof.
+
+### 13 October: public runtime acquisition is separate from executable approval
+
+A fixed source-reviewed catalog now acquires immutable public Nginx/Java 17 OCI
+graphs into a private candidate store under pinned IAP, shared-journal ownership
+and existing resource/time guards. Read-only observation rehashes actual retained
+content and rootfs. Standard bounded string annotations are metadata, never hooks,
+commands or approvals. An audited new plan links the earlier schema-rejected plan
+without overwriting its history or changing catalog/configuration/STOP. Live
+acquisition/readback passed; scanning, runtime-policy approval, actual image
+publication/signing, funded dispatch and application/Chat proof remain open.
+This does not integrate a fake runtime or silently switch away from Docker Desktop
+for local private execution. See `RUNTIME_BASE_CANDIDATES.md` for source/host hashes.

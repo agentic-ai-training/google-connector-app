@@ -1,5 +1,12 @@
 # Validated artifact to immutable image
 
+Latest checkpoint, 13 October 2026: pinned public Nginx/Temurin candidates now exist
+in a protected non-approving store and passed independent content/rootfs readback.
+The parser now supports bounded standard OCI annotations while retaining digest,
+platform, size, hook and descriptor-URL restrictions. Actual scanning, runtime
+approval, executable app behavior, funded dispatch, signing/publication and final
+Chat delivery remain unproven. [Details and acceptance gates](RUNTIME_BASE_CANDIDATES.md).
+
 Status, 5 October 2026: internal assembly/private retrieval and durable job/transport
 components are implemented. The real isolated worker/readiness/output/cleanup path
 passed a fixed nonsensitive live assembly test on the existing VM. This is not an

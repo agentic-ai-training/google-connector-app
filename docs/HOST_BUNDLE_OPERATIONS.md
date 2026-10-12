@@ -620,6 +620,26 @@ tests/coding --max-line-length=100`, Bandit's medium/high severity checks and
 `git diff --check` passed. The 23 focused restoration tests distinguish mocked
 daemon/systemd boundaries from the separately recorded live evidence above.
 
+### Runtime candidate acquisition — 12–13 October 2026
+
+Sources `db88fe7` and `b652b1d` add fixed public-registry acquisition, protected
+range-resumable candidate CAS, independent read-only graph/rootfs rehash and
+bounded standard OCI annotations. The first attempt stopped before runtime blobs
+because annotations were rejected; its original plan is retained and linked from
+the later source-handover plan. No old failure receipt was rewritten.
+The full fourteen-file OCI correction was installed as
+`48421865d76f8661f00fe8381c45bf713fb4f392702fbaa0eecafdceb9fa51ad`,
+snapshot `b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd`,
+with policy/registry/STOP preserved. One exact obsolete predecessor copy was retired
+under fresh source/retention hashes; the latest predecessor and data were retained.
+The resumed single acquisition completed; independent probing rehashed both exact
+candidates and rootfs and checked retained plan lineage. No runtime policy,
+Docker load, scan, approval or deployment occurred. Python, React/Spring, journal
+and six healthy infrastructure containers were independently rechecked.
+All 1,617 coding tests passed without skips, with one existing SDK warning; 136
+focused tests, lint/security/whitespace checks passed. See
+[full runtime receipt and gate record](RUNTIME_BASE_CANDIDATES.md).
+
 The preceding eleven-file installation was
 `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`;
 independently read-back snapshot:

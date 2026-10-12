@@ -3993,3 +3993,55 @@ make each transition single-use. The recovery reservation also excludes workload
 admission and source installation. A fixture proving these transitions is not a
 live Docker proof; the 12 October operation separately recorded real completion,
 valid/invalid Python execution, replay rejection and native cleanup.
+
+### Deep dictionary: OCI graphs, annotations, prefix recovery and approval
+
+**Image index versus platform manifest versus configuration.** An OCI index
+points to architecture-specific manifests. A Linux/AMD64 manifest points to one
+configuration and an ordered layer list. Each edge has a digest and byte size;
+the configuration separately binds uncompressed layer diff IDs. A tag is a
+mutable lookup hint, not a stable vertex identity. In Python, select the exact
+platform, verify every descriptor and hash actual bytes. Do not confuse Docker's
+reported image ID with whichever graph node a particular storage backend uses.
+
+```mermaid
+flowchart LR
+    I[Pinned multi-platform index] --> M[Pinned Linux/AMD64 manifest]
+    M --> C[Configuration: platform and rootfs diff IDs]
+    M --> L[Ordered compressed layers]
+    L --> H[Compressed digests and bounded decompression]
+    C --> H
+    H --> V[Verified candidate content]
+    V --> S[Separate scan and provenance review]
+    S --> A[Separate runtime approval]
+    A --> E[Actual execution and behavior tests]
+```
+
+**Merkle DAG / content-addressed graph.** Hashes bind parent metadata to child
+bytes. Inspecting a known image graph costs O(V+E+n) for vertices V, references E
+and streamed bytes n; hash-map lookup makes descriptor membership effectively
+O(1) per edge. Integrity is not a vulnerability assessment, publisher signature,
+safe runtime approval or proof of application correctness. Changing even an
+informational annotation changes its containing manifest digest.
+
+**Annotations are data, not control.** OCI permits optional string metadata.
+Rejecting every such map makes real official images incompatible; accepting
+arbitrary fields can create an authority hole. This project accepts only bounded
+string maps and retains hashes, platform, hook, URL and size checks. Even a string
+`org.gca.approved: "true"` cannot approve an image or alter a startup command.
+Annotations do not become LLM instructions, tool arguments or URLs to follow.
+
+**Prefix recovery.** A partial download is not a complete CAS object. Rehash its
+retained prefix, require exact HTTP 206/Content-Range continuation, append within
+the descriptor's size, then verify the entire final digest before atomic promotion.
+For small known metadata, append only if retained bytes are an exact prefix of
+the intended canonical document. This is O(n) total verification work, with O(b)
+streaming memory for buffer b. Restarting from an unverified offset or accepting
+HTTP 200 at a nonzero offset can silently duplicate/corrupt data.
+
+**Source-handover lineage.** A corrected controller creates a new immutable plan
+linked by hashes to prior decisions while preserving catalog, configuration and
+expiry. The prior failure is not rewritten as success. The 13 October candidate
+acquisition demonstrates this boundary using real public blobs, not a mocked
+executable runtime. Approval, scanning, runtime startup and deployment remain
+separate state transitions with their own evidence and authority.

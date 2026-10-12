@@ -3029,3 +3029,20 @@ candidate lifecycle, training and production-evidence requirements remain open.
 Final corrected-source verification: 1,578 coding regressions passed without
 skips against loopback PostgreSQL (68.73 seconds); coding lint, medium/high severity
 Bandit checks and whitespace validation passed. One existing SDK warning remains.
+
+Progress 2026-10-13: fixed public runtime acquisition now retains exact Nginx and
+Temurin Java 17 candidates on the existing GCP host. Independent read-only probing
+rehashed index/platform/config/layers/rootfs, verified non-approving receipts and
+preserved the original failed plan through source-linked history. A measured schema
+correction accepts bounded standard OCI annotations, not executable or approval
+fields. The complete corrected host closure is snapshot
+`b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd`.
+Policy/registry, VM resources, STOP and spending authority were unchanged. Actual
+Python/React/Spring readiness, available journal and six healthy infrastructure
+containers were rechecked. All 1,617 coding tests passed without skips (67.67 s),
+plus 136 focused tests and lint/security/whitespace checks. One SDK warning remains.
+No scan, runtime approval, Docker image load, application deployment, production
+migration, paid model call or new cloud resource is claimed. Current balance/cost
+refresh is requested before funded enrollment. Full original acceptance, scan/
+approval, deployment/signing/Chat, frameworks, learning and candidate evidence
+remain unchecked. Evidence: `docs/RUNTIME_BASE_CANDIDATES.md`.
