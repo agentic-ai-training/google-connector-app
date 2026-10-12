@@ -107,6 +107,40 @@ def test_layout_contains_actual_content_addressed_blobs():
                 assert hashlib.sha256(tar.extractfile(item).read()).hexdigest() == item.name.split('/')[-1]
 
 
+def test_bounded_oci_annotations_are_preserved_in_base_identity_not_execution_authority():
+    runtime = base()
+    manifest = json.loads(runtime.manifest)
+    manifest['annotations'] = {'org.opencontainers.image.version': 'public-example', 'org.gca.approved': 'true'}
+    manifest['config']['annotations'] = {'example.metadata': 'not a command'}
+    body = packager.canonical(manifest)
+    annotated = replace(runtime, manifest=body, approved_manifest_digest=packager.digest(body))
+    assert annotated.inspect()[0] == manifest
+    payload, reference, arguments = case()
+    output = packager.package_validated_artifact(annotated, payload, reference, **arguments)
+    assert output.base_manifest_digest == packager.digest(body)
+    assert json.loads(output.config)['config']['Entrypoint'] == ['/usr/sbin/nginx']
+    assert output.evidence['generated_code_executed'] is False
+
+
+@pytest.mark.parametrize('annotations', [None, [], {'key': 1}, {'x' * 257: 'v'},
+                                        {'key': 'x' * 2049}, {str(i): 'x' for i in range(65)},
+                                        {str(i): 'x' * 2048 for i in range(17)}])
+def test_oci_annotations_remain_bounded_string_metadata(annotations):
+    runtime = base();manifest = json.loads(runtime.manifest);manifest['annotations'] = annotations
+    body = packager.canonical(manifest)
+    with pytest.raises(packager.ImagePackagingError, match='annotations'):
+        replace(runtime, manifest=body, approved_manifest_digest=packager.digest(body)).inspect()
+
+
+def test_external_descriptor_urls_remain_rejected_even_with_annotations():
+    runtime = base();manifest = json.loads(runtime.manifest)
+    manifest['layers'][0]['annotations'] = {'example': 'metadata'}
+    manifest['layers'][0]['urls'] = ['https://unapproved.example/blob']
+    body = packager.canonical(manifest)
+    with pytest.raises(packager.ImagePackagingError, match='pinned descriptor'):
+        replace(runtime, manifest=body, approved_manifest_digest=packager.digest(body)).inspect()
+
+
 @pytest.mark.parametrize("field,value", [
     ("archive_sha256", "f" * 64), ("file_set_sha256", "f" * 64),
     ("file_count", 100), ("content_bytes", 99999),

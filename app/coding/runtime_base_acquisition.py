@@ -146,7 +146,8 @@ def manifest_graph(role, registry):
         raise RuntimeAcquisitionError('runtime platform manifest fingerprint differs')
     manifest = oci._metadata(manifest_body)
     config, layers = manifest.get('config'), manifest.get('layers')
-    if (set(manifest) != {'schemaVersion', 'mediaType', 'config', 'layers'}
+    if (not {'schemaVersion', 'mediaType', 'config', 'layers'} <= set(manifest)
+            or set(manifest) - {'schemaVersion', 'mediaType', 'config', 'layers', 'annotations'}
             or type(manifest['schemaVersion']) is not int or manifest['schemaVersion'] != 2
             or manifest['mediaType'] not in MANIFEST_MEDIA
             or selected[0].get('mediaType') != manifest['mediaType']
@@ -154,11 +155,14 @@ def manifest_graph(role, registry):
             or not isinstance(config, dict) or config.get('digest') != expected['config_digest']
             or not isinstance(layers, list) or len(layers) != expected['layer_count']):
         raise RuntimeAcquisitionError('runtime manifest/config/layer selection differs')
+    oci._annotations(manifest)
     for item in (config, *layers):
-        if (not isinstance(item, dict) or set(item) != {'mediaType', 'digest', 'size'}
+        if (not isinstance(item, dict) or not {'mediaType', 'digest', 'size'} <= set(item)
+                or set(item) - {'mediaType', 'digest', 'size', 'annotations'}
                 or not isinstance(item['digest'], str) or not oci.DIGEST.fullmatch(item['digest'])
                 or type(item['size']) is not int or not 1 <= item['size'] <= oci.MAX_BASE_BYTES):
             raise RuntimeAcquisitionError('runtime blob descriptor is invalid')
+        oci._annotations(item)
     if (config['size'] > oci.MAX_METADATA_BYTES or config['mediaType'] not in {oci.OCI_CONFIG, oci.DOCKER_CONFIG}
             or sum(item['size'] for item in layers) != expected['layer_bytes']
             or expected['layer_bytes'] > oci.MAX_BASE_BYTES
@@ -189,7 +193,7 @@ def sync(path):
 
 def read_file(path, size):
     protected(path)
-    if type(size) is not int or not 1 <= size <= oci.MAX_BASE_BYTES:
+    if type(size) is not int or not 0 <= size <= oci.MAX_BASE_BYTES:
         raise RuntimeAcquisitionError('runtime file read exceeds bound')
     before = path.lstat()
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -213,15 +217,24 @@ def write_exact(path, body):
             raise RuntimeAcquisitionError('runtime candidate file content changed')
         return
     temporary = path.with_name(path.name + '.partial')
+    offset = 0
     if temporary.exists() or temporary.is_symlink():
-        if read_file(temporary, len(body)) != body:
+        protected(temporary)
+        offset = temporary.stat().st_size
+        if offset > len(body) or read_file(temporary, offset) != body[:offset]:
             raise RuntimeAcquisitionError('runtime metadata partial needs explicit review')
+        fd = os.open(temporary, os.O_WRONLY | os.O_NOFOLLOW)
     else:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
+    with os.fdopen(fd, 'wb') as stream:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != offset
+                or info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o077):
+            raise RuntimeAcquisitionError('runtime metadata partial changed before continuation')
+        stream.seek(offset)
+        stream.write(body[offset:])
+        stream.flush()
+        os.fsync(stream.fileno())
     os.rename(temporary, path)
     sync(path.parent)
 
@@ -344,3 +357,81 @@ def observe_candidate(root, *, role):
         if read_file(directory / name, len(expected_body)) != expected_body:
             raise RuntimeAcquisitionError('candidate layout/receipt content changed')
     return candidate_receipt(role)
+
+
+def acquisition_plan(root, plan):
+    """Preserve earlier public-staging decisions across an audited source handover.
+
+    This creates a new immutable plan, not a fake successful older receipt. Pins,
+    configuration and lifetime must match; only reviewed source hashes may advance.
+    No previous public data is treated as execution or runtime approval evidence.
+    """
+    protected(root)
+    def verify_previous(previous, version):
+        fields = {'version', 'authority', 'controller_sha256', 'stop_unix', 'runtime_approval_requested'}
+        if version == 2:
+            fields.add('prior_plan_sha256')
+        if (not isinstance(previous, dict) or set(previous) != fields
+                or type(previous['version']) is not int or previous['version'] != version
+                or previous['runtime_approval_requested'] is not False
+                or previous['stop_unix'] != plan['stop_unix']
+                or not isinstance(previous['controller_sha256'], str)
+                or not re.fullmatch('[a-f0-9]{64}', previous['controller_sha256'])
+                or not isinstance(previous['authority'], dict)
+                or set(previous['authority']) != {'bundle_sha256', 'policy_sha256', 'registry_sha256', 'catalog_sha256'}
+                or any(not isinstance(v, str) or not re.fullmatch('[a-f0-9]{64}', v)
+                       for v in previous['authority'].values())
+                or any(previous['authority'][key] != plan['authority'][key]
+                       for key in ('policy_sha256', 'registry_sha256', 'catalog_sha256'))):
+            raise RuntimeAcquisitionError('prior runtime acquisition authority cannot be changed')
+        if version == 2 and (
+            not isinstance(previous['prior_plan_sha256'], list) or len(previous['prior_plan_sha256']) > 5
+            or any(not isinstance(v, str) or not re.fullmatch('[a-f0-9]{64}', v)
+                   for v in previous['prior_plan_sha256'])
+            or previous['prior_plan_sha256'] != sorted(set(previous['prior_plan_sha256']))
+        ):
+            raise RuntimeAcquisitionError('prior runtime acquisition plan lineage differs')
+    histories = []
+    original = root / 'plan.json'
+    if original.exists():
+        protected(original)
+        if not 1 <= original.stat().st_size <= 8192:
+            raise RuntimeAcquisitionError('prior runtime acquisition plan exceeds bound')
+        body = read_file(original, original.stat().st_size)
+        previous = oci._metadata(body)
+        if oci.canonical(previous) != body:
+            raise RuntimeAcquisitionError('prior runtime acquisition plan is not canonical')
+        verify_previous(previous, 1)
+        histories.append(hashlib.sha256(body).hexdigest())
+    plans = root / 'plans'
+    plans.mkdir(mode=0o700, exist_ok=True)
+    protected(plans)
+    entries = list(plans.iterdir())
+    if len(entries) > 8:
+        raise RuntimeAcquisitionError('runtime acquisition plan history exceeds bound')
+    for path in entries:
+        protected(path)
+        if re.fullmatch(r'[a-f0-9]{64}\.json\.partial', path.name):
+            if not path.is_file() or not 0 <= path.stat().st_size <= 8192:
+                raise RuntimeAcquisitionError('runtime acquisition partial plan exceeds bound')
+            continue
+        if (not re.fullmatch(r'[a-f0-9]{64}\.json', path.name) or not path.is_file()
+                or not 1 <= path.stat().st_size <= 8192):
+            raise RuntimeAcquisitionError('runtime acquisition history entry is invalid')
+        body = read_file(path, path.stat().st_size)
+        if hashlib.sha256(body).hexdigest() != path.stem:
+            raise RuntimeAcquisitionError('runtime acquisition history fingerprint differs')
+        previous = oci._metadata(body)
+        if oci.canonical(previous) != body:
+            raise RuntimeAcquisitionError('runtime acquisition history is not canonical')
+        verify_previous(previous, 2)
+        if previous.get('controller_sha256') == plan['controller_sha256'] and previous.get('authority') == plan['authority']:
+            return path.stem
+        histories.append(path.stem)
+    if len(histories) - bool(original.exists()) >= 4:
+        raise RuntimeAcquisitionError('runtime acquisition source-handover limit reached')
+    value = {**plan, 'version': 2, 'prior_plan_sha256': sorted(histories)}
+    body = oci.canonical(value)
+    identity = hashlib.sha256(body).hexdigest()
+    write_exact(plans / (identity + '.json'), body)
+    return identity

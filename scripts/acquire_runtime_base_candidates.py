@@ -15,7 +15,8 @@ from app.coding import runtime_base_acquisition as acquisition
 from app.coding.validation_transport import IAPValidationHost, _protected, command
 
 
-REVIEWED_PROGRAMS = {'4c84fe15aab840529d0647249f5bf26647128951b908b0b18d2280cab463df72'}
+REVIEWED_PROGRAMS = {'4c84fe15aab840529d0647249f5bf26647128951b908b0b18d2280cab463df72',
+                     'd657abde6f78ccd8ed2c2a84f32e87c85e14e74b6c20936a61b409816ea33649'}
 
 
 def frozen_program(expected):
@@ -76,14 +77,14 @@ def main():
   if shutil.disk_usage(journal.directory).free<2*1024**3:raise RuntimeError('runtime acquisition disk headroom insufficient')
   root.mkdir(mode=0o700,exist_ok=True);a.protected(root)
   plan={'version':1,'authority':authority,'controller_sha256':request['controller_sha256'],'stop_unix':g['STOP_UNIX'],'runtime_approval_requested':False}
-  a.write_exact(root/'plan.json',canonical(plan))
+  plan_sha256=a.acquisition_plan(root,plan)
   signal.alarm(270)
   try:
    receipts=[]
    for role in sorted(a.CATALOG):
     registry=a.PublicRegistry(role,timeout_seconds=240)
     receipts.append(a.acquire_candidate(root,role=role,registry=registry))
-   return {'operation':'acquire','receipts':receipts,'plan_sha256':sha(canonical(plan)),
+   return {'operation':'acquire','receipts':receipts,'plan_sha256':plan_sha256,
     'runtime_approved':False,'docker_loaded':False,'application_deployed':False,'cloud_resource_created':False,
     'model_calls':0,'source_snapshot':g['snapshot'](),'journal_available':True}
   finally:signal.alarm(0)

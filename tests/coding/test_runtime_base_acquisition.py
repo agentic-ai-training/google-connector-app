@@ -1,5 +1,6 @@
 """Real private CAS files and hash/range checks; no registry, approval or host mutation."""
 from contextlib import contextmanager
+from dataclasses import replace
 import io
 import json
 import os
@@ -19,6 +20,8 @@ from scripts import acquire_runtime_base_candidates as cli
 def target(monkeypatch):
     measured = base()
     manifest = json.loads(measured.manifest)
+    manifest['annotations'] = {'org.opencontainers.image.version': 'public-fixture-v1'}
+    measured = replace(measured, manifest=oci.canonical(manifest), approved_manifest_digest=oci.digest(oci.canonical(manifest)))
     index = oci.canonical({'schemaVersion': 2, 'mediaType': sorted(acquisition.INDEX_MEDIA)[0], 'manifests': [{
         'mediaType': manifest['mediaType'], 'digest': oci.digest(measured.manifest), 'size': len(measured.manifest),
         'platform': {'os': 'linux', 'architecture': 'amd64'},
@@ -213,3 +216,35 @@ def test_historical_runtime_controller_refuses_unknown_or_changed_blob(monkeypat
     monkeypatch.setattr(cli.subprocess, 'run', wrong)
     with pytest.raises(RuntimeError, match='custody differs'):
         cli.frozen_program(expected)
+
+
+def test_metadata_partial_resumes_only_exact_known_prefix(target):
+    path = target.root / 'fixed.json';body = b'{"fixed":"public metadata"}'
+    pending = path.with_name(path.name + '.partial')
+    pending.write_bytes(body[:5]);pending.chmod(0o600)
+    acquisition.write_exact(path, body)
+    assert path.read_bytes() == body and not pending.exists()
+    path.unlink();pending.write_bytes(b'wrong');pending.chmod(0o600)
+    with pytest.raises(acquisition.RuntimeAcquisitionError, match='explicit review'):
+        acquisition.write_exact(path, body)
+    assert pending.read_bytes() == b'wrong' and not path.exists()
+
+
+def test_source_handover_preserves_previous_plan_without_changed_approval_or_pins(target):
+    # Hex-only, source-reviewed identities; test data is not live authority.
+    authority = {'bundle_sha256': 'a' * 64, 'policy_sha256': 'b' * 64,
+                 'registry_sha256': 'c' * 64, 'catalog_sha256': 'd' * 64}
+    original = {'version': 1, 'authority': authority, 'controller_sha256': 'e' * 64,
+                'stop_unix': 1792430672, 'runtime_approval_requested': False}
+    path = target.root / 'plan.json';body = oci.canonical(original)
+    path.write_bytes(body);path.chmod(0o600)
+    current = {**original, 'authority': {**authority, 'bundle_sha256': 'f' * 64}, 'controller_sha256': 'a' * 64}
+    identity = acquisition.acquisition_plan(target.root, current)
+    new = json.loads((target.root / 'plans' / (identity + '.json')).read_bytes())
+    import hashlib
+    assert new['prior_plan_sha256'] == [hashlib.sha256(body).hexdigest()]
+    assert path.read_bytes() == body and new['runtime_approval_requested'] is False
+    assert acquisition.acquisition_plan(target.root, current) == identity
+    wrong = {**current, 'authority': {**current['authority'], 'catalog_sha256': 'e' * 64}}
+    with pytest.raises(acquisition.RuntimeAcquisitionError, match='authority cannot be changed'):
+        acquisition.acquisition_plan(target.root, wrong)

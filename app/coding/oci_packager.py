@@ -98,11 +98,26 @@ def _metadata(body: bytes) -> dict:
 
 
 def _descriptor(value: dict, body: bytes, allowed_media: set[str]):
-    if (not isinstance(value, dict) or set(value) != {"mediaType", "digest", "size"}
+    if (not isinstance(value, dict) or not {"mediaType", "digest", "size"} <= set(value)
+            or set(value) - {"mediaType", "digest", "size", "annotations"}
             or value["mediaType"] not in allowed_media
             or type(value["size"]) is not int or value["size"] != len(body)
             or value["digest"] != digest(body)):
         raise ImagePackagingError("Runtime image blob does not match its pinned descriptor")
+    _annotations(value)
+
+
+def _annotations(value):
+    """Bounded OCI string metadata, never hooks, URLs to follow or authority."""
+    if 'annotations' not in value:
+        return
+    annotations = value['annotations']
+    if (not isinstance(annotations, dict) or len(annotations) > 64
+            or any(not isinstance(key, str) or not 1 <= len(key) <= 256
+                   or not isinstance(item, str) or len(item) > 2048
+                   for key, item in annotations.items())
+            or len(canonical(annotations)) > 32768):
+        raise ImagePackagingError('Runtime OCI annotations exceed the bounded string-map contract')
 
 
 def _layer_diff_id(body: bytes, remaining: int) -> tuple[str, int]:
@@ -144,12 +159,14 @@ class ApprovedRuntimeBase:
             raise ImagePackagingError("Runtime image approval or size is invalid")
         manifest = _metadata(self.manifest)
         config = _metadata(self.config)
-        if (set(manifest) != {"schemaVersion", "mediaType", "config", "layers"}
+        if (not {"schemaVersion", "mediaType", "config", "layers"} <= set(manifest)
+                or set(manifest) - {"schemaVersion", "mediaType", "config", "layers", "annotations"}
                 or type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 2
                 or manifest["mediaType"] not in {OCI_MANIFEST, DOCKER_MANIFEST}
                 or not isinstance(manifest["layers"], list)
                 or len(manifest["layers"]) != len(self.layers)):
             raise ImagePackagingError("Runtime image manifest is unsupported")
+        _annotations(manifest)
         _descriptor(manifest["config"], self.config, {OCI_CONFIG, DOCKER_CONFIG})
         for descriptor, body in zip(manifest["layers"], self.layers):
             _descriptor(descriptor, body, {OCI_LAYER, DOCKER_LAYER})
