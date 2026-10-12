@@ -3046,3 +3046,20 @@ migration, paid model call or new cloud resource is claimed. Current balance/cos
 refresh is requested before funded enrollment. Full original acceptance, scan/
 approval, deployment/signing/Chat, frameworks, learning and candidate evidence
 remain unchecked. Evidence: `docs/RUNTIME_BASE_CANDIDATES.md`.
+
+Progress 2026-10-13, billing follow-up: the user authorized conservative estimated
+planning while unavailable to refresh the portal. Read-only connected GCP calls
+confirmed the expected billing link/open account, but did not expose promotional
+balance; project BigQuery metadata contained no export datasets. Added a distinct
+integer-only, non-authorizing credit-scenario module and CLI, using the last report,
+an explicitly assumed earlier debit anchor, INR 500/day and INR 500 uncertainty.
+Current rounded planning figure is INR 17,000, not a verified balance. Its stressed
+STOP projection is below the protected INR 14,500 allocations, so it cannot unlock
+new liability. Existing balance-evidence freshness/admission gates, INR 14,000
+hosting ceiling, INR 8,500 Vertex, INR 6,000 reserve and fixed VM STOP are unchanged.
+Non-spending preparation continues; the full goal remains active. See
+`docs/DELHI_BILLING_RECONCILIATION_2026_10_07.md` for assumptions and limitations.
+Verification: 35 focused planning/budget tests and all 1,635 coding regressions
+passed without skips against loopback PostgreSQL (66.19 s). New-source lint,
+medium/high security checks and whitespace validation passed; one existing SDK
+deprecation warning remains. No cloud ledger enrollment or paid activation occurred.

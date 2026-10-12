@@ -203,3 +203,21 @@ non-loopback hosts. Coverage includes cross-user competition, idempotency confli
 dispatch races, transaction rollback, stale evidence, uncertainty, cancellation,
 settlement, overruns, fixed deadlines and protection of the Vertex allocation.
 Never substitute the production Neon URL for this test connection.
+
+## Estimates cannot impersonate observed credit
+
+The 13 October user decision permits continued preparation with a conservative
+estimate while the portal cannot be checked. `app.coding.credit_planning` and
+`scripts.estimate_delhi_credit` implement a separate, non-authorizing scenario.
+It has an **assumed charge anchor**, no `observed_at`, no reservation, and
+`ledger_admission_allowed: false`. Its schema is not accepted by
+`CloudCreditSnapshot` or existing-VM import. No freshness rule was relaxed and no
+estimated accrual was written as an actual settled cost.
+
+The scenario must preserve the hosting ceiling, Vertex allocation, future reserve
+and fixed compute deadline. Its stressed balance may indicate insufficient
+protection even when a lower measured-rate forecast fits. That is a signal to
+reconcile, not authority to borrow from a protected envelope. Metadata-only API
+reads and local/non-spending preparation may continue; new cloud liability must
+still pass verified evidence plus atomic reservation. See the
+[13 October assumptions](DELHI_BILLING_RECONCILIATION_2026_10_07.md).

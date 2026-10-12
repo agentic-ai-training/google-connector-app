@@ -112,3 +112,48 @@ the authorized data policy and must be budgeted separately.
 See [cost ledger admission requirements](CLOUD_COST_LEDGER.md) and
 [hosting runbook](GCP_DELHI_HOSTING.md). Google explains that promotional credits
 offset bills in [Billing reports: savings and credits](https://docs.cloud.google.com/billing/docs/how-to/reports/savings-and-credits).
+
+## 13 October follow-up: estimated planning, not new spending authority
+
+The user cannot refresh the portal report now and authorized using a cautious
+estimate for continued preparation. The connected read-only APIs independently
+confirmed the expected project/billing-account link, `billingEnabled: true`, and
+an open account. They did **not** confirm Free Trial status, expiry or promotional
+balance. The standard [BillingAccount resource](https://docs.cloud.google.com/billing/docs/reference/rest/v1/billingAccounts)
+has no remaining-promotional-credit field. A separate metadata-only BigQuery API
+read found zero datasets in this project; no export was created, no API enabled,
+and no billed query was run. Exports in other projects were not ruled out.
+
+The reproducible `scripts.estimate_delhi_credit` scenario uses:
+
+- The last operator-reported INR 21,610.67 balance; capture time remains unknown.
+- **Assumed** debit anchor 5 October 00:00 UTC, not a manufactured `observed_at`.
+- INR 500/day, above the earlier INR 13,850.56/30-day quote's approximate INR 462/day.
+- INR 500 additional uncertainty reserve, not a new allocation or charge.
+- The unchanged compute STOP, 19 October 2026 17:24:32 UTC.
+
+At 12 October 19:42 UTC / 13 October 01:12 IST, this produces approximately
+**INR 17,200**; use a rounded-down **INR 17,000 planning figure**. The same stress
+scenario at STOP produces **INR 13,747.98**, below the protected INR 14,500 combined
+Vertex/future-reserve allocations by **INR 752.02**. These are estimates under
+stated assumptions, not actual balances, guaranteed lower bounds or final bills.
+Unknown other-project/service usage could reduce the balance further. Conversely,
+the earlier measured INR 12,298.82/30-day rate is lower than this stress allowance;
+neither scenario establishes which actual final charge will occur.
+
+Keep the existing INR 14,000 hosting ceiling, INR 8,500 Vertex allocation and
+INR 6,000 future reserve. Do not release the previously estimated unused hosting
+earmark, transfer from protected allocations, extend the VM, or enable paid billing.
+Stopping the VM does not stop retained-disk charges, so the scenario continues
+debits after STOP rather than silently treating storage as free.
+
+`app/coding/credit_planning.py` returns an explicitly non-authorizing scenario,
+with no `observed_at` and `ledger_admission_allowed: false`. Its schema is rejected
+by `CloudCreditSnapshot`; the verified-balance admission and freshness requirements
+remain unchanged. Non-spending implementation, source verification, tests and
+preparation can continue. New cloud liabilities and funded controller activation
+still require reconciliation, not treating the estimate as verified evidence.
+
+Verification: 35 focused planning/budget tests and all 1,635 coding tests passed
+without skips against local PostgreSQL (66.19 seconds). Lint, medium/high security
+and whitespace checks passed. One existing Google SDK deprecation warning remains.
