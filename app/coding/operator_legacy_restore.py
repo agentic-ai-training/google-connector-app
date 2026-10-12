@@ -68,7 +68,7 @@ def binding(gateway, expected, *, require_lifetime=True):
 
 
 def registry_record(gateway):
-    document, _ = gateway['publication'].read_configuration(gateway['isolation'].TOOLCHAIN_REGISTRY)
+    _, document = gateway['publication'].read_configuration(gateway['isolation'].TOOLCHAIN_REGISTRY)
     gateway['isolation'].validate_toolchain_registry(document)
     record = document['images'].get(IMAGE)
     if (not isinstance(record, dict) or set(record) != {'archive_path', 'archive_sha256',

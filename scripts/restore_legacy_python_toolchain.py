@@ -12,7 +12,8 @@ from app.coding import operator_image_restore as shared, operator_legacy_restore
 from app.coding.validation_transport import IAPValidationHost, _protected, command
 
 
-REVIEWED_PROGRAMS = {'10c8d28a254f316af9f0f7bc72caec2bf79d07e5fba7b7be145735d90dc7c490'}
+REVIEWED_PROGRAMS = {'10c8d28a254f316af9f0f7bc72caec2bf79d07e5fba7b7be145735d90dc7c490',
+                     '129b5eb777639135943c35c62d2abf33ddd3dc0ae9cfe6cd4b3e6919527f8ab0'}
 
 
 def frozen_program(expected):

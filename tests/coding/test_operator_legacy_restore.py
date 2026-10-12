@@ -13,6 +13,9 @@ from scripts.restore_legacy_python_toolchain import program, verify
 from scripts import restore_legacy_python_toolchain as cli
 
 
+READ_REGISTRY = restore.registry_record
+
+
 @pytest.fixture
 def target(tmp_path, monkeypatch):
     state = tmp_path / 'journal'
@@ -208,6 +211,13 @@ def test_changed_cleanup_guard_prevents_load(target, monkeypatch):
     dispatch(target)
     monkeypatch.setattr(cleanup, 'settings', lambda operation: cleanup.BEFORE.copy())
     assert work(target)['failure_stage'] == 'cleanup_guard' and target.loads == 0
+
+
+def test_real_registry_reader_contract_is_bytes_then_document(target):
+    document = {'version': 1, 'images': {restore.IMAGE: target.record}}
+    gateway = {**target.gateway, 'publication': SimpleNamespace(
+        read_configuration=lambda path: (json.dumps(document).encode(), document))}
+    assert READ_REGISTRY(gateway) == target.record
 
 
 def test_live_worker_prevents_reconciliation(target):
