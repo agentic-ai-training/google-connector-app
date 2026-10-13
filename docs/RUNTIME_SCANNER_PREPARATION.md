@@ -108,7 +108,7 @@ flowchart TD
     D --> S[Separate trusted Sigstore verifier: exact identity and issuer]
     S --> B[Exact regular ELF member retained non-executable]
     B --> R[Independent byte and permission readback]
-    R --> DB[Pending: pinned fresh vulnerability database]
+    R --> DB[Pinned databases staged: recheck freshness at scan time]
     DB --> I[Pending: keyless bounded gVisor scan of exact OCI graph]
     I --> F[Findings and complete coverage evidence]
     F --> A[Separate remediation or explicit exception and runtime approval]
@@ -117,13 +117,17 @@ flowchart TD
 
 ## Still required; these gates are not bypassed
 
-1. Acquire and pin the vulnerability database, its content graph and metadata,
-   with freshness/expiry and bounded storage. Java database requirements must be
-   measured for the actual dependency scan, not silently omitted.
+1. Both public vulnerability and Java data artifacts were subsequently acquired
+   and independently rehashed on the existing VM. See
+   [actual database evidence](SCANNER_DATABASE_PREPARATION.md). Freshness must be
+   rechecked at scan time; no database has yet been opened by the scanner.
 2. Implement fixed scan arguments and execute the verified Linux binary inside
    keyless gVisor using the already-approved host resources/shared ownership.
    No Docker socket, credential mounts, untrusted shell, arbitrary network or
    concurrent unbounded scanning. Verify native limits and cleanup independently.
+   The signature-bound binary was subsequently transferred as non-executable data
+   to the existing VM; see [custody evidence](SCANNER_BINARY_CUSTODY.md). Custody
+   closes a prerequisite, not the actual scan or its native execution proof.
 3. Scan exact Nginx/Temurin and separately pinned PostgreSQL manifests, retaining
    the scanner/database/input/report hashes, duration, coverage and all findings.
    A successful exit, empty report or merely complete digest verification is not

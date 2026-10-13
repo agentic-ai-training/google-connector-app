@@ -24,6 +24,23 @@ before importing incurred costs or authorizing new paid resources.
 
 ## Authority
 
+### Current operator report — 13 October 2026
+
+The user supplied all 17 SKU rows for 19 September–12 October and explicitly
+confirmed the report was copied just now for the correct project. The reported
+remaining credit is INR 19,247.60. Rows sum to INR 9,446.62; the selected-period
+headline is INR 9,446.64, while the all-time credit decrease is INR 9,446.28.
+These small differences are preserved as rounding/timing/scope uncertainty, not
+silently reconciled as exact provider charges. The separate INR 8,804.89 forecast
+is not used as accrued spend.
+
+This supersedes older balance snapshots and the conservative INR 17,000 scenario.
+Receipt time is approximately 04:59 UTC / 10:29 IST; this is fresh operator-reported
+evidence, not an API-verified promotional balance. Current provider identity,
+reviewed backup/migrations, authenticated controller/principal and real ledger
+import remain separate activation gates. No production import has occurred.
+See [full current reconciliation](DELHI_BILLING_RECONCILIATION_2026_10_13.md).
+
 ### Complete SKU evidence — received 7 October 2026
 
 The operator has now supplied **all 16 rows**, superseding the partial checkpoint

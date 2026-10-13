@@ -4107,3 +4107,72 @@ scan success cannot become runtime approval; approval cannot become correct user
 task completion. OKF can explain and version these contracts, but only trusted
 controllers with actual evidence can advance the corresponding transitions.
 See `RUNTIME_SCANNER_PREPARATION.md` for the real versus mocked evidence boundary.
+
+### Deep dictionary: freshness predicates, streaming custody and pre-allocation bounds
+
+**A temporal predicate is not a permanent property.** A database's content digest
+stays constant while its eligibility changes with the current time. Model the gate
+as `eligible(database, now)`, not `database.verified`. The implementation rechecks
+schema, timezone, future skew, maximum age and publisher `NextUpdate`. A saved
+receipt cannot make yesterday's data current. The Java identification database
+and vulnerability database have different purposes and update schedules, but each
+must satisfy the project's independent maximum-age rule when used.
+
+```python
+from datetime import timedelta
+
+def fresh(updated_at, next_update, now):
+    # All three values must first be validated as timezone-aware datetimes.
+    return (now - timedelta(hours=24) <= updated_at
+            <= now + timedelta(minutes=5)
+            and updated_at < next_update <= updated_at + timedelta(hours=72)
+            and now < next_update)
+```
+
+**Prefix-bound continuation.** A resumable transfer has state
+`(offset, SHA256(bytes[0:offset]))`. The receiver observes its retained prefix;
+the sender compares that digest with the corresponding prefix of its independently
+verified source. Append is allowed only for that exact state. A final whole-file
+digest is still necessary: prefix equality does not validate the unreceived suffix.
+For n bytes and a fixed buffer b, sequential hash/transfer work is O(n), with O(b)
+working memory. Rehashing a prefix costs O(offset); this deliberate verification
+cost is safer than trusting a progress counter. A complete partial can reconcile
+without retransmission, while conflicting complete/partial files require review.
+SHA-256 is an integrity mechanism, not encryption or publisher authentication.
+
+**Bounds before allocation.** General archive readers may consume a declared
+PAX/GNU extension before returning the next ordinary member. A size check after
+that consumption is too late. The scanner-database reader examines each fixed
+512-byte header, rejects unsupported extension types before reading their bodies,
+and streams only the two exact regular members under separate declared-size and
+total-expansion caps. Do not interpret this restricted reader as a universal tar
+parser; unsupported valid formats are intentionally rejected. This is an example
+of enforcing an invariant at the transition where a resource is allocated.
+
+**Custody proof versus execution proof.** The scanner transfer preserves an exact
+binary and a reviewed hash of the earlier genuine Sigstore receipt. The destination
+does not claim to have independently performed that cryptographic verification.
+Files remain private, non-executable data. Shared host ownership, fixed deadlines
+and source-pinned IAP commands prevent the custody activity from becoming arbitrary
+shell access. Real gVisor invocation, native resource observations, output coverage,
+cleanup and runtime approval remain separate transitions.
+
+```mermaid
+flowchart TD
+    S[Signature-bound local bytes] --> P[Compare receiver prefix with local prefix]
+    P --> T[Bounded transfer under shared host ownership]
+    T --> H[Whole-file hash and private non-executable custody]
+    H --> X[Pending: native-proved keyless scanner execution]
+    D[Database digest plus current-time freshness gate] --> X
+    X --> R[Coverage and findings tied to exact input/report hashes]
+    R --> A[Separate governed runtime decision]
+```
+
+**Phase splitting and resource vectors.** Identify packages and assess their
+vulnerabilities as distinct typed stages when their database footprints cannot
+coexist in one approved job volume. The dependency edge carries the exact SBOM
+hash, image manifest, scanner version and coverage—not a model's summary of the
+packages. Splitting work does not permit omitting Java identification, fabricating
+package coverage, increasing host budgets or treating an inventory as a completed
+vulnerability scan. The actual two-stage native execution still requires proof.
+See `SCANNER_DATABASE_PREPARATION.md` for the completed data-only checkpoint.

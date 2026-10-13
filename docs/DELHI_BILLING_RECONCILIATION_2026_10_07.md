@@ -1,5 +1,9 @@
 # Delhi hosting: complete operator-reported SKU reconciliation
 
+Historical report. The newer [13 October report](DELHI_BILLING_RECONCILIATION_2026_10_13.md)
+supersedes its balance and current planning scenario. Preserve the older arithmetic
+as provenance; do not add its earlier discrepancies again to the new totals.
+
 Received 7 October 2026. Source: the user's Cloud Billing report, configured using
 the previously requested project filter and actual date range **19 September–5 October
 2026**. This is operator-reported evidence, not an independently fetched billing

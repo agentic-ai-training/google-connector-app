@@ -3078,3 +3078,41 @@ unchecked. Evidence: `docs/RUNTIME_SCANNER_PREPARATION.md`.
 Verification: 54 focused tests plus 1,659 complete coding regressions passed
 without skips against local PostgreSQL (66.84 s); new-source lint/security and
 whitespace checks passed, with one existing Google SDK warning.
+
+Progress 2026-10-13, newer billing evidence: received all 17 SKU rows for
+19 September–12 October and INR 19,247.60 reported remaining credit. Displayed
+rows sum to INR 9,446.62 versus headline INR 9,446.64; all-time credit decrease
+is INR 9,446.28. Differences are retained, not fabricated away or re-added from
+the older report. Updated measured 30-day planning total is INR 12,300.18, not
+a guaranteed bill. Full remaining hosting-ceiling reservation would leave only
+INR 194.24 beyond the protected INR 14,500 allocations. The user confirmed it was
+copied just now for this project; receipt time and operator attestation are recorded
+separately from provider-export provenance. The newer
+report supersedes the INR 17,000 scenario; no ledger enrollment, budget change,
+resource expansion, paid activation or completion claim follows automatically.
+Evidence: `docs/DELHI_BILLING_RECONCILIATION_2026_10_13.md`.
+
+Progress 2026-10-13, scanner databases: both pinned public vulnerability/Java OCI
+data artifacts were acquired and independently rehashed on the existing Delhi
+VM. Actual expanded hashes, preserved publisher metadata and current freshness
+passed. The shared operator slot, existing 1-CPU/3-GiB/no-swap aggregate, 270-second
+deadline, 12-GiB disk headroom and 8-GiB data-store cap were enforced. Staged bytes:
+4,276,265,923. No archive path extraction, extension-body allocation, database
+execution, Docker image load, new cloud resource, paid model call, source bundle
+installation or runtime approval is claimed. Current GCE shape/disk/STOP matched
+the approved target. All 1,680 coding tests passed without skips (66.82 s), plus
+80 focused tests and lint/security/whitespace checks. Scanner execution, coverage,
+cleanup/remediation, PostgreSQL input and full deployment remain unchecked.
+Evidence: `docs/SCANNER_DATABASE_PREPARATION.md`.
+
+Progress 2026-10-13, scanner custody: added fixed source-reviewed IAP streaming of
+the genuine signature-bound 172,765,344-byte scanner to the same VM. Pre-transfer
+probe found no store; the actual transfer returned the exact full hash and retained
+private non-executable data; independent read-only rehash/receipt checks passed.
+Prefix-bound continuation, completed-partial recovery,
+link/permission/size guards and false scan/approval rejection are tested. Shared
+host ownership, one CPU/3 GiB/no swap/128 tasks and STOP are unchanged. Full coding
+regressions passed: 1,697 tests without skips against loopback PostgreSQL (68.19 s);
+lint/security/whitespace checks passed. See `docs/SCANNER_BINARY_CUSTODY.md` and the
+expanded teaching dictionary. No scan, runtime approval, production migration,
+deployment, model call or full-goal completion is inferred from this prerequisite.

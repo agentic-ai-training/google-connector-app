@@ -472,3 +472,21 @@ Pending execution must use keyless gVisor, a pinned fresh vulnerability database
 the actual OCI inputs and native limit/cleanup evidence. Protected hosting/model
 budgets and the existing host source remain unchanged. Evidence and remaining
 integration: `RUNTIME_SCANNER_PREPARATION.md`.
+
+The next 13 October checkpoint completes actual private acquisition/readback of
+both pinned Trivy data artifacts under the existing shared host ownership and
+resource/deadline limits. A streamed parser rejects extension-header allocations,
+unknown paths, links and changed/oversized prefixes. The database is a typed OCI
+artifact, not an executable image; integrity/freshness does not grant runtime
+authority. Keyless scanner invocation, native cleanup and complete CVE coverage
+are still separate unfinished stages. See `SCANNER_DATABASE_PREPARATION.md`.
+
+## Scanner custody checkpoint — 13 October 2026
+
+The operator-only fixed IAP transfer now moves the previously signature-verified
+scanner binary to the same VM as private non-executable data, with whole-file and
+partial-prefix verification and immutable source-bound custody evidence. No model
+can select its executable/path or convert that receipt into runtime approval.
+See `SCANNER_BINARY_CUSTODY.md`. Existing host limits, deadline and production
+boundaries are unchanged. Native scan/coverage/cleanup and runtime decisions remain
+separate unfinished gates, alongside the full original upgrade obligations.
