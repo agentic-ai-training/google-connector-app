@@ -63,3 +63,32 @@ payment/billing upgrade, model call or Google Workspace write occurred. Producti
 recovery still needs compatible release/backup and deployment prerequisites, and
 Railway's actual spending/capacity eligibility—not only a working token. Preserve
 the separate GCP budget/host deadline and local PostgreSQL boundary.
+
+## Subsequent operator billing confirmation
+
+The operator explicitly reported that the achintya17407 workspace shows **Free
+trial expired**. This is user-console evidence, not a billing-field inference from
+the token or the old Rust build failure. No paid upgrade, another trial/account,
+restart or topology migration was performed. The Railway runtime branch needs a
+separately approved funding path; moving core services onto the existing GCP VM
+would also require explicit topology/capacity/budget/rollback review rather than
+silently consuming the protected Vertex or future-reserve envelopes. Approved
+isolated GCP implementation can continue independently while that choice is pending.
+
+## Older 17408 workspace check
+
+At the operator's request, the preserved `RAILWAY_TOKEN` successfully authorized
+read-only access to project `8db2f70a-b9d6-477a-9223-01faa776b8b6`, environment
+`cb017d58-9b9a-440d-b23b-385c0cf999bb`. The API returned workspace
+**achintya17408's Projects**, plan **HOBBY**, and project **comfortable-intuition**,
+created 16 July 2026, with project `subscriptionType: trial`. API, worker, Alloy
+and Ollama service-instance latest-deployment pointers were null. These observations
+do not prove an unexpired trial, remaining credit, paid subscription eligibility,
+or application health. Billing balance/expiry still require authorized account-level
+evidence or an operator console observation. No old token was replaced or revoked.
+
+[Railway account rules](https://docs.railway.com/access/accounts) permit one account
+per person. Creating another personal account with another Gmail is not the approved
+recovery strategy. The documented one-time trial is $5/up to 30 days; afterward the
+Free plan provides $1/month. Hobby is normally $5/month including $5 resource usage,
+not a renewed trial. No restart, upgrade, new account or migration was performed.

@@ -4205,3 +4205,46 @@ runtime approval are distinct predicates.
 
 See `RUNTIME_SCAN_JOURNAL.md`. These new fixed profiles are operator-only primitives,
 not ordinary model-selectable commands or proof that a real scan has completed.
+
+### Deep dictionary: single-copy staging, hard limits and bounded execution evidence
+
+**Resource accounting counts copies, not logical objects.** A 1.55-GiB database has
+the same digest whether stored once or twice, but two copies consume twice the
+space. A content-addressed shared store does not eliminate per-job writable-copy
+cost. The launcher stages one private cache, and the worker uses it directly rather
+than duplicating it. Combined admission must include input, cache, output, temporary
+data and filesystem overhead. Stage splitting keeps the two databases from competing
+for the same fixed volume; it does not erase either stage's resource cost.
+
+**A hard limit is a ceiling, not a suggestion.** An unprivileged process cannot raise
+`RLIMIT_NOFILE` beyond the inherited hard limit. Setting 256 inside a container with
+64:64 fails before any scanner runs. The worker keeps the inherited ceiling at
+64:64. Native cgroup memory/CPU/tasks, per-process limits, disk capacity and command
+deadlines constrain different resources and must all hold simultaneously.
+
+```python
+import resource
+
+def keep_descriptor_ceiling():
+    # The reviewed container contract sets its inherited hard limit to 64.
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+```
+
+**Reverification at a state transition.** A writable private cache can change after
+its initial SHA-256 check. Rehash after the subprocess exits before publishing an
+immutable-source claim. Hashing n bytes takes O(n) work with O(b) working memory
+for a fixed-size buffer b. Rechecking has a real latency cost; admission/deadlines
+must allow for it rather than skipping the invariant. Freshness and deadline checks
+must also be repeated: content identity is stable, current eligibility is not.
+
+**Process lifetime is not pipe lifetime.** A child can close stdout/stderr while a
+descendant keeps running. An output-reader's EOF does not prove process-group cleanup.
+The worker bounds both streams, terminates its exact session, and still leaves native
+cleanup to the host's independent identity-safe observer. Partial diagnostic prefixes
+are explicitly partial; they do not claim a complete log or successful scan.
+
+**Typed evidence is a conjunction of predicates.** A valid SBOM, a CVE report with
+package coverage, exact output custody, native cleanup and runtime approval are
+different facts. A nonempty report or zero findings alone cannot prove all of them.
+For vendor Java binaries, OS package coverage also does not prove JRE coverage.
+See [the implemented worker contract](RUNTIME_SCAN_WORKER.md) for those boundaries.

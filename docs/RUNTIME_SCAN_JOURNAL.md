@@ -118,3 +118,11 @@ Policy/toolchain registry, resource limits, budgets, fixed STOP and infrastructu
 were unchanged. No workload or scanner ran. Earlier public artifact custody keeps
 its historical source provenance; current probes must use the new observed source
 snapshot rather than rewriting old receipts or declaring a historical hash current.
+
+## Subsequent local worker checkpoint
+
+The fixed keyless worker is now implemented locally; see
+[worker contract and remaining native proof](RUNTIME_SCAN_WORKER.md). It has not
+changed the installed source snapshot above. The launcher/output custody integration
+and real two-stage native execution remain unfinished. No successful local test
+should be substituted for those requirements or for runtime approval.

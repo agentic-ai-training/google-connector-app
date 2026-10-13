@@ -3142,3 +3142,21 @@ budgets and STOP are unchanged. No scanner workload was launched: native launch,
 coverage/output proof, PostgreSQL runtime input, runtime approval and the full
 funded generated-app/Chat/framework/training/candidate upgrade remain unchecked.
 See `docs/RUNTIME_SCAN_JOURNAL.md` and the expanded teaching dictionary.
+
+Progress 2026-10-13, fixed keyless scanner worker: local standalone two-stage worker
+now checks closed artifact/proof pins, exact OCI/SBOM lineage, temporal freshness,
+private cache/report bytes, bounded child streams/deadline and typed coverage/findings.
+One private database copy avoids overflowing existing storage; post-execution rehash
+rejects changed cache evidence. Its descriptor limit stays at inherited 64:64 rather
+than attempting an impossible unprivileged expansion. All 1,755 coding tests passed
+without skips against loopback PostgreSQL (67.92 s); 36 worker tests, syntax, lint,
+medium/high security and whitespace checks passed. Native observations are mocked
+in those tests; toy subprocesses never invoke Trivy on the Mac. The installed VM
+source remains 0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49.
+Actual host launch/staging/output custody, full two-stage scan/native cleanup/vendor
+coverage, PostgreSQL runtime input, remediation/approval and funded app deployment
+remain unchecked. No resource, hosting term, budget, production model or data changed.
+See `docs/RUNTIME_SCAN_WORKER.md` and teaching dictionary. Separately, the operator
+reports 17407's Railway trial expired; actual preserved-token readback of 17408 shows
+mixed HOBBY/trial labels, not verified remaining credit. No paid restart or additional
+personal trial account was created. Core Railway funding/eligibility remains pending.

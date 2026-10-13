@@ -502,3 +502,17 @@ actual scanner launch, coverage and runtime approval remain unfinished. See
 old production deployment, not a restored core; see
 `RAILWAY_PRODUCTION_ACCESS_2026_10_13.md`. Core and generated-app authority/budgets
 remain separate.
+
+### 13 October: fixed scanner worker, no execution or approval claim
+
+The next local implementation provides a standalone keyless two-stage worker with
+closed source pins, exact OCI/SBOM lineage, fresh database checks, bounded subprocess
+streams/deadlines and typed package/finding evidence. It uses one per-job writable
+database copy rather than duplicating multi-GiB inputs, rehashes after execution,
+and retains the container's 64-file-descriptor ceiling. Native cleanup and runtime
+approval cannot be granted by its output. All 1,755 coding regressions passed with
+loopback PostgreSQL; native staging/launch, report custody/coverage and actual scans
+remain unproven. The VM source snapshot above is unchanged; this worker is not yet
+installed. See [worker contract](RUNTIME_SCAN_WORKER.md). The older Railway workspace
+was also queried without mutation; its mixed HOBBY/trial fields do not establish
+available credit or eligibility for a free production restart.
