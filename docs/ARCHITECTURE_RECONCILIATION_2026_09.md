@@ -490,3 +490,15 @@ can select its executable/path or convert that receipt into runtime approval.
 See `SCANNER_BINARY_CUSTODY.md`. Existing host limits, deadline and production
 boundaries are unchanged. Native scan/coverage/cleanup and runtime decisions remain
 separate unfinished gates, alongside the full original upgrade obligations.
+
+The following checkpoint adds operator-only `runtime_inventory`/`runtime_assessment`
+ownership to the SAME host journal and native reaper; no second scheduler/slot or
+model-selected command surface is introduced. Stable business keys, bound parent
+inventory and explicit uncertainty prevent a crash, expiry or altered deadline
+from replaying a scan. The tested complete host source is installed/read back as
+`0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49`;
+actual scanner launch, coverage and runtime approval remain unfinished. See
+`RUNTIME_SCAN_JOURNAL.md`. Separate new-token Railway readback exposes an unhealthy
+old production deployment, not a restored core; see
+`RAILWAY_PRODUCTION_ACCESS_2026_10_13.md`. Core and generated-app authority/budgets
+remain separate.

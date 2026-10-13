@@ -70,6 +70,166 @@ def expire(journal, job):
     job["deadline"] = 0
 
 
+def scan_binding(*, scan_id=None, stage='inventory', inventory=None):
+    return {'version': 1, 'scan_id': scan_id or str(uuid4()), 'role': 'nginx_static_v1',
+            'stage': stage,
+            'image_id': 'sha256:6b1f85a08c199d29d5b6d71ab9c27bd5b3b393492e01216a15758ff69c4be8b8',
+            'manifest_sha256': runner.RUNTIME_SCAN_ROLES['nginx_static_v1'],
+            'scanner_sha256': '93f9da8e4ba5e0c1c76d8234ed2494cf9afb0a96fd21953e424bb795f3299b8e',
+            'signature_receipt_sha256': '712dc1f6a1d34e65d2c54390ba25da4942220e6bdbe9bf5ea8786b9927cfa112',
+            'database_catalog_sha256': '79734a08f6dccc4623e6ef7d7bc523a05d4071d57370bde7a5f2cfd4c5086fd1',
+            'inventory_sha256': inventory, 'controller_sha256': 'c' * 64,
+            'stop_unix': 1792430672, 'deadline': int(time.time()) + 180}
+
+
+def test_scan_intent_survives_crash_and_excludes_validation_and_packaging(state):
+    directory, _ = state
+    binding = scan_binding()
+    with runner.Journal(directory) as journal:
+        job = journal.begin_runtime_scan(binding)
+        assert job['purpose'] == 'validation' and job['profile'] == 'runtime_inventory'
+    with runner.Journal(directory) as journal:
+        assert journal.observe_runtime_scan(binding['scan_id'], binding['role'], 'inventory')['state'] == 'creating'
+        with pytest.raises(runner.IsolationError, match='unreconciled'):
+            journal.begin('python_compile', IMAGE, 20)
+        with pytest.raises(runner.IsolationError, match='unreconciled'):
+            journal.begin('image_packaging', IMAGE, 20, packaging_binding(), purpose='image_packaging')
+
+
+@pytest.mark.parametrize('fault', [
+    {'stage': 'shell'}, {'role': 'postgres_private_v1'}, {'image_id': IMAGE},
+    {'scanner_sha256': 'a' * 64}, {'signature_receipt_sha256': 'b' * 64},
+    {'database_catalog_sha256': 'c' * 64}, {'manifest_sha256': 'd' * 64},
+    {'deadline': True}, {'stop_unix': 1792430673}, {'scan_id': '../other'},
+    {'inventory_sha256': 'e' * 64}, {'extra_command': 'bash'},
+])
+def test_scan_unapproved_fields_cannot_reserve_slot(state, fault):
+    directory, _ = state
+    with runner.Journal(directory) as journal:
+        with pytest.raises(runner.IsolationError):
+            journal.begin_runtime_scan({**scan_binding(), **fault})
+        assert not journal.db.execute('SELECT 1 FROM jobs').fetchone()
+
+
+def test_scan_deadline_bound_is_not_a_host_term_extension(state):
+    directory, _ = state
+    with runner.Journal(directory) as journal:
+        for deadline in (int(time.time()) - 1, int(time.time()) + 300, 1792430673):
+            with pytest.raises(runner.IsolationError, match='fixed operator'):
+                journal.begin_runtime_scan({**scan_binding(), 'deadline': deadline})
+
+
+def test_scan_profiles_are_not_normal_model_selected_commands(state):
+    directory, _ = state
+    assert not runner.RUNTIME_SCAN_PROFILES & runner.PROFILES.keys()
+    with runner.Journal(directory) as journal:
+        for profile in runner.RUNTIME_SCAN_PROFILES:
+            with pytest.raises(runner.IsolationError, match='purpose/profile'):
+                journal.begin(profile, IMAGE, 20)
+
+
+def test_scan_tombstone_blocks_replay_even_with_changed_deadline_and_controller(state):
+    directory, _ = state
+    binding = scan_binding()
+    with runner.Journal(directory) as journal:
+        job = journal.begin_runtime_scan(binding)
+        journal.cleanup(job, create_not_attempted=True)
+        changed = {**binding, 'deadline': binding['deadline'] + 1, 'controller_sha256': 'd' * 64}
+        with pytest.raises(runner.IsolationError, match='already consumed'):
+            journal.begin_runtime_scan(changed)
+        observed = journal.observe_runtime_scan(binding['scan_id'], binding['role'], 'inventory')
+        assert observed['cleanup_verified'] and observed['scan_completed'] is None
+
+
+def test_assessment_requires_exact_retained_inventory_not_just_a_hash(state):
+    directory, _ = state
+    binding = scan_binding(stage='assessment', inventory='e' * 64)
+    with runner.Journal(directory) as journal:
+        with pytest.raises(runner.IsolationError, match='exact retained inventory'):
+            journal.begin_runtime_scan(binding)
+        inventory = {**binding, 'stage': 'inventory', 'inventory_sha256': None}
+        job = journal.begin_runtime_scan(inventory)
+        journal.cleanup(job, create_not_attempted=True)
+        key = journal.runtime_scan_key(binding['scan_id'], binding['role'], 'inventory')
+        with journal.db:
+            # Synthetic controller metadata only; this is not actual SBOM or native proof.
+            journal.db.execute('INSERT INTO runtime_scan_outputs VALUES(?,?,?,?)', (key, 'f' * 64, 123, 'a' * 64))
+        with pytest.raises(runner.IsolationError, match='exact retained inventory'):
+            journal.begin_runtime_scan(binding)
+        with journal.db:
+            journal.db.execute('UPDATE runtime_scan_outputs SET output_sha256=? WHERE scan_key=?', ('e' * 64, key))
+        job = journal.begin_runtime_scan(binding)
+        assert job['profile'] == 'runtime_assessment'
+
+
+def test_scan_reaper_requires_native_termination_after_removing_docker(state, monkeypatch):
+    directory, engine = state
+    from app.coding import isolated_packaging
+    def native_uncertain(cid):
+        assert cid == CID
+        raise RuntimeError('synthetic helper still alive')
+    monkeypatch.setattr(isolated_packaging, 'require_native_cleanup', native_uncertain)
+    with runner.Journal(directory) as journal:
+        job = journal.begin_runtime_scan(scan_binding())
+        engine.add(job, journal.scope)
+        expire(journal, job)
+        result = journal.reap()
+        assert result['uncertain_job_ids'] == [job['id']] and engine.removed == [CID]
+        row = journal.db.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()
+        assert row['state'] == 'cleanup_uncertain' and row['container_id'] == CID
+        with pytest.raises(runner.IsolationError, match='unreconciled'):
+            journal.begin('python_compile', IMAGE, 20)
+        monkeypatch.setattr(isolated_packaging, 'require_native_cleanup', lambda cid: None)
+        assert journal.reap()['cleaned_job_ids'] == [job['id']]
+
+
+def test_expired_unknown_scan_creation_keeps_slot_uncertain(state):
+    directory, _ = state
+    with runner.Journal(directory) as journal:
+        job = journal.begin_runtime_scan(scan_binding())
+        expire(journal, job)
+        result = journal.reap()
+        assert result['uncertain_job_ids'] == [job['id']] and result['cleaned_job_ids'] == []
+
+
+def test_scan_observation_rechecks_late_native_helpers(state, monkeypatch):
+    directory, engine = state
+    from app.coding import isolated_packaging
+    binding = scan_binding()
+    with runner.Journal(directory) as journal:
+        job = journal.begin_runtime_scan(binding)
+        engine.add(job, journal.scope)
+        journal.cleanup(job, create_confirmed=True)
+        def late(cid):
+            raise RuntimeError('synthetic late helper')
+        monkeypatch.setattr(isolated_packaging, 'require_native_cleanup', late)
+        result = journal.observe_runtime_scan(binding['scan_id'], binding['role'], 'inventory')
+        assert result['state'] == 'cleanup_uncertain' and not result['cleanup_verified']
+        assert result['scan_completed'] is None
+
+
+def test_scan_binding_corruption_is_not_success_or_a_new_dispatch(state):
+    directory, _ = state
+    binding = scan_binding()
+    with runner.Journal(directory) as journal:
+        journal.begin_runtime_scan(binding)
+        with journal.db:
+            journal.db.execute("UPDATE runtime_scan_jobs SET binding='{}'")
+        with pytest.raises(runner.IsolationError, match='fingerprint'):
+            journal.observe_runtime_scan(binding['scan_id'], binding['role'], 'inventory')
+
+
+def test_scan_history_is_bounded_before_creating_another_job(state):
+    directory, _ = state
+    with runner.Journal(directory) as journal:
+        with journal.db:
+            journal.db.executemany('INSERT INTO runtime_scan_jobs VALUES(?,?,?,?)',
+                                  [(str(i), '{}', 'a' * 64, 'old-' + str(i)) for i in range(32)])
+        with pytest.raises(runner.IsolationError, match='history capacity'):
+            journal.begin_runtime_scan(scan_binding())
+        assert journal.db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 0
+
+
 def test_live_owner_excludes_concurrent_launch_and_reaper(state):
     directory, engine = state
     with runner.Journal(directory):

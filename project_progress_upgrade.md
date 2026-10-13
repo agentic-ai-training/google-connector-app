@@ -3116,3 +3116,29 @@ regressions passed: 1,697 tests without skips against loopback PostgreSQL (68.19
 lint/security/whitespace checks passed. See `docs/SCANNER_BINARY_CUSTODY.md` and the
 expanded teaching dictionary. No scan, runtime approval, production migration,
 deployment, model call or full-goal completion is inferred from this prerequisite.
+
+Progress 2026-10-13, current Railway access: the user's separate saved 17407 token
+passed a read-only projectToken check for the exact existing production environment.
+An explicit operator client identifier resolved the initial request's HTTP 403;
+the previous account token is untouched. Live service/domain/status queries show
+old failed API/worker/candidate deployments and no latest Alloy/Ollama deployment;
+the API /health returns 404. Retained build logs establish missing OpenSSL during
+Rust openssl-sys compilation at old commit ac3340b6. Current Dockerfile already
+contains the build dependency correction, but no production release was started.
+See `docs/RAILWAY_PRODUCTION_ACCESS_2026_10_13.md`. No billing upgrade, redeploy,
+secret export, migration, model call or Workspace mutation occurred.
+
+Progress 2026-10-13, durable scan execution prerequisite: fixed operator-only scan
+profiles now share the existing SQLite/flock slot and identity-safe native reaper.
+Business-key tombstones survive changed deadlines; closed pins, typed inventory
+lineage and bounded history reject replay or fabricated cleanup-to-success claims.
+All 1,719 coding tests pass without skips (69.06 s); 135 focused tests and lint/
+security/whitespace pass. One audited obsolete seven-file source copy was retired
+without changing data or active/immediate rollback source. The tested fourteen-file
+bundle was installed and independently rehashed as snapshot
+0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49.
+Host slot is idle, with no pending import/retirement; policy, toolchains, limits,
+budgets and STOP are unchanged. No scanner workload was launched: native launch,
+coverage/output proof, PostgreSQL runtime input, runtime approval and the full
+funded generated-app/Chat/framework/training/candidate upgrade remain unchecked.
+See `docs/RUNTIME_SCAN_JOURNAL.md` and the expanded teaching dictionary.

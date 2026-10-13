@@ -4176,3 +4176,32 @@ packages. Splitting work does not permit omitting Java identification, fabricati
 package coverage, increasing host budgets or treating an inventory as a completed
 vulnerability scan. The actual two-stage native execution still requires proof.
 See `SCANNER_DATABASE_PREPARATION.md` for the completed data-only checkpoint.
+
+### Deep dictionary: business idempotency keys and durable scanner ownership
+
+**Business identity versus request fingerprint.** A scan has a stable logical
+identity `(scan_id, role, stage)`; its request also has mutable operational facts
+such as a deadline and controller version. Hashing the entire request as the only
+idempotency key permits a retry with a new deadline to become a second execution.
+Use the stable tuple as the dispatch key, and separately retain/fingerprint the
+complete request. The scanner journal does both. Hash-map/SQL key lookup supports
+efficient observation; uniqueness and transactions, not an LLM remembering a past
+attempt, enforce one dispatch. A new UUID is new intent, not safe automatic retry.
+
+**A lock's lifetime differs from an operation's lifetime.** `flock` excludes live
+owners and is released when the process dies. A running sandbox may outlive that
+process. Persist `creating` before calling the external container engine, retain
+uncertain outcomes, and reconcile exact container plus native helper identities
+before releasing the shared slot. This combines a mutex with a durable state
+machine; neither is a substitute for the other.
+
+**Evidence-preserving DAG edges.** An assessment depends on an inventory artifact,
+not just the fact that an earlier step ran. The edge carries the immutable inventory
+digest and native-proof reference from the same logical scan. A matching digest
+reference is still not enough without later actual-byte and package-coverage checks.
+Topological order prevents assessment before inventory; typed lineage prevents
+assessment of the wrong inventory. Cleanup, content verification, coverage and
+runtime approval are distinct predicates.
+
+See `RUNTIME_SCAN_JOURNAL.md`. These new fixed profiles are operator-only primitives,
+not ordinary model-selectable commands or proof that a real scan has completed.

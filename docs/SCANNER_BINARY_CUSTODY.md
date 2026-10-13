@@ -57,7 +57,7 @@ the activity never makes a host binary executable or installs it in a system PAT
 .venv/bin/python -m scripts.transfer_runtime_scanner \
   --operator-config .gca-local/validation-transport.json \
   --reviewed-program-sha256 83eaa6e1d1723dc8ad828b711ed9b633c1d524f0879057496651538d6e85d406 \
-  --expected-bundle-sha256 b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd \
+  --expected-bundle-sha256 0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49 \
   --expected-policy-sha256 afa4901baca18a451e704b275beaebd1c1efcc7edf521debdd5925d9027fda73 \
   --expected-registry-sha256 6eb2f72e3b1b901e1fd9387f144f0612985318070f32df9e0d5c82f84014f345
 ```
@@ -65,6 +65,9 @@ the activity never makes a host binary executable or installs it in a system PAT
 Adding `--transfer` explicitly enters custody transfer, not execution. It first
 observes the existing destination and compares its prefix. Do not re-transfer
 merely because a previous observation request timed out; inspect retained state.
+The command uses the subsequent current host snapshot recorded in
+`RUNTIME_SCAN_JOURNAL.md`; the original transfer's source-bound plan/receipt was
+not rewritten. A new-source mutation cannot silently replace that immutable plan.
 
 ## Next execution obligation: preserve coverage within the approved volume
 

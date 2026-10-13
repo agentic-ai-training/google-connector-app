@@ -85,6 +85,11 @@ IMPORT_PHASES = {
     "cancelled": {"archive_verified"},
 }
 MAX_TOOLCHAIN_IMPORTS = 8
+RUNTIME_SCAN_PROFILES = frozenset({'runtime_inventory', 'runtime_assessment'})
+RUNTIME_SCAN_ROLES = {
+    'nginx_static_v1': '8f84ed99befc3891b8f329c5c202785278a2cfb7c25107d57fb2a134a3117433',
+    'temurin_java17_v1': 'af3852c35f8339ab7beba6f17b7fc15c4aca4d72979c5f09776c9ff74385058f',
+}
 
 
 class IsolationError(RuntimeError):
@@ -400,6 +405,12 @@ class Journal:
                 CREATE TABLE IF NOT EXISTS toolchain_imports(
                     id TEXT PRIMARY KEY,intent TEXT NOT NULL,phase TEXT NOT NULL,
                     observations TEXT NOT NULL,updated_at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS runtime_scan_jobs(
+                    scan_key TEXT PRIMARY KEY,binding TEXT NOT NULL,binding_hash TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE);
+                CREATE TABLE IF NOT EXISTS runtime_scan_outputs(
+                    scan_key TEXT PRIMARY KEY,output_sha256 TEXT NOT NULL,output_bytes INTEGER NOT NULL,
+                    native_proof_sha256 TEXT NOT NULL);
             """)
             # Preserve old jobs as validation work. Different purposes share ONE
             # slot and reaper, never independent locks that can overcommit the host.
@@ -789,6 +800,107 @@ class Journal:
                             (identity, case, len(rows) + 1, job_id, source_hash, binding_hash))
         return dict(self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
 
+    def begin_runtime_scan(self, binding: dict) -> dict:
+        """Fixed operator validation, not a public command/model profile.
+
+        One logical (scan, role, stage) has one durable dispatch. Changing a
+        deadline/controller does not permit replay. Scanner invocation and input
+        authenticity/freshness are checked separately by the trusted launcher.
+        """
+        fields = {'version', 'scan_id', 'role', 'stage', 'image_id', 'manifest_sha256',
+                  'scanner_sha256', 'signature_receipt_sha256', 'database_catalog_sha256',
+                  'inventory_sha256', 'controller_sha256', 'stop_unix', 'deadline'}
+        now = int(time.time())
+        hashes = {'manifest_sha256', 'scanner_sha256', 'signature_receipt_sha256',
+                  'database_catalog_sha256', 'controller_sha256'}
+        if (not isinstance(binding, dict) or set(binding) != fields
+                or type(binding['version']) is not int or binding['version'] != 1
+                or not isinstance(binding['role'], str) or binding['role'] not in RUNTIME_SCAN_ROLES
+                or binding['stage'] not in ('inventory', 'assessment')
+                or binding['image_id'] != 'sha256:6b1f85a08c199d29d5b6d71ab9c27bd5b3b393492e01216a15758ff69c4be8b8'
+                or any(not isinstance(binding[key], str) or not re.fullmatch('[a-f0-9]{64}', binding[key])
+                       for key in hashes)
+                or binding['manifest_sha256'] != RUNTIME_SCAN_ROLES[binding['role']]
+                or binding['scanner_sha256'] != '93f9da8e4ba5e0c1c76d8234ed2494cf9afb0a96fd21953e424bb795f3299b8e'
+                or binding['signature_receipt_sha256'] != '712dc1f6a1d34e65d2c54390ba25da4942220e6bdbe9bf5ea8786b9927cfa112'
+                or binding['database_catalog_sha256'] != '79734a08f6dccc4623e6ef7d7bc523a05d4071d57370bde7a5f2cfd4c5086fd1'
+                or type(binding['stop_unix']) is not int or binding['stop_unix'] != 1792430672
+                or type(binding['deadline']) is not int
+                or not now < binding['deadline'] <= min(now + 270, binding['stop_unix'])
+                or (binding['stage'] == 'inventory' and binding['inventory_sha256'] is not None)
+                or (binding['stage'] == 'assessment' and
+                    (not isinstance(binding['inventory_sha256'], str)
+                     or not re.fullmatch('[a-f0-9]{64}', binding['inventory_sha256'])))):
+            raise IsolationError('Runtime scan binding is not the fixed operator profile')
+        scan_key = self.runtime_scan_key(binding['scan_id'], binding['role'], binding['stage'])
+        self.require_available()
+        if self.db.execute('SELECT 1 FROM runtime_scan_jobs WHERE scan_key=?', (scan_key,)).fetchone():
+            raise IsolationError('Runtime scan dispatch already consumed; reconcile instead of replaying')
+        if self.db.execute('SELECT COUNT(*) FROM runtime_scan_jobs').fetchone()[0] >= 32:
+            raise IsolationError('Runtime scan history capacity exhausted')
+        if binding['stage'] == 'assessment':
+            parent = self.runtime_scan_key(binding['scan_id'], binding['role'], 'inventory')
+            row = self.db.execute('SELECT o.*,j.state FROM runtime_scan_outputs o JOIN runtime_scan_jobs s '
+                                  'ON o.scan_key=s.scan_key JOIN jobs j ON j.id=s.job_id '
+                                  'WHERE o.scan_key=?', (parent,)).fetchone()
+            if (row is None or row['state'] != 'cleaned' or row['output_sha256'] != binding['inventory_sha256']
+                    or not 0 < row['output_bytes'] <= 4 * 1024**2
+                    or not re.fullmatch('[a-f0-9]{64}', row['native_proof_sha256'])):
+                raise IsolationError('Runtime assessment needs exact retained inventory and native cleanup')
+        body = _canonical_json(binding).decode()
+        job_id = uuid.uuid4().hex
+        with self.db:
+            self.db.execute("INSERT INTO jobs(id,name,image,profile,deadline,state,container_id,updated_at,purpose) "
+                            "VALUES(?,?,?,?,?,'creating',NULL,?,'validation')",
+                            (job_id, 'gca-runtime-scan-' + job_id, binding['image_id'],
+                             'runtime_' + binding['stage'], binding['deadline'], now))
+            self.db.execute('INSERT INTO events(job_id,state,observed_at) VALUES(?,?,?)',
+                            (job_id, 'creating', now))
+            self.db.execute('INSERT INTO runtime_scan_jobs VALUES(?,?,?,?)',
+                            (scan_key, body, hashlib.sha256(body.encode()).hexdigest(), job_id))
+        return dict(self.db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+
+    @staticmethod
+    def runtime_scan_key(scan_id, role, stage):
+        try:
+            if (not isinstance(scan_id, str) or str(uuid.UUID(scan_id)) != scan_id
+                    or not isinstance(role, str) or role not in RUNTIME_SCAN_ROLES
+                    or stage not in ('inventory', 'assessment')):
+                raise ValueError('noncanonical scan identity')
+        except (ValueError, TypeError, AttributeError) as error:
+            raise IsolationError('Runtime scan identity is invalid') from error
+        return hashlib.sha256(_canonical_json([scan_id, role, stage])).hexdigest()
+
+    def observe_runtime_scan(self, scan_id, role, stage):
+        """Actual cleanup observation; never infer inventory or CVE scan success."""
+        key = self.runtime_scan_key(scan_id, role, stage)
+        row = self.db.execute('SELECT s.*,j.* FROM runtime_scan_jobs s JOIN jobs j ON j.id=s.job_id '
+                              'WHERE scan_key=?', (key,)).fetchone()
+        if row is None:
+            return {'scan_key': key, 'state': 'unknown', 'cleanup_verified': False, 'scan_completed': None}
+        if (not isinstance(row['binding'], str) or not 1 <= len(row['binding'].encode()) <= 8192
+                or hashlib.sha256(row['binding'].encode()).hexdigest() != row['binding_hash']):
+            raise IsolationError('Retained runtime scan binding fingerprint differs')
+        binding = json.loads(row['binding'])
+        if (binding.get('scan_id') != scan_id or binding.get('role') != role or binding.get('stage') != stage
+                or row['profile'] != 'runtime_' + stage or row['purpose'] != 'validation'
+                or row['image'] != binding.get('image_id') or row['deadline'] != binding.get('deadline')
+                or not re.fullmatch('[a-f0-9]{32}', row['id']) or row['name'] != 'gca-runtime-scan-' + row['id']):
+            raise IsolationError('Retained runtime scan identity differs')
+        job = dict(row)
+        if job['state'] == 'cleaned':
+            ids = docker('ps', '-a', '--no-trunc', '--filter', 'label=gca.scope=' + self.scope,
+                         '--filter', 'label=gca.job=' + job['id'], '--format', '{{.ID}}').decode().split()
+            try:
+                if ids:
+                    raise IsolationError('Late runtime scan container requires cleanup')
+                if job.get('container_id'):
+                    _packaging_helper().require_native_cleanup(job['container_id'])
+            except (RuntimeError, OSError, ValueError):
+                self.record(job, 'cleanup_uncertain')
+        return {'scan_key': key, 'job_id': job['id'], 'binding_hash': row['binding_hash'],
+                'state': job['state'], 'cleanup_verified': job['state'] == 'cleaned', 'scan_completed': None}
+
     def record(self, job: dict, state: str, container_id: str | None = None):
         if state not in {"running", "cleanup_uncertain", "cleaned"}:
             raise IsolationError("Invalid journal transition")
@@ -852,13 +964,13 @@ class Journal:
             # erase the native identity needed by subsequent reconciliation.
             self.record(job, "cleanup_uncertain", ids[0])
             docker("rm", "--force", "--volumes", ids[0])
-        if job["purpose"] == "image_packaging" and not (create_not_attempted and not ids):
+        if (job["purpose"] == "image_packaging" or job['profile'] in RUNTIME_SCAN_PROFILES) and not (create_not_attempted and not ids):
             if not job.get("container_id"):
-                raise IsolationError("Packaging native identity is unknown; cleanup remains uncertain")
+                raise IsolationError("Job native identity is unknown; cleanup remains uncertain")
             try:
                 _packaging_helper().require_native_cleanup(job["container_id"])
             except (RuntimeError, OSError, ValueError) as error:
-                raise IsolationError("Packaging native termination is not verified") from error
+                raise IsolationError("Job native termination is not verified") from error
         self.record(job, "cleaned")
 
     def verify_identity(self, job: dict, container_id: str):

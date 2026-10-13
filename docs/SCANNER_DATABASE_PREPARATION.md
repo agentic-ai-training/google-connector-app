@@ -99,7 +99,7 @@ this controller was source-verified inline, not a production bundle installation
 .venv/bin/python -m scripts.prepare_scanner_databases \
   --operator-config .gca-local/validation-transport.json \
   --reviewed-program-sha256 b7726790ee87433b7af1093488a58ad80e588b8639fe722f0ca4f2e051dffe3f \
-  --expected-bundle-sha256 b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd \
+  --expected-bundle-sha256 0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49 \
   --expected-policy-sha256 afa4901baca18a451e704b275beaebd1c1efcc7edf521debdd5925d9027fda73 \
   --expected-registry-sha256 6eb2f72e3b1b901e1fd9387f144f0612985318070f32df9e0d5c82f84014f345
 ```
@@ -108,6 +108,9 @@ Default is read-only observation. Acquisition additionally requires `--acquire`
 and a retained reviewed controller. Role selection is from the fixed catalog,
 never a request-provided URL, command or database path. Uncertainty means inspect
 the existing transfer/store, not repeat an unknown executable action.
+The observation command now uses the subsequently installed current host snapshot
+from `RUNTIME_SCAN_JOURNAL.md`. Historical acquisition/readback provenance above
+remains unchanged; a source update does not create a new database freshness claim.
 
 ## Still open
 
