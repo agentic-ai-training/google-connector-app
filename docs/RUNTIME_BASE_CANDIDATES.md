@@ -119,3 +119,9 @@ warning remains. Mock registry/CAS tests and live acquisition evidence are disti
    then deliver only the exact verified URL through authorized Chat.
 
 The original full goal and other unchecked plan requirements remain active.
+
+13 October scanner prerequisite: actual pinned Trivy release assets and the exact
+signing workflow/issuer passed separate Sigstore verification and independent
+binary readback. The Linux binary is retained locally as non-executable data.
+No vulnerability database has been enrolled and no base scan or runtime approval
+is claimed. See [scanner evidence and remaining gates](RUNTIME_SCANNER_PREPARATION.md).

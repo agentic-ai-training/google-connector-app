@@ -4045,3 +4045,65 @@ expiry. The prior failure is not rewritten as success. The 13 October candidate
 acquisition demonstrates this boundary using real public blobs, not a mocked
 executable runtime. Approval, scanning, runtime startup and deployment remain
 separate state transitions with their own evidence and authority.
+
+### Deep dictionary: scanner trust, dependency locks and distinct proof states
+
+**Authenticity versus integrity versus safety.** A SHA-256 digest binds exact bytes,
+but does not identify their author. A signature checked against an independently
+trusted certificate policy adds an identity binding. Neither operation proves
+the software is safe or the requested application works. Our scanner preparation
+therefore leaves `scanner_executed`, `scan_completed` and `runtime_approved` false.
+An API response or OKF document saying "verified" is not equivalent to executing
+the corresponding verifier against the exact retained bytes.
+
+**Trust root and certificate-policy graph.** Model the release, certificate,
+issuer and transparency record as vertices with typed verification edges. A graph
+traversal is useful for understanding prerequisites, but ordinary reachability
+is not cryptographic validation. Use the maintained Sigstore verifier, exact
+workflow identity and issuer, and its production trust bootstrap. Do not write a
+homegrown verifier that accepts any certificate because its signature matches a
+key carried by the same untrusted bundle. Trust begins outside the input graph.
+
+**Transparency log / Merkle inclusion.** An inclusion proof links a leaf to a
+signed tree root using sibling hashes, typically O(log N) work for N leaves. It
+shows a signed artifact record was included in the log, not that its contents
+were reviewed or harmless. Certificate-chain policy, timestamp/validity and
+signature checks remain separate obligations. The project's Python controller
+delegates this cryptographic work to Sigstore; tests that mock its successful
+process exit test control flow, not the actual cryptographic proof.
+
+**Content-pinned dependency lock.** Think of a lock as a hash map from canonical
+package identity to (version, allowed distribution digest). Lookup is expected
+O(1); verifying k distributions containing n bytes costs O(k+n). Native wheels
+are platform-specific. A macOS ARM64 hash cannot be quietly replaced by an unpinned
+Linux wheel or source build. The scanner verifier's 31 wheels are separate from
+application requirements, preserving provider/runtime dependency boundaries.
+An exact distribution hash provides integrity; a package version string alone
+does not detect modified files or establish publisher authenticity.
+
+**Non-executable staging and bounded parsing.** Public scanner bytes are first
+data in a private CAS. Python's `tarfile.extractall` is not used: iterate bounded
+members, reject traversal/links/duplicates, read only the exact regular member,
+and check size, ELF architecture and content digest. Complexity is O(n) archive
+processing; memory must include both compressed input and the allowed binary,
+not merely a small read buffer. The actual release exceeded an assumed size cap;
+we measured its signed archive and pinned 172,765,344 bytes rather than disabling
+size checks. The retained file stays mode 0600; executable permission and actual
+sandbox invocation need distinct later authority.
+
+```mermaid
+flowchart LR
+    H[Hash-verified public input] --> S[Identity/signature proof]
+    S --> N[Non-executable exact binary]
+    N --> C[Keyless scan with pinned current database]
+    C --> F[Findings, coverage and provenance]
+    F --> A[Separate runtime approval]
+    A --> V[Application behavior and delivery proof]
+```
+
+**Proof-state separation.** A state machine should prevent one proof from
+substituting for another: signature success cannot become vulnerability success;
+scan success cannot become runtime approval; approval cannot become correct user
+task completion. OKF can explain and version these contracts, but only trusted
+controllers with actual evidence can advance the corresponding transitions.
+See `RUNTIME_SCANNER_PREPARATION.md` for the real versus mocked evidence boundary.

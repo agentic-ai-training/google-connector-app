@@ -3063,3 +3063,18 @@ Verification: 35 focused planning/budget tests and all 1,635 coding regressions
 passed without skips against loopback PostgreSQL (66.19 s). New-source lint,
 medium/high security checks and whitespace validation passed; one existing SDK
 deprecation warning remains. No cloud ledger enrollment or paid activation occurred.
+
+Progress 2026-10-13, runtime scan prerequisite: actual immutable Trivy v0.75.0
+release assets passed bounded acquisition, exact Sigstore workflow/issuer
+verification and independent byte/permission readback. Added operator-only public
+asset acquisition/verification code and CLI plus a 31-wheel, separate macOS ARM64
+verifier lock; production dependencies are unchanged. The exact 172,765,344-byte
+Linux binary is retained as non-executable data. A Homebrew protection mismatch
+and measured release-size mismatch were corrected without weakening shared
+permissions or disabling bounds. No scanner execution, vulnerability database,
+runtime/base approval, Docker load, host installation, funded deployment or model
+call is claimed. Scan execution/coverage, remediation and the full goal remain
+unchecked. Evidence: `docs/RUNTIME_SCANNER_PREPARATION.md`.
+Verification: 54 focused tests plus 1,659 complete coding regressions passed
+without skips against local PostgreSQL (66.84 s); new-source lint/security and
+whitespace checks passed, with one existing Google SDK warning.

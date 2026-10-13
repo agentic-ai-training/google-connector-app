@@ -460,3 +460,15 @@ acquisition/readback passed; scanning, runtime-policy approval, actual image
 publication/signing, funded dispatch and application/Chat proof remain open.
 This does not integrate a fake runtime or silently switch away from Docker Desktop
 for local private execution. See `RUNTIME_BASE_CANDIDATES.md` for source/host hashes.
+
+### 13 October: verify the scanner before scanning a runtime
+
+The operator control plane now acquires only pinned public scanner assets, verifies
+their exact Sigstore signing identity/issuer and extracts one bounded ELF member as
+non-executable data. The separate verifier environment does not alter production
+dependencies and is given no application credentials. Its successful signature
+check is not a vulnerability scan, executable-role approval or sandbox proof.
+Pending execution must use keyless gVisor, a pinned fresh vulnerability database,
+the actual OCI inputs and native limit/cleanup evidence. Protected hosting/model
+budgets and the existing host source remain unchanged. Evidence and remaining
+integration: `RUNTIME_SCANNER_PREPARATION.md`.
