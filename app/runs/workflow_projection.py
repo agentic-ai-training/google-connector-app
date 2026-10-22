@@ -1,7 +1,7 @@
 """One registered, SQL-only consumer. No model-selected handlers or external writes."""
 import hashlib
 
-from app.runs.event_outbox import EventDeliveryError, consume, decode
+from app.runs.event_outbox import EventDeliveryError, consume, decode, partition_key
 
 
 CONSUMER_NAME = 'workflow_projection_v1'
@@ -22,7 +22,7 @@ async def project(conn, event):
     """Derived event visibility only; never set run completion or execute a tool."""
     if not conn.is_in_transaction():
         raise ValueError('projection requires the inbox transaction')
-    await conn.execute('''INSERT INTO workflow_run_event_projection(
+    sql = '''INSERT INTO workflow_run_event_projection(
         run_id,tenant_id,last_event_id,last_sequence,last_event_type,last_phase)
         VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(run_id) DO UPDATE SET
@@ -35,8 +35,13 @@ async def project(conn, event):
             THEN EXCLUDED.last_phase ELSE workflow_run_event_projection.last_phase END,
           last_sequence=GREATEST(EXCLUDED.last_sequence,workflow_run_event_projection.last_sequence),
           observed_at=now()
-        WHERE workflow_run_event_projection.tenant_id=EXCLUDED.tenant_id''',
+        WHERE workflow_run_event_projection.tenant_id=EXCLUDED.tenant_id RETURNING run_id'''
+    if event.kind == 'coding':
+        sql = sql.replace('workflow_run_event_projection', 'workflow_coding_event_projection')
+    projected = await conn.fetchval(sql,
         event.run_id, event.tenant_id, event.event_id, event.sequence, event.event_type, event.phase)
+    if projected != event.run_id:
+        raise ProjectionDeliveryError('projection_failed')
 
 
 async def apply(pool, *, key: bytes, body: bytes) -> str:
@@ -45,12 +50,14 @@ async def apply(pool, *, key: bytes, body: bytes) -> str:
         event = decode(body)
     except EventDeliveryError:
         raise ProjectionDeliveryError('record_invalid') from None
-    expected = (str(event.tenant_id) + ':' + str(event.run_id)).encode()
+    expected = partition_key(event)
     if key != expected:
         raise ProjectionDeliveryError('key_mismatch')
     try:
         inserted = await consume(pool, consumer_name=CONSUMER_NAME, body=body, handler=project)
         return 'applied' if inserted else 'duplicate'
+    except ProjectionDeliveryError:
+        raise
     except EventDeliveryError:
         # Exact digest evidence is written atomically BEFORE authoritative erasure.
         # Unknown or modified messages cannot masquerade as an erased event.

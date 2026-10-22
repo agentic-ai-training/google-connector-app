@@ -2536,8 +2536,10 @@ changes become production evidence.
   adapter checks an existing three-partition/three-replica topic; no broker or
   production migration was started. The subsequent local migration-024 consumer
   checkpoint implements manual offsets, explicit new-group bootstrap, rebalance
-  cancellation, SQL projections and exact-digest erasure handling. Coding-event
-  capture, real broker/rebalance/lag proof, approved resource placement and live
+  cancellation, SQL projections and exact-digest erasure handling. Migration 025
+  now locally bridges coding events with a separate default-off flag and explicit
+  kind/version identity while preserving Workspace keys/bytes. Real mixed-source
+  broker/rebalance/lag proof, approved resource placement and live
   failure/load proof remain open.
   See `docs/WORKFLOW_EVENT_OUTBOX.md`; this item stays unchecked.
 - [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
@@ -3240,3 +3242,27 @@ capture activation, model/provider call, VM restart or budget change occurred.
 Live multi-member broker/rebalance/load/lag evidence, coding-event capture, Temporal
 single-owner migration and the remainder of the full original goal remain open.
 See `docs/WORKFLOW_CONSUMER.md`, architecture reconciliation and teaching dictionary.
+
+Progress 2026-10-22, shared coding-event bridge: migration 025 connects the existing
+coding repository event inserts to the same outbox through a separately default-off
+flag. Explicit v2 workflow kind, composite source/run identity, generated real-parent
+foreign keys and per-kind head-of-line ordering prevent equal BIGSERIAL IDs or run
+UUIDs from merging streams. Historical Workspace v1 bytes/keys/leases survive.
+Tenant/privacy cleanup spans both business ledgers without erasing the other kind;
+consumers verify current ownership and require an actual SQL projection row.
+No new execution owner, provider call, publication or production activation was added.
+
+Final local evidence: 1,867 coding tests passed without skips (75.95 seconds, one
+existing SDK deprecation warning), including mixed-source collision/privacy and
+rollback cases. The final five focused workflow modules passed 82 tests. Full
+disposable Alembic upgrade-to-025/downgrade-to-002/upgrade-to-025 plus retention
+passed; targeted lint/security/whitespace checks passed. See
+`docs/WORKFLOW_CODING_EVENTS.md` and the expanded teaching dictionary. Real Kafka,
+lag/alerts, Temporal ownership, funded hosting and the full original goal remain open.
+
+Separately, the operator saved a new isolated Railway token. Read-only resource
+queries succeeded with zero projects, while the personal identity query was denied;
+the intended workspace identity, trial/network eligibility and funding remain
+unverified pending its non-secret workspace ID/Settings URL. Existing credentials
+were preserved and no deployments/mutations occurred. Railway's one-account-per-
+person policy is not bypassed. See `docs/RAILWAY_NEW_WORKSPACE_PREFLIGHT_2026_10_22.md`.

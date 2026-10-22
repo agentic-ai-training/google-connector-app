@@ -4399,4 +4399,45 @@ flowchart LR
 ```
 
 See [the implemented consumer and test evidence](WORKFLOW_CONSUMER.md). This remains
-local/default-off and does not complete live Kafka, coding events or Temporal.
+local/default-off and does not complete live Kafka, coding-stream proof or Temporal.
+
+### Deep dictionary: tagged identities, composite keys and staged event contracts
+
+**Tagged identity / sum type.** `WorkspaceRun(id)` and `CodingRun(id)` are different
+values even if their UUID strings match. A tag makes the domain explicit:
+`('workspace', uuid)` versus `('coding', uuid)`. Independent BIGSERIAL counters also
+overlap, so source-event identity is `(kind, source_id)`. A globally unique delivery
+UUID solves deduplication but not business-source identity. Forgetting the tag can
+merge unrelated queues, projections or privacy deletion scopes.
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from uuid import UUID
+
+@dataclass(frozen=True)
+class WorkflowIdentity:
+    kind: Literal['workspace', 'coding']
+    run_id: UUID
+
+# A dictionary/set key is the complete frozen value, not just run_id.
+```
+
+**Composite key.** A SQL unique constraint on `(kind, run_id, sequence)` supplies
+separate ordered namespaces with B-tree lookup typically O(log n). Two sequence-one
+events can coexist in different domains. Ordering must compare the same identity
+as uniqueness. Kafka keys must preserve that separation; adding a tag to an old key
+changes placement, so the project preserves Workspace v1 keys and tags new v2 keys.
+
+**Conditional parent FK.** A polymorphic run ID without a database FK can point
+nowhere. Migration 025 derives two generated parent columns from the tag; exactly
+the matching one holds the run ID and references its real table. Hard deletion
+cascades correctly. Soft deletion needs a kind-scoped trigger, and tenant cleanup
+must consider both ledgers. A bare run-ID filter is unsafe across those tables.
+
+**Versioned protocol versus activation.** New decoder support does not permit
+publishing to old consumers. Roll out version-aware consumers before enabling the
+new producer. Default-off flags, preserved old bytes/keys and downgrade drain checks
+reduce risk but do not prove broker offsets or live compatibility. An empty delivery
+table cannot prove rollback while external wire records remain. See
+[the implemented mixed-source bridge](WORKFLOW_CODING_EVENTS.md).

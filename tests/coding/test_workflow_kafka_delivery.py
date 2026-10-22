@@ -26,6 +26,18 @@ def test_schema_rejects_content_credentials_duplicate_fields_and_oversized_messa
             outbox.decode(value)
 
 
+def test_versioned_contract_requires_kind_without_changing_historical_workspace_keys():
+    original = outbox.decode(body())
+    assert original.kind == 'workspace'
+    assert outbox.partition_key(original) == (str(original.tenant_id) + ':' + str(original.run_id)).encode()
+    for invalid in (body(workflow_kind='coding'), body(workflow_kind=None),
+                    body(schema='gca.workflow.event.v2'), body(schema='gca.workflow.event.v2', workflow_kind='unknown')):
+        with pytest.raises(outbox.EventDeliveryError):
+            outbox.decode(invalid)
+    coding = outbox.decode(body(schema='gca.workflow.event.v2', workflow_kind='coding'))
+    assert outbox.partition_key(coding) == (str(coding.tenant_id) + ':coding:' + str(coding.run_id)).encode()
+
+
 @pytest.mark.parametrize('brokers', [('public.example:9092',), ('localhost:9092/private',),
     ('user:password@localhost:9092',), ('https://localhost:9092',), ('localhost',)])
 def test_plaintext_cannot_target_remote_or_credentialed_endpoints(brokers):
@@ -44,15 +56,16 @@ def test_tls_ack_idempotence_and_secret_repr_are_explicit():
 
 
 @pytest.mark.asyncio
-async def test_adapter_waits_for_ack_and_keeps_exact_bytes():
+@pytest.mark.parametrize('contract', [{}, {'schema': 'gca.workflow.event.v2', 'workflow_kind': 'coding'}])
+async def test_adapter_waits_for_ack_and_keeps_exact_bytes(contract):
     calls = []
     class Producer:
         async def send_and_wait(self, topic, value, **kwargs):
             calls.append((topic, value, kwargs))
             return SimpleNamespace(topic=kafka.TOPIC, partition=1, offset=123)
-    value = body()
+    value = body(**contract)
     event = outbox.decode(value)
-    key = (str(event.tenant_id) + ':' + str(event.run_id)).encode()
+    key = outbox.partition_key(event)
     adapter = kafka.KafkaDelivery(Producer())
     assert await adapter.publish(key=key, body=value) == outbox.BrokerAcknowledgement(event.event_id, kafka.TOPIC, 1, 123)
     assert calls == [(kafka.TOPIC, value, {'key': key})]

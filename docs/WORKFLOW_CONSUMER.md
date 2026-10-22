@@ -138,7 +138,8 @@ inform this boundary. They do not establish this deployment's live behavior.
 
 Still required: approved broker placement/cost, topic/cluster identity and ACL
 review, real multi-member/rebalance/network/retention/load tests, lag dashboards
-and alerts, coding-event capture and Temporal single workflow ownership. All
+and alerts, live proof of [the coding-event bridge](WORKFLOW_CODING_EVENTS.md)
+and Temporal single workflow ownership. All
 external Google/deployment execution remains outside this consumer. No extra paid
 service may be placed on the stopped VM without new authority/capacity approval.
 

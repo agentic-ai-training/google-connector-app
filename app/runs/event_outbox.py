@@ -10,9 +10,10 @@ from datetime import datetime
 import hashlib
 import json
 import re
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 MAX_WIRE_BYTES = 16384
@@ -24,7 +25,8 @@ class EventDeliveryError(RuntimeError):
 
 class WorkflowEvent(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
-    schema_name: str = Field(alias='schema', pattern=r'^gca\.workflow\.event\.v1$')
+    schema_name: Literal['gca.workflow.event.v1', 'gca.workflow.event.v2'] = Field(alias='schema')
+    workflow_kind: Literal['workspace', 'coding'] | None = None
     event_id: UUID
     tenant_id: UUID
     run_id: UUID
@@ -34,12 +36,31 @@ class WorkflowEvent(BaseModel):
     phase: str | None = Field(max_length=96)
     created_at: datetime
 
+    @model_validator(mode='after')
+    def versioned_identity(self):
+        if self.schema_name.endswith('.v1') and 'workflow_kind' in self.model_fields_set:
+            raise ValueError('v1 is exclusively the historical Workspace contract')
+        if self.schema_name.endswith('.v2') and self.workflow_kind is None:
+            raise ValueError('v2 requires explicit workflow identity')
+        return self
+
+    @property
+    def kind(self):
+        return self.workflow_kind or 'workspace'
+
     @field_validator('created_at')
     @classmethod
     def aware(cls, value):
         if value.utcoffset() is None:
             raise ValueError('workflow timestamps must be timezone-aware')
         return value
+
+
+def partition_key(event: WorkflowEvent) -> bytes:
+    # Preserve historical Workspace placement. New contracts include the kind so
+    # equal UUIDs in distinct business tables never become the same stream.
+    middle = ':' if event.schema_name.endswith('.v1') else ':' + event.kind + ':'
+    return (str(event.tenant_id) + middle + str(event.run_id)).encode()
 
 
 def decode(body: bytes) -> WorkflowEvent:
@@ -76,14 +97,22 @@ class BrokerAcknowledgement:
     offset: int
 
 
-async def set_capture(pool, *, enabled: bool, evidence_reference: str):
+async def set_capture(pool, *, enabled: bool, evidence_reference: str, workflow_kind: str = 'workspace'):
     """Trusted operator only; no API route/model parameter grants this authority."""
     if type(enabled) is not bool or not isinstance(evidence_reference, str) or not 1 <= len(evidence_reference.encode()) <= 512:
         raise ValueError('explicit bounded capture evidence required')
+    if type(workflow_kind) is not str or workflow_kind not in {'workspace', 'coding'}:
+        raise ValueError('closed workflow capture kind required')
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute('UPDATE workflow_delivery_control SET capture_enabled=$1 WHERE singleton', enabled)
-        await conn.execute('INSERT INTO workflow_delivery_audit(enabled,evidence_reference) VALUES($1,$2)',
-                           enabled, evidence_reference)
+        if workflow_kind == 'coding':
+            await conn.execute('UPDATE workflow_delivery_control SET capture_coding_enabled=$1 WHERE singleton', enabled)
+            await conn.execute("INSERT INTO workflow_delivery_audit(enabled,evidence_reference,workflow_kind) VALUES($1,$2,'coding')",
+                               enabled, evidence_reference)
+        else:
+            # This branch remains compatible with the pre-025 staged migration.
+            await conn.execute('UPDATE workflow_delivery_control SET capture_enabled=$1 WHERE singleton', enabled)
+            await conn.execute('INSERT INTO workflow_delivery_audit(enabled,evidence_reference) VALUES($1,$2)',
+                               enabled, evidence_reference)
 
 
 async def claim(pool, *, owner: str, batch_size: int = 8, lease_seconds: int = 60) -> list[Publication]:
@@ -95,7 +124,8 @@ async def claim(pool, *, owner: str, batch_size: int = 8, lease_seconds: int = 6
         await conn.execute("""UPDATE workflow_event_outbox SET state='dead_letter',failure_category='lease_expired',
             lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL
             WHERE state='leased' AND lease_expires_at<=now() AND attempts>=12""")
-        rows = await conn.fetch("""WITH ready AS (
+        coding_schema = await conn.fetchval("SELECT to_regclass('workflow_coding_event_projection') IS NOT NULL")
+        ready_sql = """WITH ready AS (
             SELECT d.event_id FROM workflow_event_outbox d JOIN workflow_event_envelopes e USING(event_id)
             WHERE ((d.state='pending' AND d.available_at<=now()) OR
                    (d.state='leased' AND d.lease_expires_at<=now())) AND d.attempts<12
@@ -107,16 +137,20 @@ async def claim(pool, *, owner: str, batch_size: int = 8, lease_seconds: int = 6
             UPDATE workflow_event_outbox d SET state='leased',attempts=attempts+1,
               lease_owner=$2,lease_token=gen_random_uuid(),lease_expires_at=now()+($3 * interval '1 second')
             FROM ready WHERE d.event_id=ready.event_id RETURNING d.event_id,d.lease_token)
-          SELECT e.*,l.lease_token FROM leased l JOIN workflow_event_envelopes e USING(event_id)""",
-                                batch_size, owner, lease_seconds)
+          SELECT e.*,l.lease_token FROM leased l JOIN workflow_event_envelopes e USING(event_id)"""
+        if coding_schema:
+            # Fixed schema branch, never model-supplied SQL/table text.
+            ready_sql = ready_sql.replace('WHERE earlier.run_id=e.run_id',
+                'WHERE earlier.workflow_kind=e.workflow_kind AND earlier.run_id=e.run_id')
+        rows = await conn.fetch(ready_sql, batch_size, owner, lease_seconds)
     result = []
     for row in rows:
         body = bytes(row['wire_bytes'])
         event = decode(body)
-        if hashlib.sha256(body).hexdigest() != row['content_sha256'] or event.event_id != row['event_id']:
+        if (hashlib.sha256(body).hexdigest() != row['content_sha256'] or event.event_id != row['event_id']
+                or ('workflow_kind' in row and event.kind != row['workflow_kind'])):
             raise EventDeliveryError('retained event identity/hash differs')
-        result.append(Publication(event.event_id, row['lease_token'], body,
-                                  (str(event.tenant_id) + ':' + str(event.run_id)).encode()))
+        result.append(Publication(event.event_id, row['lease_token'], body, partition_key(event)))
     return result
 
 
@@ -162,9 +196,15 @@ async def consume(pool, *, consumer_name: str, body: bytes, handler) -> bool:
         raise ValueError('registered consumer identity required')
     event = decode(body)
     async with pool.acquire() as conn, conn.transaction():
-        expected = await conn.fetchval('SELECT e.wire_bytes FROM workflow_event_envelopes e JOIN agent_runs r ON r.id=e.run_id '
-                                       'WHERE e.event_id=$1 AND e.tenant_id=$2 AND r.deleted_at IS NULL FOR SHARE OF e',
-                                       event.event_id, event.tenant_id)
+        if event.kind == 'coding':
+            expected = await conn.fetchval('SELECT e.wire_bytes FROM workflow_event_envelopes e JOIN coding_runs r ON r.id=e.run_id '
+                'JOIN workflow_event_tenants t ON t.tenant_id=e.tenant_id AND t.user_id=r.user_id '
+                "WHERE e.workflow_kind='coding' AND e.event_id=$1 AND e.tenant_id=$2 AND r.deleted_at IS NULL FOR SHARE OF e",
+                event.event_id, event.tenant_id)
+        else:
+            expected = await conn.fetchval('SELECT e.wire_bytes FROM workflow_event_envelopes e JOIN agent_runs r ON r.id=e.run_id '
+                'JOIN workflow_event_tenants t ON t.tenant_id=e.tenant_id AND t.user_id=r.user_id '
+                'WHERE e.event_id=$1 AND e.tenant_id=$2 AND r.deleted_at IS NULL FOR SHARE OF e', event.event_id, event.tenant_id)
         if expected is None or bytes(expected) != body:
             raise EventDeliveryError('event is unknown, changed or deleted')
         inserted = await conn.fetchval("""INSERT INTO workflow_event_inbox(consumer_name,event_id,tenant_id)

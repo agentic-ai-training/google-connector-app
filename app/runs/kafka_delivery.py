@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from app.runs.event_outbox import MAX_WIRE_BYTES, BrokerAcknowledgement, EventDeliveryError, decode
+from app.runs.event_outbox import MAX_WIRE_BYTES, BrokerAcknowledgement, EventDeliveryError, decode, partition_key
 
 
 TOPIC = 'gca.workflow.events.v1'
@@ -51,7 +51,7 @@ class KafkaDelivery:
 
     async def publish(self, *, key: bytes, body: bytes):
         event = decode(body)
-        expected_key = (str(event.tenant_id) + ':' + str(event.run_id)).encode()
+        expected_key = partition_key(event)
         if key != expected_key:
             raise EventDeliveryError('Kafka event partition identity differs')
         # send_and_wait, never fire-and-forget: DB publication follows the ACK.

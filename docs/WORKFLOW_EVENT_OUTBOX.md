@@ -1,6 +1,6 @@
 # Workflow event delivery — local implementation checkpoint
 
-Status: 22 October 2026. Migrations **023/024**, a bounded optional Kafka publisher
+Status: 22 October 2026. Migrations **023–025**, a bounded optional Kafka publisher
 and a registered SQL consumer are implemented locally. **Capture is disabled by default.** No production
 migration, broker, cloud resource, service, credential or paid dependency has been
 created or activated. This is partial Sprint 62 progress, not complete durable
@@ -32,8 +32,10 @@ proof. See [the consumer lifecycle](WORKFLOW_CONSUMER.md) for exact boundaries.
 An `AFTER INSERT` trigger on `agent_run_events` captures all existing SQL insertion
 paths without requiring each caller to remember a separate publish call. Capture
 and business writes commit or roll back together. It does not execute tools or
-become a second workflow owner. The bridge currently covers **Workspace events
-only**, not `coding_run_events` or Temporal events. There is no historical backfill.
+become a second workflow owner. The bridge now also covers `coding_run_events`
+through a separate default-off flag and explicit v2 identity; see
+[coding event integration](WORKFLOW_CODING_EVENTS.md). Temporal ownership/events
+remain unfinished. There is no historical backfill.
 
 Implementation:
 
@@ -54,6 +56,9 @@ body has a SHA-256 digest, a 16-KiB ceiling and strict schema validation. Unknow
 fields, duplicate JSON keys and naive timestamps are rejected. Envelopes cannot
 be updated. A random tenant UUID is pseudonymous, **not anonymous**: it and run IDs
 must still be access-controlled. The user-to-tenant mapping remains in PostgreSQL.
+
+Coding's v2 adds a required workflow kind without changing existing Workspace
+bytes or keys. Source IDs and per-run sequence are scoped by that kind.
 
 No message text, prompt, email address/user ID, raw tool payload, OAuth credential
 or repository body is copied to Kafka by this contract. Event type and phase are
@@ -160,7 +165,7 @@ No deployment startup command or existing worker was changed to start this proce
    approved broker: multiple members, real rebalance/offset fencing, outages,
    retention gaps, shutdown and tenant-safe observable lag/alerts. Mocked transport
    is not live evidence. No arbitrary Python handlers are model-accessible.
-4. Add coding-event capture and one explicit Temporal workflow owner per run with
+4. Live-prove the coding bridge and add one explicit Temporal workflow owner per run with
    replay, cancellation, compensation and migration rollback tests. Existing workers
    remain authoritative until that separate migration is approved and proven.
 5. Stage the database migration and capture change with baseline/fault/load tests.
@@ -173,7 +178,7 @@ not authorize extending that term or spending protected training/reserve funds.
 
 ## Reproducible local evidence
 
-The four `test_workflow_*` modules exercise real disposable loopback PostgreSQL
+The workflow and coding-event test modules exercise real disposable loopback PostgreSQL
 schemas and mocked Kafka transport. Tests cover capture-off/no-backfill, atomic
 rollback, concurrent ordering, tenant fencing, bounded pending capacity, lease
 recovery, duplicate consumer delivery, transactional handler rollback, privacy

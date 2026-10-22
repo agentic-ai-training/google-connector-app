@@ -17,6 +17,11 @@ bootstrap, manual offsets, rebalance cancellation, sanitized poison-record evide
 and exact privacy-digest tombstones. Coding-event capture, live broker/consumer proof,
 lag alerts and Temporal single-owner migration remain open. See
 [the outbox](WORKFLOW_EVENT_OUTBOX.md) and [consumer boundaries](WORKFLOW_CONSUMER.md).
+The subsequent local migration-025 checkpoint bridges existing coding events through
+the same bounded delivery plane, with a separate default-off flag, explicit v2 kind,
+collision-safe source/run identities and privacy cleanup across both business ledgers.
+Historical Workspace keys/bytes remain unchanged. This does not activate a coding
+executor or prove live Kafka/Temporal behavior; see [coding events](WORKFLOW_CODING_EVENTS.md).
 
 Status: source review complete; expansion authorized. Latest allocation approved
 2026-09-19; Delhi VM and private Coolify bootstrap verified 2026-09-20. Full target
