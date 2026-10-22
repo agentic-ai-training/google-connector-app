@@ -4287,3 +4287,68 @@ For this project, the 22 October provider read confirms the original VM stopped;
 it does not authorize a restart. See [current evidence](HOSTING_TERM_STATUS_2026_10_22.md)
 and [local scan-host implementation](RUNTIME_SCAN_HOST.md). These requirements also
 apply to deployment workers, candidates and future training-budget reservations.
+
+### Deep dictionary: transactional outbox, fenced delivery and inbox deduplication
+
+**Transactional outbox.** A database transaction stores the business event and a
+delivery-intent row together. This removes the failure gap between “commit the
+event” and “remember to publish.” It does not make the later PostgreSQL/Kafka pair
+one transaction. The publisher can lose its response after Kafka accepted a record,
+so retrying the same immutable event ID is necessary and duplicates are expected.
+This project's default-off capture trigger bridges existing Workspace SQL insert
+paths. It does not yet bridge coding events or grant workflow-execution authority.
+
+**Inbox set and atomic projection.** A unique key `(consumer_name, event_id)` is
+the durable equivalent of a set membership check. Insert that key and perform the
+trusted SQL projection in one transaction. If the projection fails, roll back both;
+otherwise a retry could be suppressed even though its work never happened. A
+unique index, rather than an in-memory set, coordinates concurrent processes and
+survives restart. Index work is typically O(log n); a single-process hash set's
+expected O(1) lookup does not provide transactionality or cross-process durability.
+
+```python
+async def project_once(conn, consumer, event_id, apply_projection):
+    async with conn.transaction():
+        inserted = await conn.fetchval(
+            "INSERT INTO inbox(consumer,event_id) VALUES($1,$2) "
+            "ON CONFLICT DO NOTHING RETURNING event_id", consumer, event_id)
+        if inserted is None:
+            return False
+        await apply_projection(conn)  # Trusted SQL only, not a Google/API write.
+        return True
+```
+
+This is teaching pseudocode. The implementation additionally checks exact retained
+envelope bytes, tenant identity and run privacy state. External writes cannot be
+made atomic by putting an inbox insert around them; they need separate idempotency
+and reconciliation. A Kafka consumer must commit its offset only after the SQL
+transaction. The project's transport consumer loop is still pending.
+
+**Fencing token / compare-and-set.** Every delivery lease has a fresh random token.
+An ACK must match both the event and the currently unexpired token. After another
+worker reclaims an expired lease, the original worker cannot mark it published.
+The lease fences database state; it cannot recall a network request already sent.
+A publisher and consumer therefore need both fencing and duplicate handling.
+
+**Per-key ordering and head-of-line blocking.** Allocate sequence numbers while
+holding the parent-run row lock. Claim only the earliest unpublished event of each
+run, while unrelated runs can progress concurrently. The Kafka key combines tenant
+and run UUID. A poison/dead-letter event intentionally blocks that run's successors
+until reconciled. More workers cannot safely remove this dependency; unreviewed
+skipping would change semantics. Changing the partition count also changes key
+placement and needs a protocol migration, not an incidental configuration edit.
+
+**Backpressure is admission policy.** Per-tenant and global counters bound pending
+intent before the transaction commits. Once capacity is exhausted, an enabled
+capture transaction fails rather than silently losing an event. This protects
+durability but can reduce business availability; measure contention and queue
+drain rate before activation. A bounded batch, semaphore and deadline constrain
+work differently from storage caps and must be evaluated together.
+
+**Pseudonymization and deletion.** Random tenant IDs hide direct email addresses
+but still identify a tenant's events. Do not call them anonymous. Soft/hard erasure
+invalidates the authoritative envelope and local inbox; old broker messages can no
+longer recreate projections. It does not instantly erase retained broker segments.
+Short retention, least-privilege access and a documented erasure boundary are all
+needed. See [the actual local contract](WORKFLOW_EVENT_OUTBOX.md) for exact limits,
+implemented code, tests and the still-unproven live-delivery/Temporal work.

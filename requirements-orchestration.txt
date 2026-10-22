@@ -1,0 +1,4 @@
+# Optional publisher process only; no implicit core/provider dependency switch.
+# Stable release verified on PyPI on 22 October 2026; do not use the 0.15 RC.
+aiokafka==0.14.0
+async-timeout==5.0.1

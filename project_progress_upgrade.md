@@ -2529,6 +2529,14 @@ changes become production evidence.
 
 - [ ] Add tenant-scoped immutable event contracts and transactional outbox; Kafka uses
   bounded partitions/retention/payloads, acknowledgements and deduplicating consumers.
+  Local 22-October checkpoint: migration 023 atomically captures Workspace events
+  only when explicitly enabled (default off). Immutable metadata envelopes, pending
+  capacity, per-run order, fenced leases, typed broker ACKs, SQL inbox transactions,
+  erasure and published-event retention are implemented. The pinned optional Kafka
+  adapter checks an existing three-partition/three-replica topic; no broker or
+  production migration was started. Real consumer offsets/rebalances, coding-event
+  capture, approved resource placement and live failure/load proof remain open.
+  See `docs/WORKFLOW_EVENT_OUTBOX.md`; this item stays unchecked.
 - [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
   ledger projections, retries, timers, signals, cancellation and compensation.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
@@ -3187,3 +3195,24 @@ Final local verification for this checkpoint: 1,785 coding tests passed without
 skips against loopback PostgreSQL (69.79 seconds), with one warning; targeted lint,
 medium/high security and whitespace checks passed. Historical clock simulation is
 test-only and is explicitly not cloud execution, current provider evidence or renewal.
+
+Progress 2026-10-22, transactional event-delivery checkpoint: added migration 023
+with opt-in Workspace capture (off by default), immutable reference-only envelopes,
+tenant/global admission counters, per-run ordering, fenced leases, bounded retry/
+dead-letter barriers, broker ACK evidence and transactional SQL inbox deduplication.
+Hard/soft erasure invalidates retained delivery references; published metadata has
+bounded retention. The optional aiokafka 0.14.0 adapter and operator-only publisher
+verify an existing fixed topic and use TLS/SASL outside loopback. No cloud broker,
+production migration, capture activation or service start occurred. Coding events,
+actual Kafka consumer/offset/rebalance behavior, capacity/failure-domain approval,
+live delivery/load proof and Temporal single-owner migration are still open.
+
+Local evidence: 1,821 coding tests passed without skips against loopback PostgreSQL
+(70.82 seconds; one existing Google SDK deprecation warning). The real disposable
+database passed upgrade-to-023, downgrade-to-002, upgrade-to-023 and full-schema
+empty-data retention integration. Offline imports/constructors were checked against
+the actual pinned SDK; mocked transport tests are not live broker proof. Targeted
+lint, medium/high security and whitespace checks passed. User-owned model/settings/
+architecture edits were preserved separately. See `docs/WORKFLOW_EVENT_OUTBOX.md`
+and the expanded teaching dictionary. The original goal and Sprint 62 remain active
+and incomplete; stopped hosting and protected budgets are unchanged.

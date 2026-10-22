@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -45,6 +46,21 @@ async def main():
         try:
             version = await probe.fetchval("SELECT version_num FROM alembic_version")
             print(f"Verified migration head: {version}", flush=True)
+            if await probe.fetchval("SELECT to_regclass('workflow_event_envelopes')") is not None:
+                from app.runs import retention
+                # Only approved retention integers, no provider/settings secrets.
+                original = retention.get_settings
+                retention.get_settings = lambda: SimpleNamespace(
+                    raw_telemetry_retention_days=14, workflow_retention_days=90,
+                )
+                try:
+                    async with asyncpg.create_pool(test_dsn, min_size=1, max_size=2) as test_pool:
+                        report = await retention.apply_retention(test_pool)
+                        if report.get('published_workflow_delivery') != 0:
+                            raise RuntimeError('empty-schema retention proof failed')
+                        print('Passed: full-schema retention integration (empty disposable data)', flush=True)
+                finally:
+                    retention.get_settings = original
         finally:
             await probe.close()
     finally:

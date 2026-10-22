@@ -8,6 +8,13 @@ live-proven. See [host launcher](RUNTIME_SCAN_HOST.md) and
 [current billing/verification requirements](HOSTING_TERM_STATUS_2026_10_22.md).
 No budget, hosting deadline, paid tier or protected allocation has been changed.
 
+**Local orchestration checkpoint, 22 October:** migration 023 now supplies an
+opt-in immutable reference-only Workspace event outbox, fenced publisher leases,
+acknowledged Kafka adapter, SQL inbox deduplication and privacy/retention hooks.
+Capture is off by default; nothing is production-migrated or started. Coding-event
+capture, the real Kafka consumer loop and Temporal single-owner migration remain
+open. See [the implementation and evidence boundaries](WORKFLOW_EVENT_OUTBOX.md).
+
 Status: source review complete; expansion authorized. Latest allocation approved
 2026-09-19; Delhi VM and private Coolify bootstrap verified 2026-09-20. Full target
 architecture remains in progress, not deployed merely because hosting is ready.

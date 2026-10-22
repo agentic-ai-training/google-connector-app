@@ -4,6 +4,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 
 from app.config.settings import get_settings
+from app.runs.event_outbox import prune_published_in_transaction
 
 
 async def apply_retention(pool) -> dict[str, int]:
@@ -36,6 +37,14 @@ async def apply_retention(pool) -> dict[str, int]:
                    VALUES($1,$2,$3,$4)""",
                 policy, table, affected, sql.split(" ", 1)[0].lower(),
             )
+        # Schema-gated for rolling compatibility with pre-023 installations.
+        if await conn.fetchval("SELECT to_regclass('workflow_event_envelopes')") is not None:
+            removed = await prune_published_in_transaction(
+                conn, retention_days=min(90, settings.workflow_retention_days),
+            )
+            report['published_workflow_delivery'] = removed
+            await conn.execute("""INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+                VALUES('published_workflow_delivery','workflow_event_envelopes',$1,'delete')""", removed)
     return report
 
 
