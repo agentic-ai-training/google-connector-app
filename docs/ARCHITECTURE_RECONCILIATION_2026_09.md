@@ -11,9 +11,12 @@ No budget, hosting deadline, paid tier or protected allocation has been changed.
 **Local orchestration checkpoint, 22 October:** migration 023 now supplies an
 opt-in immutable reference-only Workspace event outbox, fenced publisher leases,
 acknowledged Kafka adapter, SQL inbox deduplication and privacy/retention hooks.
-Capture is off by default; nothing is production-migrated or started. Coding-event
-capture, the real Kafka consumer loop and Temporal single-owner migration remain
-open. See [the implementation and evidence boundaries](WORKFLOW_EVENT_OUTBOX.md).
+Capture is off by default; nothing is production-migrated or started. A subsequent
+local migration-024 checkpoint adds the registered SQL consumer, explicit new-group
+bootstrap, manual offsets, rebalance cancellation, sanitized poison-record evidence
+and exact privacy-digest tombstones. Coding-event capture, live broker/consumer proof,
+lag alerts and Temporal single-owner migration remain open. See
+[the outbox](WORKFLOW_EVENT_OUTBOX.md) and [consumer boundaries](WORKFLOW_CONSUMER.md).
 
 Status: source review complete; expansion authorized. Latest allocation approved
 2026-09-19; Delhi VM and private Coolify bootstrap verified 2026-09-20. Full target

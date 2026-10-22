@@ -2534,8 +2534,11 @@ changes become production evidence.
   capacity, per-run order, fenced leases, typed broker ACKs, SQL inbox transactions,
   erasure and published-event retention are implemented. The pinned optional Kafka
   adapter checks an existing three-partition/three-replica topic; no broker or
-  production migration was started. Real consumer offsets/rebalances, coding-event
-  capture, approved resource placement and live failure/load proof remain open.
+  production migration was started. The subsequent local migration-024 consumer
+  checkpoint implements manual offsets, explicit new-group bootstrap, rebalance
+  cancellation, SQL projections and exact-digest erasure handling. Coding-event
+  capture, real broker/rebalance/lag proof, approved resource placement and live
+  failure/load proof remain open.
   See `docs/WORKFLOW_EVENT_OUTBOX.md`; this item stays unchecked.
 - [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
   ledger projections, retries, timers, signals, cancellation and compensation.
@@ -3216,3 +3219,24 @@ lint, medium/high security and whitespace checks passed. User-owned model/settin
 architecture edits were preserved separately. See `docs/WORKFLOW_EVENT_OUTBOX.md`
 and the expanded teaching dictionary. The original goal and Sprint 62 remain active
 and incomplete; stopped hosting and protected budgets are unchanged.
+
+Progress 2026-10-22, bounded SQL consumer checkpoint: migration 024 adds the
+registered event-visibility projection, exact short-lived erasure-digest tombstones
+and a capped sanitized poison-record ledger. The operator-started Kafka consumer
+uses manual partition offsets after committed SQL, explicit missing-group bootstrap,
+assignment epochs/cancellation and fail-closed unknown/modified records. It never
+executes Google/deployment tools or chooses workflow ownership. A lost broker commit
+response safely replays through the inbox; a rebalance-crossing fetched batch stops
+instead of silently skipping uncommitted work. SIGTERM leaves unprocessed records
+uncommitted. Topic profile now also bounds segment-roll time to one hour.
+
+Verification: 1,851 coding tests passed without skips against loopback PostgreSQL
+(71.32 seconds, one existing SDK deprecation warning), including real SQL rollback
+during simulated rebalance and duplicate suppression after simulated ACK loss.
+The real pinned SDK consumer constructor/listener accepted the exact options offline;
+it was not started. Disposable full-schema upgrade-to-024/downgrade-to-002/upgrade-
+to-024 and retention checks passed. No production migration, broker, consumer service,
+capture activation, model/provider call, VM restart or budget change occurred.
+Live multi-member broker/rebalance/load/lag evidence, coding-event capture, Temporal
+single-owner migration and the remainder of the full original goal remain open.
+See `docs/WORKFLOW_CONSUMER.md`, architecture reconciliation and teaching dictionary.

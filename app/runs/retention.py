@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from app.config.settings import get_settings
 from app.runs.event_outbox import prune_published_in_transaction
+from app.runs.workflow_projection import prune_diagnostics
 
 
 async def apply_retention(pool) -> dict[str, int]:
@@ -45,6 +46,11 @@ async def apply_retention(pool) -> dict[str, int]:
             report['published_workflow_delivery'] = removed
             await conn.execute("""INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
                 VALUES('published_workflow_delivery','workflow_event_envelopes',$1,'delete')""", removed)
+        if await conn.fetchval("SELECT to_regclass('workflow_event_revocations')") is not None:
+            for policy, removed in (await prune_diagnostics(conn)).items():
+                report[policy] = removed
+                await conn.execute("""INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+                    VALUES($1,$2,$3,'delete')""", policy, policy.replace('workflow_revocations', 'workflow_event_revocations'), removed)
     return report
 
 

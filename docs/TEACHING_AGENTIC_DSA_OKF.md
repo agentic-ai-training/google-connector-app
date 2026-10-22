@@ -4352,3 +4352,51 @@ longer recreate projections. It does not instantly erase retained broker segment
 Short retention, least-privilege access and a documented erasure boundary are all
 needed. See [the actual local contract](WORKFLOW_EVENT_OUTBOX.md) for exact limits,
 implemented code, tests and the still-unproven live-delivery/Temporal work.
+### Deep dictionary: consumer positions, rebalance epochs and erasure tombstones
+
+**Fetched position versus committed offset.** A consumer may fetch eight records
+and advance its in-memory position while none of their SQL work is durable. Never
+commit that whole fetched position after processing only the first record. Commit
+the specific partition's processed offset plus one. Kafka offsets can have gaps,
+so monotonic order does not imply every integer is a visible record. A lost commit
+response means uncertainty; replay through the SQL inbox, not repeated external work.
+
+**Rebalance epoch.** Membership changes invalidate local assumptions about who
+owns a partition. A per-assignment token detects a stale fetched batch or task.
+Do not take a lock around `getmany` that the SDK's rebalance callback also needs:
+the fetch can wait for the callback while the callback waits for that same lock.
+The implemented callback cancels old SQL work without speculative offset commits.
+A batch that crosses reassignment stops instead of continuing from an advanced
+fetch position. Kafka group fencing and transactional inbox deduplication are still
+required; a local token is not a distributed consensus algorithm.
+
+**Poison record.** A malformed or unverifiable record is not an ordinary temporary
+network failure. The consumer stores bounded location/digest/category evidence and
+stops without committing past it. A retry counter is diagnostic, not permission to
+skip a record or call an LLM repeatedly. Repair/review and explicit restart preserve
+the distinction between operational recovery and silently abandoning an event.
+
+**Erasure tombstone.** Removing a private source while its broker record survives
+creates a referential gap. An exact short-lived digest proves those specific bytes
+were deliberately invalidated. The consumer can acknowledge them without rebuilding
+data. Unknown bytes do not inherit that disposition. Tombstones are still linkable
+metadata and need ACLs/retention; broker segment deletion and application TTL are
+different mechanisms and clocks. An expired proof cannot authorize a skip.
+
+**Projection versus source of truth.** A last-event view is a materialized reduction,
+not proof of completed business work. A monotone `max(sequence)` avoids an older
+event replacing a newer view, while an inbox prevents duplicate count increments.
+Retention and capture start bound the count's meaning. Do not convert “last phase
+was completed” directly into verified artifact success or 100% task completion.
+
+```mermaid
+flowchart LR
+    B[Bounded fetched batch] --> V[Check assignment and authoritative bytes]
+    V --> T[SQL inbox plus registered projection]
+    T --> K[Commit exact partition offset plus one]
+    K -->|Lost response| R[Replay through durable deduplication]
+    V -->|Poison or stale owner| S[Stop; preserve uncommitted position]
+```
+
+See [the implemented consumer and test evidence](WORKFLOW_CONSUMER.md). This remains
+local/default-off and does not complete live Kafka, coding events or Temporal.

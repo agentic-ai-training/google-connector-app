@@ -12,7 +12,7 @@ from app.runs.event_outbox import MAX_WIRE_BYTES, BrokerAcknowledgement, EventDe
 TOPIC = 'gca.workflow.events.v1'
 TOPIC_LIMITS = {'cleanup.policy': 'delete', 'retention.ms': '86400000',
                 'retention.bytes': '67108864', 'segment.bytes': '16777216',
-                'max.message.bytes': '24576', 'min.insync.replicas': '2'}
+                'segment.ms': '3600000', 'max.message.bytes': '24576', 'min.insync.replicas': '2'}
 
 
 class KafkaDeliveryConfig(BaseModel):

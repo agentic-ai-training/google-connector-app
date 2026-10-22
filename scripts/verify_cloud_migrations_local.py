@@ -56,7 +56,10 @@ async def main():
                 try:
                     async with asyncpg.create_pool(test_dsn, min_size=1, max_size=2) as test_pool:
                         report = await retention.apply_retention(test_pool)
-                        if report.get('published_workflow_delivery') != 0:
+                        policies = ['published_workflow_delivery']
+                        if await probe.fetchval("SELECT to_regclass('workflow_event_revocations')") is not None:
+                            policies.extend(['workflow_revocations', 'workflow_consumer_failures'])
+                        if any(report.get(policy) != 0 for policy in policies):
                             raise RuntimeError('empty-schema retention proof failed')
                         print('Passed: full-schema retention integration (empty disposable data)', flush=True)
                 finally:

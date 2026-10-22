@@ -76,6 +76,12 @@ mandatory identity verification for India billing addresses and possible suspens
 if incomplete. Exact required documents depend on the existing legal profile.
 [Official verification instructions](https://docs.cloud.google.com/billing/docs/how-to/create-billing-account).
 
+The operator subsequently says the verification deadline is after the free trial
+ends. That exact deadline has not been independently read, and the banner is not
+being treated as a current suspension. There is no immediate verification task
+blocking local work. The separate expired hosting authority still prevents restart;
+verification timing does not renew it or reallocate protected funds.
+
 1. Open [this billing account overview](https://console.cloud.google.com/billing/01C9EC-FBE657-88466A/overview).
 2. Sign in as its actual billing administrator and follow the verification banner.
 3. Submit requested personal/legal documents **only to Google**, never in chat or Git.

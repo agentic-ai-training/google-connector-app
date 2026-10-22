@@ -1,7 +1,7 @@
 # Workflow event delivery — local implementation checkpoint
 
-Status: 22 October 2026. Migration **023** and a bounded optional Kafka publisher
-are implemented locally. **Capture is disabled by default.** No production
+Status: 22 October 2026. Migrations **023/024**, a bounded optional Kafka publisher
+and a registered SQL consumer are implemented locally. **Capture is disabled by default.** No production
 migration, broker, cloud resource, service, credential or paid dependency has been
 created or activated. This is partial Sprint 62 progress, not complete durable
 orchestration or live delivery proof.
@@ -20,13 +20,14 @@ flowchart TD
     L --> K[Pre-existing bounded Kafka topic]
     K --> A[Actual broker ACK metadata]
     A --> P[Mark published and release pending capacity]
-    K -. future consumer loop .-> C[Registered SQL projection]
+    K --> C[Registered SQL projection]
     C --> I[Projection and inbox deduplication in one DB transaction]
 ```
 
 The diagram's Kafka connection is an implemented adapter, **not an observation of
-a running broker**. The SQL consumer primitive exists; a Kafka consumer process,
-partition assignment/rebalance handling and manual offset-commit loop do not yet.
+a running broker**. The subsequent local consumer checkpoint implements a bounded
+process, assignment/rebalance handling and manual offset commits, not live broker
+proof. See [the consumer lifecycle](WORKFLOW_CONSUMER.md) for exact boundaries.
 
 An `AFTER INSERT` trigger on `agent_run_events` captures all existing SQL insertion
 paths without requiring each caller to remember a separate publish call. Capture
@@ -63,7 +64,8 @@ possession of a Kafka reference does not grant access to it.
 Hard run deletion and the first soft-erasure transition remove envelopes, outbox
 and inbox entries. The private tenant mapping is removed after its final live run
 is erased. Old broker records are not recreated or executed: consumers require an
-exact surviving database envelope. Erasure cannot recall bytes already delivered
+exact surviving database envelope or an exact short-lived erasure digest (which
+can acknowledge an erased record without recreating it). Erasure cannot recall bytes already delivered
 to Kafka; its short broker retention and restricted access remain necessary.
 The retention job prunes at most 500 expired **published** envelopes per pass,
 within the configured workflow window capped at 90 days. It never silently purges
@@ -111,6 +113,7 @@ alter topics. The required profile is:
 | `retention.ms` | `86400000` (24 hours) |
 | `retention.bytes` | `67108864` per partition |
 | `segment.bytes` | `16777216` |
+| `segment.ms` | `3600000` (one-hour segment roll) |
 | `max.message.bytes` | `24576` |
 | `min.insync.replicas` | `2` |
 
@@ -153,9 +156,10 @@ No deployment startup command or existing worker was changed to start this proce
    fixed topic and disable broker automatic topic creation.
 2. Approve resource placement, cost, retention and failure-domain policy, then prove
    real broker configuration, ACK loss, restart, partition outage and backpressure.
-3. Implement the trusted consumer loop with manual offset commits **after** the SQL
-   transaction, rebalance/cancellation handling, bounded poison-record policy and
-   tenant-safe observable lag. Do not expose arbitrary Python handlers to models.
+3. Prove the implemented [consumer loop](WORKFLOW_CONSUMER.md) against an actual
+   approved broker: multiple members, real rebalance/offset fencing, outages,
+   retention gaps, shutdown and tenant-safe observable lag/alerts. Mocked transport
+   is not live evidence. No arbitrary Python handlers are model-accessible.
 4. Add coding-event capture and one explicit Temporal workflow owner per run with
    replay, cancellation, compensation and migration rollback tests. Existing workers
    remain authoritative until that separate migration is approved and proven.
@@ -169,13 +173,13 @@ not authorize extending that term or spending protected training/reserve funds.
 
 ## Reproducible local evidence
 
-The two `test_workflow_*` modules exercise real disposable loopback PostgreSQL
+The four `test_workflow_*` modules exercise real disposable loopback PostgreSQL
 schemas and mocked Kafka transport. Tests cover capture-off/no-backfill, atomic
 rollback, concurrent ordering, tenant fencing, bounded pending capacity, lease
 recovery, duplicate consumer delivery, transactional handler rollback, privacy
 erasure, old-record rejection, dead-letter barriers and downgrade refusal.
 `scripts.verify_cloud_migrations_local` independently proves upgrade to head,
-downgrade to 002, upgrade back to 023 and an empty full-schema retention call in
+downgrade to 002, upgrade back to the current head and an empty full-schema retention call in
 a database created and dropped solely by that invocation. It never drops or
 migrates the supplied source database. Full-suite results are recorded separately
 in the project progress log; local fixtures do not replace live rollout proof.
