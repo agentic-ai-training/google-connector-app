@@ -18,6 +18,9 @@ from tests.coding.test_toolchain_archive import fixture, archive
 
 @pytest.fixture
 def target(monkeypatch):
+    # Positive custody scenarios model the original approved term; expiry stays
+    # enforced in production and is not extended to the date this suite runs.
+    monkeypatch.setattr(host.time, 'time', lambda: 1791889200.0)
     with tempfile.TemporaryDirectory(prefix=".gca-op-host-test-", dir=Path.home()) as name:
         root = Path(name)
         state = root / "state"

@@ -13,6 +13,12 @@ import pytest
 from app.coding import runtime_scan_worker as worker
 
 
+@pytest.fixture(autouse=True)
+def historical_scan_clock(monkeypatch):
+    # Positive fixtures model the approved 13-Oct window, not renewed hosting.
+    monkeypatch.setattr(time, 'time', lambda: 1791889200.0)
+
+
 def binding(stage='inventory'):
     return {'version': 1, 'scan_id': str(uuid4()), 'role': 'nginx_static_v1', 'stage': stage,
             'image_id': 'sha256:6b1f85a08c199d29d5b6d71ab9c27bd5b3b393492e01216a15758ff69c4be8b8',
@@ -280,3 +286,10 @@ def test_process_limits_do_not_try_to_expand_container_hard_limits(monkeypatch):
     assert applied[worker.resource.RLIMIT_NOFILE] == (64, 64)
     assert applied[worker.resource.RLIMIT_FSIZE] == (worker.MAX_DATA, worker.MAX_DATA)
     assert applied[worker.resource.RLIMIT_CPU] == (220, 221)
+
+
+def test_expired_host_term_rejects_readiness_even_with_matching_proof(monkeypatch):
+    monkeypatch.setattr(time, 'time', lambda: 1792430673.0)
+    value = binding()
+    with pytest.raises(worker.ScanWorkerError, match='binding'):
+        worker.verify_readiness(value, readiness(value))

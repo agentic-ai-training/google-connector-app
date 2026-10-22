@@ -18,6 +18,8 @@ READ_REGISTRY = restore.registry_record
 
 @pytest.fixture
 def target(tmp_path, monkeypatch):
+    # The positive lifecycle is historical, not a grant to load after host STOP.
+    monkeypatch.setattr(restore.time, 'time', lambda: 1791889200.0)
     state = tmp_path / 'journal'
     state.mkdir(mode=0o700)
     archive = tmp_path / (restore.IMAGE.removeprefix('sha256:') + '.tar')

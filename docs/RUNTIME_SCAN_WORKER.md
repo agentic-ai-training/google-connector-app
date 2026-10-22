@@ -1,6 +1,10 @@
 # Fixed keyless runtime-scan worker — 13 October 2026
 
 This is local worker implementation, not a completed live scan or runtime approval.
+The host-side implementation has subsequently been added locally; see
+[host dispatch/recovery and remaining live gates](RUNTIME_SCAN_HOST.md). As of
+22 October, the VM is stopped and the old hosting term has ended. Nothing in these
+local implementations authorizes extending that term or reusing stale databases.
 It advances the existing two-stage scan contract in
 [the durable journal](RUNTIME_SCAN_JOURNAL.md). The current VM source snapshot remains
 `0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49`:

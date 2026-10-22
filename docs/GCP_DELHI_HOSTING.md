@@ -1,5 +1,17 @@
 # Delhi generated-application host — approved provisioning runbook
 
+## Current state — 22 October 2026: approved term ended
+
+Read-only Compute Engine inspection confirms the exact existing VM is TERMINATED,
+with last stop timestamp 19 October 17:25:32.869 UTC. The approved deadline was
+19 October 17:24:32 UTC and has not been extended. The retained 100-GiB balanced
+disk remains; no reserved addresses or snapshots were returned. Earlier running/
+container-health statements below are historical, not present availability.
+User-reported credit is now ₹16,375.42, and the billing UI requests administrator
+verification. No restart, deletion, billing upgrade, new source installation or
+protected-budget transfer occurred. See
+[current state, billing provenance and required actions](HOSTING_TERM_STATUS_2026_10_22.md).
+
 ## Latest runtime-candidate checkpoint — 13 October 2026
 
 Source closure snapshot is

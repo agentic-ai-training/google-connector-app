@@ -1,5 +1,13 @@
 # September architecture reconciliation and implementation contract
 
+**Current hosting status, 22 October:** the approved term has ended and the exact
+Delhi VM is independently confirmed TERMINATED. Historical hosting/health proofs
+below do not establish current availability. Local fixed scanner host dispatch,
+native-proof binding and output recovery are implemented but not VM-installed or
+live-proven. See [host launcher](RUNTIME_SCAN_HOST.md) and
+[current billing/verification requirements](HOSTING_TERM_STATUS_2026_10_22.md).
+No budget, hosting deadline, paid tier or protected allocation has been changed.
+
 Status: source review complete; expansion authorized. Latest allocation approved
 2026-09-19; Delhi VM and private Coolify bootstrap verified 2026-09-20. Full target
 architecture remains in progress, not deployed merely because hosting is ready.

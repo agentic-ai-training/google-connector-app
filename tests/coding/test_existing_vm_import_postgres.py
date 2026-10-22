@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import importlib
 import os
+import sys
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -15,6 +16,23 @@ from app.coding import cost_ledger as ledger
 from app.coding import deployment_admission as deploy, host_capacity
 from app.coding.gce_identity import GCEIdentityError, VerifiedExistingVM
 from app.coding.cloud_budget import CloudCostRequest
+
+
+class HistoricalDateTime(datetime):
+    """Explicit simulation of the original approved term, never provider evidence."""
+    @classmethod
+    def now(cls, tz=None):
+        value = cls(2026, 10, 13, 11, tzinfo=timezone.utc)
+        return value.astimezone(tz) if tz is not None else value.replace(tzinfo=None)
+
+
+@pytest.fixture(autouse=True)
+def historical_business_clock(monkeypatch):
+    # Application and disposable-schema SQL clocks agree. Do not change the
+    # PostgreSQL server clock, production deadlines or any non-test schema.
+    monkeypatch.setattr(sys.modules[__name__], 'datetime', HistoricalDateTime)
+    for module in (ledger, deploy, host_capacity):
+        monkeypatch.setattr(module, 'datetime', HistoricalDateTime)
 
 
 @pytest_asyncio.fixture
@@ -31,10 +49,13 @@ async def virgin():
     try:
         await conn.execute(f'CREATE SCHEMA "{schema}"')
         migration = importlib.import_module("migrations.versions.016_cloud_cost_ledger")
-        await conn.execute(f'SET search_path TO "{schema}"')
+        await conn.execute(f'SET search_path TO "{schema}",pg_catalog')
+        await conn.execute(f'''CREATE FUNCTION "{schema}".now() RETURNS timestamptz
+            LANGUAGE SQL STABLE AS $$ SELECT TIMESTAMPTZ '2026-10-13 11:00:00+00' $$''')
         await conn.execute(migration.SCHEMA_SQL)
         pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10,
-                                         server_settings={"search_path": schema})
+                                         server_settings={"search_path": schema + ',pg_catalog'})
+        assert await pool.fetchval('SELECT now()') == HistoricalDateTime.now(timezone.utc)
         yield pool
     finally:
         if pool:
@@ -73,6 +94,14 @@ def test_exact_trial_total_is_required_not_earlier_rounded_figure():
         ledger.ExistingDelhiVM.model_validate({
             **item.model_dump(), "remaining_trial_credit_paise": 2_869_389,
         })
+
+
+def test_fresh_credit_does_not_extend_an_expired_vm_term(monkeypatch):
+    now = HistoricalDateTime(2026, 10, 22, 6, tzinfo=timezone.utc)
+    item = evidence().model_copy(update={'observed_at': now, 'credit_observed_at': now, 'charge_observed_at': now})
+    monkeypatch.setattr(ledger, '_now', lambda: now)
+    with pytest.raises(ledger.CostAdmissionDenied, match='current evidence'):
+        ledger._import_preflight(item)
 
 
 @pytest.fixture(autouse=True)

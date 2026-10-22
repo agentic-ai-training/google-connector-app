@@ -265,7 +265,11 @@ def _jobs_root(journal):
         _sync(journal.directory)
     _protected(directory, private=True, directory=True)
     children = list(directory.iterdir())
-    if len(children) >= MAX_JOB_DIRECTORIES:
+    scan_root = journal.directory / 'runtime-scan-jobs'
+    if scan_root.exists():
+        _protected(scan_root, private=True, directory=True)
+    scan_count = len(list(scan_root.iterdir())) if scan_root.exists() else 0
+    if len(children) + scan_count >= MAX_JOB_DIRECTORIES:
         raise PackagingHostError("packaging staging capacity exhausted")
     for child in children:
         _protected(child, private=True, directory=True)
@@ -540,12 +544,17 @@ def require_native_cleanup(container_id):
         raise PackagingHostError("native container resource group remains populated")
 
 
-def verify_native_worker(spec, binding):
+def verify_native_worker(spec, binding, *, deadline_field="execution_deadline_unix"):
     """Observe the live native kernel, not the guest's emulated /proc/cgroup.
 
     Fixed systemd topology only. Different runtime/driver layouts need an operator
     profile and real proof; they are never accepted via a guessed path or JSON flag.
     """
+    # Scanner and packaging use different closed frame schemas. Preserve the
+    # original binding fingerprint; do not add a deadline alias to the frame.
+    if (deadline_field not in {"execution_deadline_unix", "deadline"}
+            or type(binding.get(deadline_field)) is not int):
+        raise PackagingHostError("native readiness deadline schema differs")
     container_id = spec.get("Id")
     state = spec.get("State", {})
     pid = state.get("Pid")
@@ -607,7 +616,7 @@ def verify_native_worker(spec, binding):
         if _start_ticks(pid) != initial or poller.poll(0):
             raise NativeObservationChanged("native process identity expired during observation")
         now = int(time.time())
-        if now >= binding["execution_deadline_unix"]:
+        if now >= binding[deadline_field]:
             raise PackagingHostError("native readiness authority expired")
         return dict(version=2, runtime="runsc", native_profile=NATIVE_PROFILE,
                     binding_hash=hashlib.sha256(oci.canonical(binding)).hexdigest(),
@@ -617,7 +626,7 @@ def verify_native_worker(spec, binding):
                     aggregate_cpu_quota=parent_quota, aggregate_cpu_period=parent_period,
                     aggregate_tasks_max=parent_tasks, native_seccomp=2, native_cap_eff=0x8001F,
                     native_no_new_privs=1, helper_pids=sorted(helpers), observed_at_unix=now,
-                    expires_at_unix=binding["execution_deadline_unix"])
+                    expires_at_unix=binding[deadline_field])
     except (OSError, ValueError, KeyError, IndexError) as error:
         raise PackagingHostError("native enforcement evidence unavailable") from error
     finally:

@@ -4248,3 +4248,42 @@ package coverage, exact output custody, native cleanup and runtime approval are
 different facts. A nonempty report or zero findings alone cannot prove all of them.
 For vendor Java binaries, OS package coverage also does not prove JRE coverage.
 See [the implemented worker contract](RUNTIME_SCAN_WORKER.md) for those boundaries.
+
+### Deep dictionary: write-ahead dispatch, clock domains and authority expiry
+
+**Write-ahead dispatch boundary.** Persist `scan_create_attempted` before the
+external Docker RPC. A crash with no such event can reconcile a preparation-only
+attempt through the trusted cleanup path; an event without an exact create result
+is ambiguous and must not be replayed. The immutable business key survives both.
+An event is not evidence that the remote action succeeded. This is an outbox-like
+ordering guarantee: durable intent precedes an external effect, and reconciliation
+bridges the gap when atomic transactions across SQLite and Docker do not exist.
+
+**Clock domains.** Wall time answers whether a grant or hosting term is still valid.
+Monotonic time measures bounded execution duration despite wall-clock adjustments.
+PostgreSQL `now()` is another clock domain used by authorization queries. Tests
+that simulate a historical grant must give application and disposable-schema SQL
+the same explicit logical time; otherwise they fail as the real calendar advances.
+This is not permission to freeze production clocks, move STOP, backdate evidence
+or replace a real billing observation. Negative tests must independently cross the
+expiry boundary and verify that no new host/source access occurs.
+
+**State, authority and evidence are separate.** A VM can be stopped while its disk
+still exists and incurs charges. A positive trial balance does not renew an expired
+hosting grant. A valid historical native proof does not establish present container
+health. Model these as separate fields/predicates rather than one `ready` boolean.
+
+```mermaid
+flowchart LR
+    V[Current provider resource observation] --> G{Current authority and capacity?}
+    B[Fresh attributable billing evidence] --> G
+    H[Human-approved term and ceiling] --> G
+    G -->|No| P[No dispatch; preserve state and continue local work]
+    G -->|Yes| D[Durable intent then bounded provider action]
+    D --> R[Independent postconditions and reconciliation]
+```
+
+For this project, the 22 October provider read confirms the original VM stopped;
+it does not authorize a restart. See [current evidence](HOSTING_TERM_STATUS_2026_10_22.md)
+and [local scan-host implementation](RUNTIME_SCAN_HOST.md). These requirements also
+apply to deployment workers, candidates and future training-budget reservations.

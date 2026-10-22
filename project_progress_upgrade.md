@@ -3160,3 +3160,30 @@ See `docs/RUNTIME_SCAN_WORKER.md` and teaching dictionary. Separately, the opera
 reports 17407's Railway trial expired; actual preserved-token readback of 17408 shows
 mixed HOBBY/trial labels, not verified remaining credit. No paid restart or additional
 personal trial account was created. Core Railway funding/eligibility remains pending.
+
+Progress 2026-10-22, resumed host-launcher implementation and expired-term checks:
+the fixed local scanner host now stages pinned inputs into one private cache under
+the existing shared eight-volume allowance, inspects exact container/native limits,
+preserves the original proof binding, persists a write-ahead create boundary, and
+reconciles cleanup/output custody without replay. A lost response can recover the
+same retained report; unknown creates/helpers remain uncertain. No public/model
+shell surface or runtime approval was added. Expired authority is rejected before
+host admission, image lookup or input reads. Positive historical fixtures now use
+explicit logical clocks; new negative tests verify that fresh credit/proofs cannot
+extend the fixed term. Production STOP/pins remain unchanged.
+
+Independent read-only GCE checks confirm the exact VM is TERMINATED, last stop
+19 October 17:25:32.869 UTC, with one retained 100-GiB balanced disk and no reserved
+addresses or snapshots returned. The last VM source remains the historical 13-Oct
+snapshot; the new host module is local/uninstalled. The operator now reports
+₹16,375.42 credit and an administrator-verification banner. ₹1,875.42 above protected
+Vertex/reserve allocations is not restart authority or guaranteed available funds.
+No restart, SSH, deletion, source installation, new resource, paid-tier activation,
+model call or protected-budget transfer occurred. Current finance provenance/actions
+are in `docs/HOSTING_TERM_STATUS_2026_10_22.md`; local integration and outstanding
+live proof are in `docs/RUNTIME_SCAN_HOST.md`. Full original/60–68 goal remains active
+and incomplete; live work needs verified eligibility and separately approved renewal.
+Final local verification for this checkpoint: 1,785 coding tests passed without
+skips against loopback PostgreSQL (69.79 seconds), with one warning; targeted lint,
+medium/high security and whitespace checks passed. Historical clock simulation is
+test-only and is explicitly not cloud execution, current provider evidence or renewal.

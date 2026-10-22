@@ -10,6 +10,15 @@ import pytest
 from app.coding import isolated_validation as runner
 
 
+@pytest.fixture(autouse=True)
+def historical_fixed_scan_window(request, monkeypatch):
+    # Only fixed-term scan scenarios use this clock. Other journal/process tests
+    # keep their real clocks; no runtime deadline or production STOP is changed.
+    name = request.node.name
+    if name.startswith(('test_scan_', 'test_assessment_')) or name == 'test_expired_unknown_scan_creation_keeps_slot_uncertain':
+        monkeypatch.setattr(time, 'time', lambda: 1791889200.0)
+
+
 IMAGE = "sha256:" + "a" * 64
 CID = "b" * 64
 

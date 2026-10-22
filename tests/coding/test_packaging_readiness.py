@@ -164,6 +164,20 @@ def test_native_proof_requires_live_pid_and_actual_host_limits(context, kernel):
     assert proof == {**proof_for(context[-1]), 'observed_at_unix': proof['observed_at_unix']}
 
 
+def test_scan_deadline_does_not_change_original_binding_hash(kernel):
+    binding = {'deadline': int(time.time()) + 180, 'scan_id': 'synthetic-test-only'}
+    proof = host.verify_native_worker(kernel[1], binding, deadline_field='deadline')
+    assert proof['binding_hash'] == host.hashlib.sha256(oci.canonical(binding)).hexdigest()
+    assert proof['expires_at_unix'] == binding['deadline']
+    assert 'execution_deadline_unix' not in binding
+
+
+@pytest.mark.parametrize('field', ['model_deadline', '__dict__'])
+def test_arbitrary_native_deadline_schema_is_rejected(kernel, field):
+    with pytest.raises(host.PackagingHostError, match='deadline schema'):
+        host.verify_native_worker(kernel[1], {field: int(time.time()) + 180}, deadline_field=field)
+
+
 @pytest.mark.parametrize('case', ['dead', 'wrong_group', 'no_filter', 'swap', 'cpu', 'helper_outside', 'pid_reuse'])
 def test_native_kernel_mismatch_cannot_publish_readiness(context, kernel, monkeypatch, case):
     values, spec, identity = kernel
