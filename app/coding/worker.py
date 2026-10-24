@@ -56,16 +56,19 @@ async def _claim(pool):
     executor = settings.executor_version or settings.deployment_version
     owner = f"coding:{os.getpid()}:{time.time_ns()}"
     async with pool.acquire() as conn, conn.transaction():
+        from app.runs.workflow_ownership import postgres_claim_predicate
+        ownership = await postgres_claim_predicate(conn)
         row = await conn.fetchrow(
             """SELECT * FROM coding_runs
                WHERE executor_version=$1 AND deleted_at IS NULL AND available_at<=now()
+                 AND __WORKFLOW_OWNER__
                  AND (status IN ('queued','approved') OR
                       (status IN ('planning','executing','ci_running')
                        AND lease_expires_at<now()) OR
                       (status='published' AND NOT EXISTS (
                          SELECT 1 FROM candidate_builds b WHERE b.coding_run_id=coding_runs.id
                       )))
-               ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1""",
+               ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1""".replace('__WORKFLOW_OWNER__', ownership),
             executor,
         )
         if not row:
@@ -721,6 +724,8 @@ async def process_one_coding_run(pool) -> bool:
     row = await _claim(pool)
     if not row:
         return False
+    from app.runs.workflow_ownership import require_postgres_lease
+    await require_postgres_lease(pool, 'coding', row)
     stop = asyncio.Event()
     heartbeat = asyncio.create_task(
         _heartbeat(pool, str(row["id"]), row["lease_owner"], stop)

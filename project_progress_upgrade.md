@@ -2546,6 +2546,13 @@ changes become production evidence.
   ledger projections, retries, timers, signals, cancellation and compensation.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
+  Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
+  default-off scoped/expiring Temporal admission constraints and old-worker lease
+  rejection. Both real PostgreSQL claimers filter owner and both entrypoints recheck
+  live tenant/version/lease before credentials. Rollback disables new admission,
+  never transfers an existing run, and downgrade refuses retained Temporal rows.
+  Temporal dispatch/workflows/activities/replay and live migration remain open;
+  this item stays unchecked. See `docs/WORKFLOW_OWNERSHIP.md`.
 - [ ] Add per-user/app/global capacity admission, fair queuing, model quotas and
   backpressure. Load-test rather than claim unlimited asynchronous users.
 - [ ] Integrate CrewAI bounded role collaboration and existing LangGraph domain behavior
@@ -3287,3 +3294,21 @@ async plugin and was stopped; its errors are not passing application evidence. S
 real-engine proof, production start, migration, provider call or VM restart is
 claimed. Cache-only cleanup restored about 4 GiB free; large builds remain deferred.
 Temporal ownership and all outstanding original/60–68 acceptance remain open.
+
+Progress 2026-10-24, single-owner migration foundation: migration 026 now pins each
+Workspace/coding run to one owner and a typed Temporal identity/version binding.
+Admission stays off; current intake remains PostgreSQL. Actual existing worker
+claim queries exclude Temporal rows, DB triggers reject old-worker leases, and
+entrypoint fencing occurs before Google/provider access. Disabling admission cannot
+move in-flight work back to PostgreSQL. Scoped policy audit survives downgrade;
+schema rollback refuses retained Temporal history. Eighteen focused tests pass on
+local disposable PostgreSQL schemas. See `docs/WORKFLOW_OWNERSHIP.md` for exact
+evidence and limitations. Temporal dispatch, deterministic workflows/activities,
+replay/recovery/signals and real migration proof remain unfinished, not replaced by
+this metadata fence. No live migration, worker/service start, cloud/model call,
+VM restart or budget transfer occurred. The full original goal remains active.
+Final owner-fence checkpoint: 1,893 coding tests passed without skips in 54.09
+seconds (one existing Google SDK deprecation warning). Disposable full-schema
+upgrade-to-026/downgrade-to-002/upgrade-to-026 and empty-data retention passed;
+targeted lint/security/whitespace checks passed. These are local proofs, not
+Temporal server replay, real broker operation or live rollout evidence.

@@ -4473,3 +4473,48 @@ registry config or Git global settings without naming them in its arguments. A
 minimal environment, empty config and pinned local daemon remove these implicit
 edges. This is defense in depth, not an OS sandbox or a content-secret scanner.
 See [the exact implemented context audit](DEPLOYMENT_CONTEXT_BOUNDARY.md).
+
+### Deep dictionary: orchestration ownership, fences and rollback
+
+**Single owner versus exactly-once effect.** A run belongs to one durable scheduler.
+That prevents two competing control loops but does not make a Google send exactly
+once. A network response can still be lost after a successful write. Tool-specific
+idempotency, artifact lookup and uncertain-write reconciliation remain necessary.
+
+**Immutable binding.** Treat owner, workflow identity and execution version as an
+algebraic value selected once, not independent mutable flags. SQL triggers reject
+partial or later mutations. A Python frozen dataclass describes the same intent
+in memory, but only database enforcement protects against another worker process.
+
+```python
+from dataclasses import dataclass
+from uuid import UUID
+
+@dataclass(frozen=True)
+class WorkflowBinding:
+    kind: str
+    run_id: UUID
+    owner: str
+    executor_version: str
+
+    @property
+    def temporal_id(self) -> str:
+        return f'gca.{self.kind}.{self.run_id}'
+```
+
+**Fence versus lock.** A row lock serializes a claim transaction; it is not held
+while an external API runs. A lease provides time-bounded liveness evidence and
+must match the current owner/version when entering execution. An immutable owner
+and a database no-foreign-lease invariant prevent a second scheduler from taking
+the same business run. Losing a lease does not prove an external write failed.
+
+**Rollback as admission change.** Switching future requests is different from
+moving existing state machines. Let in-flight workflows retain their history and
+owner, stop admitting new candidates, reconcile uncertain effects, and only then
+consider schema contraction. A flag flip alone cannot erase external history.
+
+**State machine versus event projection.** Kafka's last-event view can display
+progress but cannot decide who executes. Temporal history, PostgreSQL business
+state and observability projections have separate jobs; they need typed lineage,
+not competing autonomous recovery loops. See
+[the current owner fence and unfinished Temporal integration](WORKFLOW_OWNERSHIP.md).

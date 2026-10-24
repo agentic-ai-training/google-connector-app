@@ -21,6 +21,9 @@ from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.repository import append_event
+from app.runs.workflow_ownership import (
+    WorkflowOwnershipError, postgres_claim_predicate, require_postgres_lease,
+)
 from app.runs.typed_execution import (
     contains_unresolved_placeholder,
     decide_typed_execution,
@@ -76,16 +79,18 @@ async def claim_run(pool, owner: str):
     while True:
         terminal_recovery = None
         async with pool.acquire() as conn, conn.transaction():
+            ownership = await postgres_claim_predicate(conn)
             row = await conn.fetchrow(
                 """SELECT * FROM agent_runs
                    WHERE (status='queued' OR
                          (status='running' AND lease_expires_at < now()))
+                     AND __WORKFLOW_OWNER__
                      AND (($2='candidate' AND executor_version=$1
                            AND cohort_assignment='candidate')
                           OR ($2='control' AND executor_version=$1))
                      AND deleted_at IS NULL
                    ORDER BY queued_at
-                   FOR UPDATE SKIP LOCKED LIMIT 1""",
+                   FOR UPDATE SKIP LOCKED LIMIT 1""".replace('__WORKFLOW_OWNER__', ownership),
                 executor_version, executor_role,
             )
             if not row:
@@ -1803,6 +1808,7 @@ async def _execute_step(app, pool, run, step, dependencies):
 
 
 async def execute_run(app, pool, run):
+    await require_postgres_lease(pool, 'workspace', run)
     run_id = run["id"]
     user_id = run["user_id"]
     heartbeat = asyncio.create_task(_heartbeat(pool, run_id, run["lease_owner"]))
@@ -2053,7 +2059,12 @@ async def worker_loop(app, pool, stop_event: asyncio.Event):
         if run:
             if run.get("_terminal_recovery"):
                 continue
-            await execute_run(app, pool, run)
+            try:
+                await execute_run(app, pool, run)
+            except WorkflowOwnershipError:
+                # Do not load credentials or finalize a run now owned elsewhere.
+                # Retain authoritative state for its actual owner/reconciliation.
+                logger.warning('Workspace worker execution ownership fence rejected a stale claim')
             continue
         try:
             await asyncio.wait_for(

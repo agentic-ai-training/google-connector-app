@@ -551,3 +551,11 @@ not audit historical images or authorize a production startup/migration. See
 [context boundary](DEPLOYMENT_CONTEXT_BOUNDARY.md) and
 [conditional release plan](RAILWAY_TRIAL_RELEASE_PLAN.md). Hosting remains stopped;
 core service boundaries and protected Vertex/reserve funds are unchanged.
+
+The next local checkpoint adds schema-026 immutable run-owner bindings to the
+actual Workspace/coding ledgers. Existing PostgreSQL workers filter owner before
+claim and recheck live tenant/version/lease before credentials; SQL rejects old
+workers' Temporal leases. Admission is default-off and current intake remains
+PostgreSQL. Disabling admission never transfers an in-flight run. This is the
+single-owner migration foundation, not an implemented or activated Temporal
+executor. See [ownership contract and remaining work](WORKFLOW_OWNERSHIP.md).
