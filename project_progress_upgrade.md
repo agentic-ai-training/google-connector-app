@@ -2553,6 +2553,12 @@ changes become production evidence.
   never transfers an existing run, and downgrade refuses retained Temporal rows.
   Temporal dispatch/workflows/activities/replay and live migration remain open;
   this item stays unchecked. See `docs/WORKFLOW_OWNERSHIP.md`.
+  The following migration-027 checkpoint adds actual business-insert start intents,
+  immutable reference envelopes, bounded fenced delivery, start/describe SDK policy,
+  lost-response recovery and independent default-off transport. Local SQL and SDK
+  contract tests are not real Temporal startup/replay proof. See
+  `docs/TEMPORAL_START_DELIVERY.md`; business workflows/activities and live migration
+  remain unfinished.
 - [ ] Add per-user/app/global capacity admission, fair queuing, model quotas and
   backpressure. Load-test rather than claim unlimited asynchronous users.
 - [ ] Integrate CrewAI bounded role collaboration and existing LangGraph domain behavior
@@ -3312,3 +3318,22 @@ seconds (one existing Google SDK deprecation warning). Disposable full-schema
 upgrade-to-026/downgrade-to-002/upgrade-to-026 and empty-data retention passed;
 targeted lint/security/whitespace checks passed. These are local proofs, not
 Temporal server replay, real broker operation or live rollout evidence.
+
+Progress 2026-10-24, transactional Temporal startup delivery: migration 027 captures
+bounded reference-only intents with actual new Temporal business inserts, in the
+same transaction, under a shared unfinished-intent ceiling. Independent transport
+stays off. The controller writes uncertainty before RPC, uses immutable IDs and
+current nonces, caps attempts and preserves unresolved obligations. The optional
+pinned SDK adapter describes/validates actual identity/memo before acknowledging;
+it rejects duplicate reuse and never terminates or replaces another workflow.
+Missing/cancelled/deleted parents, paused transport and expiry cannot authorize new
+starts. Hard erasure retains no private run body, only a non-rebindable reference.
+Thirteen focused local tests passed; SQL upgrade-to-027/downgrade-to-002/upgrade-to-027
+and empty-data retention passed. These are local SQL/SDK-double contracts, not a
+live server or implemented business-workflow proof. No production/model/cloud RPC,
+service start, VM restart, funding transfer or Temporal admission activation occurred.
+See `docs/TEMPORAL_START_DELIVERY.md`. The full original goal remains active.
+Final local evidence: all 1,906 coding tests passed without skips (52.49 seconds,
+one existing Google SDK deprecation warning), plus targeted lint/security/whitespace
+checks. The optional SDK was installed locally without provider extras and pinned
+for CI contract tests; no Temporal service was connected or started.

@@ -559,3 +559,11 @@ workers' Temporal leases. Admission is default-off and current intake remains
 PostgreSQL. Disabling admission never transfers an in-flight run. This is the
 single-owner migration foundation, not an implemented or activated Temporal
 executor. See [ownership contract and remaining work](WORKFLOW_OWNERSHIP.md).
+
+Schema 027 then connects actual Temporal-bound inserts to a reference-only
+transactional start queue and a bounded optional SDK adapter. Transport is
+independently off. Lost responses reconcile one immutable workflow ID and exact
+memo rather than reassigning the run or restarting writes. Parent erasure removes
+private business data without erasing a pending start obligation; missing parents
+cannot authorize fresh starts. Local SQL and SDK-double tests are not real Temporal
+server/business/replay evidence. See [startup delivery](TEMPORAL_START_DELIVERY.md).

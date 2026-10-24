@@ -4518,3 +4518,37 @@ progress but cannot decide who executes. Temporal history, PostgreSQL business
 state and observability projections have separate jobs; they need typed lineage,
 not competing autonomous recovery loops. See
 [the current owner fence and unfinished Temporal integration](WORKFLOW_OWNERSHIP.md).
+
+### Deep dictionary: starting across two durable systems
+
+**Distributed commit gap.** A SQL commit and a Temporal start are different durable
+operations. Crashing between them leaves missing work or an uncertain reply. A
+transactional start intent records the obligation with the business insert; a
+separate controller reconciles it. This is not a distributed ACID transaction.
+
+**Stable identity versus retry identity.** Use the same business-derived workflow
+ID for every start attempt. A fresh UUID per retry turns a lost response into a
+second workflow. A nonce instead identifies the *controller's temporary lease*;
+it must change on reclaim without changing the business ID.
+
+```python
+business_id = f'gca.workspace.{run_id}'   # Stable across crashes
+lease_nonce = new_uuid()                 # Changes when controller reclaims
+# Acknowledgement requires both the business binding and the current nonce.
+```
+
+**Uncertainty is monotone information.** Once an RPC may have reached a service,
+clearing that fact because a timeout expired is unsound. The set of possible worlds
+still includes successful execution. Preserve `may_have_started`, query the same
+identity and reconcile its receipt. A lease expiration proves only that the local
+controller lost its claim, not that the remote action never happened.
+
+**Receipt binding.** An existing ID alone is insufficient evidence: verify the
+namespace, type, queue, digest/contract metadata and original execution lineage.
+A changed binding is a conflict, not an invitation to terminate and replace work.
+
+**Privacy-preserving referential gap.** Erasure may remove the private parent while
+an external operation remains uncertain. Preserve only the minimal reconciliation
+reference, never reconstruct the deleted prompt/body, and forbid new starts when
+the parent is absent. External history erasure is a separate lifecycle obligation.
+See [the current startup controller and its exact evidence limits](TEMPORAL_START_DELIVERY.md).

@@ -89,3 +89,8 @@ No Temporal SDK workflow, server, worker, admission UI, dispatch recovery, signa
 replay, activity idempotency, crash/load/traffic migration or live proof is claimed.
 Those are still unchecked Sprint 62 requirements. The Kafka outbox/consumer is a
 separate visibility plane and cannot grant business ownership or write authority.
+
+The next schema-027 checkpoint supplies [transactional start intents and a bounded
+SDK adapter](TEMPORAL_START_DELIVERY.md). It closes the local database-to-start
+delivery contract with default-off transport; it does not supply the still-missing
+business workflows, activities, replay or live service proof described above.
