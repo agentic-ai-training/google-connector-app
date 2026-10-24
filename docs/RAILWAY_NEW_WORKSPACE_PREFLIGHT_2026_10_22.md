@@ -32,10 +32,35 @@ independently prove the token type. Prefer checking the intended workspace with
 this token before asking for broader account access. No GitHub connection is needed
 for the bearer-token API authentication itself.
 
-## Funding and eligibility are not verified
+## Superseding scope and billing observation — 24 October
 
-The operator's free-trial statement has not yet been verified through the intended
-workspace or billing screen. [Railway's trial documentation](https://docs.railway.com/pricing/free-trial)
+The later read-only `apiToken { workspaces { id name } }` query resolved one
+workspace: `24e7c6af-7588-410b-a6df-8fa2a5fc1208`, named
+`hansraj mahto's Projects`. An explicit workspace-scoped projects query returned
+zero projects. The earlier missing-workspace conclusion above is historical and
+resolved; do not request the URL or another token for that reason. Personal `me`
+authorization remains distinct from workspace resource authority.
+
+The operator subsequently confirmed the billing screen shows **Trial Plan,
+$5.00 available, $0.00 used**, 1 GB RAM, 2 vCPU and 1 GB disk, with no project
+usage. Its displayed Oct 22–Oct 23 range is a usage interval, **not a trial expiry**.
+This is accepted operator billing evidence, not an API balance measurement. API
+metadata reports plan `HOBBY` and included usage of $5; neither field independently
+proves a paid subscription or remaining balance. Do not ask the operator to repeat
+the supplied billing evidence.
+
+Capacity metadata limits each container to 1,000,000,000 memory bytes, two vCPUs
+and 1,000,000,000 disk bytes. A project permits five services, two service domains
+and a 4-GB maximum image. These are ceilings, not measured application fit.
+No outbound Google/Neon/model network proof or production-memory measurement has
+yet been obtained. See [capacity and release gates](RAILWAY_TRIAL_RELEASE_PLAN.md).
+No mutations, services, variable copies, migrations or spend were authorized by
+these read-only checks. Saved credentials and older accounts remain unchanged.
+
+## Trial eligibility and technical activation remain separate
+
+The trial statement is now confirmed by the operator's billing-screen observation.
+[Railway's trial documentation](https://docs.railway.com/pricing/free-trial)
 describes a one-time trial grant, automated GitHub verification and outbound-network
 restrictions on email-only/unverified Limited Trial accounts. These restrictions may
 prevent the core app from reaching Google, Neon or model services; do not claim
@@ -47,8 +72,8 @@ strategy. Establish a compliant ownership/funding path, involving Railway suppor
 if consolidation is needed, before any migration. Do not bypass verification,
 create further accounts or silently upgrade billing.
 
-Next missing non-secret input: the intended workspace's Settings-page URL or copied
-workspace ID. After scope verification, inspect actual plan/trial status, credits,
-capacity and existing resources before proposing a costed deployment/rollback plan.
+The workspace ID and operator billing observation are no longer missing. Technical
+networking, capacity, compliant ownership and a safe release/rollback plan remain
+activation gates; a trial label alone does not satisfy those gates.
 No GraphQL mutation, project/service creation, migration, variable copy, deploy,
 account creation, payment, model call or cloud spend was performed in this preflight.

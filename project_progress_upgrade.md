@@ -3266,3 +3266,24 @@ the intended workspace identity, trial/network eligibility and funding remain
 unverified pending its non-secret workspace ID/Settings URL. Existing credentials
 were preserved and no deployments/mutations occurred. Railway's one-account-per-
 person policy is not bypassed. See `docs/RAILWAY_NEW_WORKSPACE_PREFLIGHT_2026_10_22.md`.
+
+Progress 2026-10-24, deployment context boundary and scoped trial evidence:
+the later token-context workspace query resolved the exact intended workspace;
+explicit workspace listing returned zero projects. The operator confirmed Trial
+Plan, $5 available and $0 usage. These observations supersede the missing-workspace
+paragraph above, without proving network reachability or production capacity.
+See the updated preflight and `docs/RAILWAY_TRIAL_RELEASE_PLAN.md` for arithmetic,
+migration hazards, release/rollback gates and unchanged funding boundaries.
+
+Root/nested `.env*`, operator/provider state, private knowledge and backups are now
+excluded from Docker and Railway contexts. The synthetic audit passed real Git
+ignore semantics for 30 private/10 public paths; eight focused tests passed. CI now
+requests an actual scratch-only Docker export but has not been published/run.
+Final context-checkpoint coding regression: 1,875 passed without skips (58.73
+seconds, one existing SDK deprecation warning), using explicitly loaded pytest
+asyncio and loopback PostgreSQL. An initial misconfigured invocation omitted the
+async plugin and was stopped; its errors are not passing application evidence. See
+`docs/DEPLOYMENT_CONTEXT_BOUNDARY.md` for exact limitations. No historical leak,
+real-engine proof, production start, migration, provider call or VM restart is
+claimed. Cache-only cleanup restored about 4 GiB free; large builds remain deferred.
+Temporal ownership and all outstanding original/60–68 acceptance remain open.

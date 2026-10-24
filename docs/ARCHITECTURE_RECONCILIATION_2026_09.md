@@ -539,3 +539,15 @@ remain unproven. The VM source snapshot above is unchanged; this worker is not y
 installed. See [worker contract](RUNTIME_SCAN_WORKER.md). The older Railway workspace
 was also queried without mutation; its mixed HOBBY/trial fields do not establish
 available credit or eligibility for a free production restart.
+
+### 24 October: deployment context and trial evidence are independent gates
+
+The intended new Railway workspace is now resolved through token-context access,
+and the operator confirms an unused $5 Trial Plan. Networking/capacity and a safe
+production release remain unproven. The root build/upload ignore policies now
+exclude local environment/provider state, private knowledge and backups; synthetic
+Git-pattern tests passed, while actual Docker-engine CI remains pending. This does
+not audit historical images or authorize a production startup/migration. See
+[context boundary](DEPLOYMENT_CONTEXT_BOUNDARY.md) and
+[conditional release plan](RAILWAY_TRIAL_RELEASE_PLAN.md). Hosting remains stopped;
+core service boundaries and protected Vertex/reserve funds are unchanged.

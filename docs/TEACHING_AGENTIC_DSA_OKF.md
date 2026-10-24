@@ -4441,3 +4441,35 @@ new producer. Default-off flags, preserved old bytes/keys and downgrade drain ch
 reduce risk but do not prove broker offsets or live compatibility. An empty delivery
 table cannot prove rollback while external wire records remain. See
 [the implemented mixed-source bridge](WORKFLOW_CODING_EVENTS.md).
+
+### Deep dictionary: context boundaries and negative-space tests
+
+**Build context versus image.** The context is the input file set offered to the
+builder; the image is the resulting artifact. Excluding a file from a final stage
+does not prove it never reached a remote builder or an earlier layer. Deny private
+inputs before upload **and** before Docker context creation. Git tracking status
+and Docker ignore matching are different mechanisms, not interchangeable ACLs.
+
+**Negative-space / canary test.** Testing both a private path that must disappear
+and a public path that must survive avoids an always-empty context falsely passing.
+With P private and U public canaries, classification is O(P+U) engine calls here;
+the small fixed corpus favors auditable engine behavior over an invented glob
+implementation. Synthetic canaries are test data, never copies of actual secrets.
+
+```python
+private = {'.env.local', 'backups/database.sql'}
+public = {'app/api/main.py', 'requirements.txt'}
+assert not (private & exported_paths)
+assert public <= exported_paths
+```
+
+**Negation / ordered rule system.** An ignore file can re-include an earlier denied
+path through `!`. Membership in a set of denial lines therefore does not by itself
+prove exclusion. This checkpoint rejects all negations and per-Dockerfile overrides
+and separately tests actual engine matching; adding exceptions requires review.
+
+**Ambient authority.** A command can inherit credentials, a remote Docker context,
+registry config or Git global settings without naming them in its arguments. A
+minimal environment, empty config and pinned local daemon remove these implicit
+edges. This is defense in depth, not an OS sandbox or a content-secret scanner.
+See [the exact implemented context audit](DEPLOYMENT_CONTEXT_BOUNDARY.md).

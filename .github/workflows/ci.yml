@@ -84,6 +84,8 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config --quiet
+      - name: Prove synthetic private files cannot enter upload/build contexts
+        run: python -m scripts.verify_deployment_context --docker
       - name: Build the production Rust container stage
         run: docker build --target coding-runtime-builder -f Dockerfile .
       - name: Verify sensitive local files are not tracked or present in history
