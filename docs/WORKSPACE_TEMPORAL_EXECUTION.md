@@ -141,3 +141,8 @@ The following schema-029 checkpoint adds
 the actual existing approval transaction. Capture remains off and no publisher
 runs. This supersedes only the historical absence of signal-delivery code, not
 the live server, replay, reconciliation or activation gates above.
+
+Schema 030 adds [source-bound verified-completion recovery](TEMPORAL_VERIFIED_RECOVERY.md)
+through the actual resume helper. Original uncertainty remains; deterministic
+readback can append an expiring resolution. Retry generations, lost-worker
+quiescence, compensation and real server/replay evidence remain open.

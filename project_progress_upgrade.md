@@ -3383,3 +3383,18 @@ is low. No live signal/publisher/worker, provider call, production migration, VM
 restart or budget change occurred. Operator deployment/alerts, real server/replay,
 reconciliation/retry generations, coding workflows and remaining original/60–68
 requirements remain open. See `docs/TEMPORAL_REFRESH_DELIVERY.md`. Goal stays active.
+
+Progress 2026-10-25, verified-completion recovery: schema 030 appends expiring,
+source-bound proof without overwriting journal uncertainty. The actual resume
+helper invokes deterministic readback, then rechecks tenant/source/plan/quiescence/
+prior approval in its transaction. Temporal/canary versions stay pinned; control
+PostgreSQL behavior remains compatible. Verified receipts replace stale error
+prose. A created-but-unpopulated Sheet no longer satisfies create-and-populate,
+including on the PostgreSQL path. Existing Temporal journals still need explicit
+retry generations before repetition; the API returns a manual gate instead of a
+false retry. 82 targeted tests, disposable upgrade-to-030/downgrade-to-002/upgrade-
+to-030, empty-data retention and targeted lint/security/whitespace passed. No new
+full-suite result is claimed; disk fell to 750 MB. No real provider/model call,
+production migration, activation, VM restart or budget change occurred. See
+`docs/TEMPORAL_VERIFIED_RECOVERY.md`. Retry generations, compensation, coding
+workflows and all remaining original/60–68/live requirements stay active.

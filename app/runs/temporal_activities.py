@@ -111,6 +111,10 @@ class WorkspaceActivities:
                 return 'deleted'
             prior = await conn.fetchrow('SELECT * FROM temporal_workspace_steps WHERE run_id=$1 AND step_id=$2', identity, step_id)
             if prior:
+                if (step['status'] == 'completed'
+                        and await conn.fetchval("SELECT to_regclass('temporal_step_resolutions') IS NOT NULL")
+                        and await conn.fetchval('SELECT temporal_step_resolved($1,$2)', identity, step_id)):
+                    return 'succeeded'
                 if prior['state'] == 'executing':
                     await conn.execute("UPDATE temporal_workspace_steps SET state='uncertain',error_category='worker_reconciliation' "
                         'WHERE run_id=$1 AND step_id=$2', identity, step_id)
@@ -209,8 +213,10 @@ class WorkspaceActivities:
                 return 'completed'
             rows = await conn.fetch('SELECT * FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no FOR UPDATE', identity)
             steps = [_json_row(row) for row in rows]
-            uncertain = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "
-                "AND state IN ('executing','uncertain'))", identity)
+            resolution_schema = await conn.fetchval("SELECT to_regclass('temporal_step_resolutions') IS NOT NULL")
+            unresolved = ("AND NOT temporal_step_resolved(run_id,step_id)" if resolution_schema else '')
+            uncertain = await conn.fetchval(("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "
+                "AND state IN ('executing','uncertain') __RESOLUTION__) ").replace('__RESOLUTION__', unresolved), identity)
             if uncertain:
                 await conn.execute("UPDATE temporal_workspace_steps SET state='uncertain',error_category='worker_reconciliation' "
                     "WHERE run_id=$1 AND state='executing'", identity)

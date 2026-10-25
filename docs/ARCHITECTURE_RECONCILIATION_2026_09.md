@@ -583,3 +583,11 @@ preserve newer generations. The SDK adapter sends no authority/content and canno
 start/replace workflows. Capture is independently off; no publisher runs. Targeted
 SQL/SDK-double and full migration rollback/forward tests passed; real signal/replay
 and activation remain open. See [delivery contract](TEMPORAL_REFRESH_DELIVERY.md).
+
+25 October: schema 030 appends immutable, expiring readback resolutions tied to
+current source and original journal tokens. Resume preserves Temporal/canary pins
+and does not repeat writes or erase uncertainty. It requires the full write
+contract, matching plan, quiescence and pre-effect approval when required. Changes
+invalidate proof; ordinary PostgreSQL behavior remains compatible. See
+[verified recovery](TEMPORAL_VERIFIED_RECOVERY.md). Retry generations, compensation
+and all live activation/replay gates remain open.

@@ -7,6 +7,7 @@ from app.runs.verifier import verify_executions_detailed
 from app.tools.contracts import (
     WRITE_TOOLS,
     attempted_required_tools,
+    contract_satisfied,
     write_contract_for,
 )
 
@@ -115,6 +116,8 @@ async def reconcile_failed_step(
         executions, service=step.get("service"), operation=step.get("operation"),
     )
     evidence["verification"] = outcome.evidence
+    if outcome.passed and not contract_satisfied(contract, executions):
+        return ReconciliationDecision('manual_required', 'write_contract_incomplete', None, evidence)
     if outcome.passed:
         return ReconciliationDecision(
             "already_completed", "postconditions_already_satisfied", step_id, evidence,

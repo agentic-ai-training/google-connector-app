@@ -4622,3 +4622,26 @@ Capture/capacity failure rolls back both. A best-effort signal after HTTP succes
 has a crash gap; an outbox makes missing delivery observable and retryable. A signal
 ACK still does not prove task completion. See [implemented delivery and evidence
 limits](TEMPORAL_REFRESH_DELIVERY.md).
+
+### Deep dictionary: source-bound proof and quiescence
+
+**Proof versus success flag.** Preserve the uncertain attempt and append evidence
+referencing its exact token/source digest. Later source changes make that proof
+inapplicable. Evidence must come from trusted verification, not an LLM assertion.
+
+**Optimistic verification.** Snapshot a digest, perform external reads without
+holding database locks, then lock/recheck before commit. This closes a local race,
+not a distributed transaction with Google. Evidence remains point-in-time.
+
+**Positive quiescence.** Lease expiry does not prove a worker stopped. One matching
+artifact does not prove that an older activity cannot make another call. A known
+completed boundary is required; lost-worker cleanup and retry need separate proof.
+
+**Conjunction and ordering.** `created AND populated` is not `created`. Required
+tools must be a subset of successful tools, and ordered contracts must form an
+in-order subsequence. Verifying only one artifact cannot establish the whole task.
+
+**Freshness and renewal.** Expire proof relative to verification start, not when a
+slow process saved it. Append a new observation to renew, preserving the older one.
+A B-tree prefix supports O(log n) proof lookup; source hashing costs O(source bytes
+plus relevant artifact metadata). See [implemented recovery](TEMPORAL_VERIFIED_RECOVERY.md).

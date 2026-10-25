@@ -58,6 +58,7 @@ from app.runs.reconciliation import (
     ReconciliationDecision,
     reconcile_failed_step,
 )
+from app.runs.temporal_resolution import ResolutionConflict, bind_decision, snapshot as resolution_snapshot
 from app.improvements.routing import (
     resolve_candidate_api_target,
     resolve_run_candidate_api_target,
@@ -173,7 +174,7 @@ async def _reconcile_and_resume(
     async with pool.acquire() as conn, conn.transaction():
         run_row = await conn.fetchrow(
             """SELECT * FROM agent_runs WHERE id=$1 AND user_id=$2
-               AND status IN ('failed','partial') FOR UPDATE""",
+               AND status IN ('failed','partial') AND deleted_at IS NULL FOR UPDATE""",
             run_id, user_id,
         )
         if not run_row:
@@ -193,6 +194,7 @@ async def _reconcile_and_resume(
             )
         if not step_row:
             raise HTTPException(409, "No matching failed step can be resumed")
+        proof_source = await resolution_snapshot(conn, dict(run_row), dict(step_row))
         artifacts = await conn.fetch(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 AND step_id=$2",
             run_id, step_row["id"],
@@ -232,17 +234,26 @@ async def _reconcile_and_resume(
 
     settings = get_settings()
     resume_executor_version = (
-        settings.executor_version or settings.deployment_version
+        run['executor_version'] if run.get('orchestration_owner') == 'temporal' or run.get('canary_id')
+        else settings.executor_version or settings.deployment_version
     )
     previous_executor_version = run.get("executor_version")
     async with pool.acquire() as conn, conn.transaction():
+        current_run = await conn.fetchrow('''SELECT * FROM agent_runs WHERE id=$1 AND user_id=$2
+          AND deleted_at IS NULL AND status IN ('failed','partial') FOR UPDATE''', run_id, user_id)
+        if current_run is None:
+            raise HTTPException(409, 'Run changed during reconciliation')
         locked = await conn.fetchrow(
-            """SELECT status,error_category FROM agent_run_steps
+            """SELECT * FROM agent_run_steps
                WHERE id=$1 AND run_id=$2 FOR UPDATE""",
             step_row["id"], run_id,
         )
         if not locked or locked["status"] != "failed":
             raise HTTPException(409, "The failed step changed during reconciliation")
+        try:
+            decision = await bind_decision(conn, dict(current_run), dict(locked), decision, proof_source, user_id)
+        except ResolutionConflict as error:
+            raise HTTPException(409, str(error)) from None
         if decision.state == "already_completed":
             await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',
@@ -268,7 +279,9 @@ async def _reconcile_and_resume(
                 """UPDATE agent_runs SET status='queued',current_phase='queued',
                    completed_at=NULL,error_category=NULL,error_message=NULL,
                    current_step_id=NULL,lease_owner=NULL,lease_expires_at=NULL,
-                   side_effect_integrity=100,executor_version=$3
+                   side_effect_integrity=CASE WHEN
+                     COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='temporal'
+                     THEN side_effect_integrity ELSE 100 END,executor_version=$3
                    WHERE id=$1 AND user_id=$2""",
                 run_id, user_id, resume_executor_version,
             )
