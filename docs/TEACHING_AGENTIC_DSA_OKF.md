@@ -4704,3 +4704,47 @@ an email send. A permanent event-sink failure must not cause an unbounded queue.
 **Evidence granularity.** A synthetic stored write receipt proves recovery does
 not invoke a write again; it does not prove Google delivered the original message.
 See [implementation, diagrams and remaining guarantees](ATOMIC_WORKFLOW_COMPLETION.md).
+
+### Deep dictionary: per-invocation write-ahead evidence
+
+**Write-ahead boundary.** Commit an invocation reservation before calling a remote
+tool. A crash after that reservation is ambiguous: the call might not have started,
+or its response might have been lost. A marker detects uncertainty; it is not proof
+of either success or failure. A returned response is also not verification.
+
+**Nested durability.** A workflow has steps, and a step may contain multiple tools.
+Saving only the final step output loses intermediate effects. Store each response
+before advancing, then independently verify and complete the step. This is a
+hierarchy of evidence, not nested distributed database transactions with Google.
+
+```mermaid
+flowchart LR
+    R[Run] --> S[Composite step]
+    S --> A[Create Sheet: private receipt]
+    A --> B[Populate Sheet: private receipt]
+    B --> V[Verify full contract]
+    V --> C[Atomic step completion]
+    A -. crash before population .-> U[Recover existing ID; still incomplete]
+```
+
+**Immutable identity and compare-and-set.** Bind a receipt to tenant/run/step,
+attempt, tool, call ID and trusted authority. Permit dispatched → returned/unknown
+once. A second callback cannot rewrite the first response. An encrypted envelope
+also binds its row identity, preventing cross-row/cross-tenant payload substitution.
+
+**Sequence versus completeness.** Ordered receipts reconstruct invocation order.
+They do not prove that all required operations ran. `create` followed by no
+`populate` remains incomplete even if the first artifact is valid. A unique B-tree
+index supports lookup/identity checks; loading k bounded receipts is O(k + bytes).
+Cap count and payload size; pagination alone is not a correctness contract.
+
+**Expiry versus permission to retry.** Nulling private ciphertext does not erase
+the possibility that an email was sent. Retain the uncertainty marker until its
+approved parent lifecycle ends. Expired evidence cannot become “no effect.” A
+missing result must not silently authorize repeating a non-idempotent action.
+
+**Fault injection versus simulation.** The local receipt test uses a fresh process
+that commits a synthetic effect and receipt, then exits abruptly. Recovery must
+leave the effect counter at one. This proves that boundary under local PostgreSQL,
+not real Google delivery or a production Temporal replay. See
+[implementation and operational limits](DURABLE_TOOL_RECEIPTS.md).

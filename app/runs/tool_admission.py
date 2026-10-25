@@ -146,7 +146,7 @@ async def fenced_postgres_commit(pool, run):
 
 @asynccontextmanager
 async def fenced_step_commit(pool, run, step, *, succeeded):
-    """Lock run→step→journal; persist business outcome and journal outcome atomically."""
+    """Lock run→step→journal; None admits metadata without finalizing the journal."""
     authority = _run_scope(run)
     state = {'run_id': str(run['id']), 'step_id': str(step['id']), 'user_id': run['user_id']}
     async with pool.acquire(timeout=5) as conn, conn.transaction():
@@ -171,7 +171,7 @@ async def fenced_step_commit(pool, run, step, *, succeeded):
                 category='network', component='completion_fence', boundary='completion_live_ledger',
                 evidence={'prior_effects': 'requires_reconciliation'}) from None
         yield conn
-        if authority.owner == 'temporal':
+        if authority.owner == 'temporal' and succeeded is not None:
             result = await conn.execute('''UPDATE temporal_workspace_steps SET state=$1,completed_at=clock_timestamp(),
               error_category=CASE WHEN $1='failed' THEN 'execution' ELSE NULL END
               WHERE run_id=$2 AND step_id=$3 AND execution_token=$4 AND state='executing' ''',

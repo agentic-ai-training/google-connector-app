@@ -76,3 +76,9 @@ Temporal journal outcome are now implemented. PostgreSQL also has bounded
 metadata-only completion retry and reconstructs all persisted step receipts.
 This closes the local completion-record race, not the remote effect/reconciliation
 boundary. See [atomic completion and evidence limits](ATOMIC_WORKFLOW_COMPLETION.md).
+
+Schema 031 subsequently adds encrypted per-invocation reservations/responses before
+step completion, integrated with real authenticated recovery. This preserves an
+already-recorded intermediate response, not a response lost before receipt commit.
+Safe retry generations and unfinished-composite continuation are still separate
+work. See [receipt capture and local crash proof](DURABLE_TOOL_RECEIPTS.md).

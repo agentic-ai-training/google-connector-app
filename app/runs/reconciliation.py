@@ -57,6 +57,8 @@ async def reconcile_failed_step(
         "failure_category": step.get("error_category") or run.get("error_category"),
         "artifact_count": len(artifacts or []),
     }
+    if step.get('receipt_write_uncertain'):
+        return ReconciliationDecision('manual_required', 'tool_receipt_write_outcome_uncertain', None, evidence)
     external_configuration_error = str(step.get("error_message") or "").casefold()
     if step.get("service") == "chat" and any(marker in external_configuration_error for marker in (
         "chat api configuration is incomplete",

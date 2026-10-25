@@ -107,6 +107,11 @@ async def bind_decision(conn, run, step, decision, source, actor):
     output = dict(step.get('output_data') or {})
     output.update(output=verified_receipt(step), verification='Deterministic readback reconciled required write postconditions')
     await conn.execute('UPDATE agent_run_steps SET output_data=$2::jsonb WHERE id=$1', step['id'], json.dumps(output, default=str))
+    # Recovered per-tool responses can precede the original artifact write. Save
+    # verified artifacts before hashing the final source, not after the proof.
+    from app.runs.worker import _store_artifacts
+    from app.runs.verifier import extract_artifacts
+    await _store_artifacts(conn, run, step, extract_artifacts(output.get('tool_executions') or []))
     resolved_hash = await conn.fetchval('SELECT temporal_resolution_source($1,$2)', run['id'], step['id'])
     await conn.execute('INSERT INTO workflow_event_tenants(user_id) VALUES($1) ON CONFLICT DO NOTHING', actor)
     tenant = await conn.fetchval('SELECT tenant_id FROM workflow_event_tenants WHERE user_id=$1', actor)

@@ -50,6 +50,7 @@ from app.rag.user_sync import (
 )
 from app.improvements.failure_intelligence import record_failure_incident
 from app.mlops.metrics import write_reconciliation
+from app.runs.tool_receipts import receipt_evidence
 from app.runs.planner import (
     classify_request,
     infer_operation_sequence,
@@ -204,6 +205,7 @@ async def _reconcile_and_resume(
                WHERE run_id=$1 AND step_id=$2 ORDER BY attempt_no""",
             run_id, step_row["id"],
         )
+        receipts = await receipt_evidence(conn, run_id, step_row['id'], user_id)
         await conn.execute(
             """UPDATE agent_runs SET current_phase='reconciling',
                current_step_id=$1 WHERE id=$2""",
@@ -212,6 +214,13 @@ async def _reconcile_and_resume(
 
     run = dict(run_row)
     step = dict(step_row)
+    step['receipt_write_uncertain'] = receipts.blocked
+    if receipts.executions:
+        output = dict(step.get('output_data') or {})
+        # New receipts are the ordered invocation evidence. Do not merge stale
+        # partial lists in ways that duplicate effects or invent ordering.
+        output['tool_executions'] = receipts.executions
+        step['output_data'] = output
     step["historical_tool_attempts"] = [
         dict(item) for item in historical_tool_attempts
     ]
@@ -250,11 +259,31 @@ async def _reconcile_and_resume(
         )
         if not locked or locked["status"] != "failed":
             raise HTTPException(409, "The failed step changed during reconciliation")
+        current_receipts = await receipt_evidence(conn, run_id, step_row['id'], user_id)
+        if (current_receipts.digest != receipts.digest or current_receipts.blocked != receipts.blocked
+                or current_receipts.executions != receipts.executions):
+            raise HTTPException(409, 'Tool invocation evidence changed during reconciliation')
+        locked_step = dict(locked)
+        if receipts.executions:
+            from app.tools.result_projection import project_tool_result
+            # Verification used full private evidence; durable step history keeps
+            # the existing bounded result projection, not a second raw corpus.
+            compact = [{**item, 'result': project_tool_result(item['tool'], item['result'],
+                max_tokens=2_000).compact_result} for item in receipts.executions]
+            locked_step['output_data'] = {**step['output_data'], 'tool_executions': compact}
         try:
-            decision = await bind_decision(conn, dict(current_run), dict(locked), decision, proof_source, user_id)
+            decision = await bind_decision(conn, dict(current_run), locked_step, decision, proof_source, user_id)
         except ResolutionConflict as error:
             raise HTTPException(409, str(error)) from None
         if decision.state == "already_completed":
+            if receipts.executions and current_run.get('orchestration_owner') != 'temporal':
+                from app.runs.temporal_resolution import verified_receipt
+                await conn.execute('UPDATE agent_run_steps SET output_data=$2::jsonb WHERE id=$1', step_row['id'],
+                    json.dumps({**locked_step['output_data'], 'output': verified_receipt(step),
+                                'verification': 'Deterministic readback reconciled per-tool receipts'}, default=str))
+                from app.runs.worker import _store_artifacts
+                from app.runs.verifier import extract_artifacts
+                await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions))
             await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',
                    error_category=NULL,error_message=NULL,completed_at=COALESCE(completed_at,now())

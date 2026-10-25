@@ -608,3 +608,15 @@ automatic retries. Local fault-injection and SDK activity tests exercise these
 boundaries, not live provider/server behavior. See
 [atomic completion](ATOMIC_WORKFLOW_COMPLETION.md). Per-tool partial receipts,
 safe retry generations, compensation and remaining original/60–68 scope stay open.
+
+25 October, per-invocation evidence checkpoint: schema 031 and the shared wrapper
+reserve bounded encrypted tool receipts before invocation, then save exact returned
+responses independently of step completion. Uncertain acceptance is not false
+success or permission to repeat. The actual authenticated resume handler uses
+tenant-bound ordered receipts, deterministic readback, a rechecked observation and
+full write contracts; Temporal proofs include restored artifacts in their source
+digest. Private payload retention/erasure and reporting restrictions are explicit.
+A fresh keyless subprocess crash and synthetic effect counter exercise recovery
+without repetition. No live provider, server, migration or deployment proof is
+claimed. Safe retry generations and unfinished-composite execution remain open.
+See [durable tool receipts](DURABLE_TOOL_RECEIPTS.md).

@@ -68,6 +68,11 @@ async def test_actual_tool_wrapper_stops_between_calls_after_cancel(admitted, mo
     async def record(*args, **kwargs):
         calls.append('recorded')
     monkeypatch.setattr(supervisor, '_record_tool_call', record)
+    import importlib
+    await pool.execute('ALTER TABLE agent_run_steps ADD COLUMN attempt_count INTEGER DEFAULT 1, '
+        'ADD COLUMN read_only BOOLEAN DEFAULT FALSE')
+    await pool.execute(importlib.import_module('migrations.versions.031_tool_invocation_receipts').SCHEMA_SQL)
+    await event_table(pool)
     token = execution_authority.set(authority)
     try:
         _, result, _ = await supervisor.execute_tool_call(mutation_probe, {'id': 'call-one','args': {}}, state, pool)

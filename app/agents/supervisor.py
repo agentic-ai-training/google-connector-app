@@ -37,6 +37,7 @@ from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
 from app.runs.planner import classify_request
 from app.runs.tool_admission import require_tool_admission
+from app.runs.tool_receipts import ToolReceiptFailure, begin_receipt, finish_receipt
 from app.okf.retriever import pack_operational_knowledge, retrieve_operational_knowledge
 from app.config.feature_flags import feature_enabled
 from app.config.settings import get_settings
@@ -475,13 +476,23 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
     # Denial is a typed admission decision, not a fictional provider/tool failure.
     # Keep it outside the provider-error conversion below.
     await require_tool_admission(pool, state)
+    receipt = await begin_receipt(pool, state, tool.name, call)
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))
     user_token = tool_user_id.set(state.get("user_id"))
     run_token = tool_run_id.set(state.get("run_id"))
     step_token = tool_step_id.set(state.get("step_id"))
     try:
-        result = await tool.ainvoke(call.get("args", {}))
+        try:
+            result = await tool.ainvoke(call.get("args", {}))
+        except BaseException:
+            # Preserve unknown acceptance on timeout/cancellation. This evidence
+            # does not permit retry or declare that a remote mutation failed.
+            await asyncio.shield(finish_receipt(pool, receipt, returned=False))
+            raise
+        # Persist the response before projection, logging or the next tool can
+        # fail. Receipt persistence failure must not become a normal ToolMessage.
+        await finish_receipt(pool, receipt, result=result, returned=True)
         envelope = project_tool_result(
             tool.name, result,
             max_tokens=get_settings().runtime_tool_result_max_tokens,
@@ -520,6 +531,8 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
             tool_call_id=call["id"],
             name=tool.name,
         ), result, envelope
+    except ToolReceiptFailure:
+        raise
     except Exception as exc:
         elapsed = int((time.perf_counter() - started) * 1000)
         if not isinstance(tool, GoogleWorkspaceBaseTool):

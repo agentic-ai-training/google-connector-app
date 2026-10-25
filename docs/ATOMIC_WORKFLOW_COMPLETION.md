@@ -96,3 +96,9 @@ No production migration/deployment, VM restart or new spend occurred here.
 See [live invocation admission](LIVE_TOOL_ADMISSION.md),
 [verified recovery](TEMPORAL_VERIFIED_RECOVERY.md) and
 [Workspace Temporal bridge](WORKSPACE_TEMPORAL_EXECUTION.md).
+
+Subsequent checkpoint: schema 031 adds encrypted per-tool write-ahead receipts and
+connects them to the actual resume/readback handler. This closes loss of an already
+saved per-call response when a later composite operation or step commit fails. It
+does not close the remote-effect-before-response window or implement automatic
+partial-composite retries. See [receipt evidence and limits](DURABLE_TOOL_RECEIPTS.md).

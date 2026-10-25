@@ -2558,6 +2558,11 @@ changes become production evidence.
   This closes local completion-record races, not remote exactly-once effects or
   the still-open retry generations, partial-composite receipts and server/replay
   proof. See `docs/ATOMIC_WORKFLOW_COMPLETION.md`; this item stays unchecked.
+  Schema 031 then adds bounded encrypted per-tool write-ahead/response receipts,
+  integrated with the actual authenticated readback/resume flow. Saved responses
+  survive later composite/step failures, and unresolved writes block repetition.
+  This is evidence retention, not automatic unfinished-composite continuation or
+  safe retry generations. See `docs/DURABLE_TOOL_RECEIPTS.md`.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3439,3 +3444,22 @@ provider/model call, production change, cloud restart or budget change occurred.
 See `docs/ATOMIC_WORKFLOW_COMPLETION.md`. All other original/60–68 requirements,
 including live evidence and data-dependent learning, retain their existing scope.
 The full unit suite also passed 281 tests in 6.07 seconds (one existing SDK warning).
+
+Progress 2026-10-25, per-tool receipts: schema 031 and the actual shared Workspace
+tool wrapper reserve invocation evidence before RPC and encrypt returned responses
+before projection/logging/next operation. Bounded count/size/TTL, immutable binding,
+unknown-acceptance markers, tenant erasure and restricted raw-table access are
+implemented locally. Authenticated resume uses ordered private receipts, rechecks
+its snapshot, requires full write/readback contracts, restores verified artifacts
+and preserves Temporal uncertainty with a source-bound proof. A fresh subprocess
+commits a synthetic effect/receipt and dies before step completion; actual recovery
+leaves the effect counter at one. Incomplete composites stay incomplete and are not
+blindly repeated. Twenty focused receipt cases are included in the final 2,264
+coding/unit tests passed without skips (92.15 seconds; thirteen existing SDK/fork
+warnings). The final selected 347-test suite, full upgrade-to-031/downgrade-to-002/
+upgrade-to-031 plus empty-data retention, targeted lint/security/whitespace passed.
+No real Google/model/server call, production migration, cloud restart or spending
+change occurred. See `docs/DURABLE_TOOL_RECEIPTS.md`. Remote-effect-before-response
+reconciliation, safe retry generations, unfinished-composite continuation,
+compensation, real replay/load and all remaining original/60–68 requirements remain
+open. The original goal stays active, not complete or narrowed to this checkpoint.
