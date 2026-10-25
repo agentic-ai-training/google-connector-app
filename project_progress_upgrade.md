@@ -3368,3 +3368,18 @@ without skips (55.85 seconds; seven warnings). Six warnings concern existing
 process-death probes using fork after multithreaded SDK initialization; one is the
 existing Google SDK deprecation. No hang occurred, but process-isolating those
 probes remains test hardening. Targeted lint/security/whitespace checks passed.
+
+Progress 2026-10-25, durable refresh delivery: schema 029 atomically captures
+relevant actual Workspace changes (including the existing authenticated approval
+transaction) into bounded metadata-only generations. Independent capture is off.
+Changes during a leased send survive an older ACK; stale nonces cannot consume
+current work. Lost responses repeat only a hint. SDK checks pin first execution
+and cannot start/replace closed or foreign workflows. Hard private-data erasure
+still succeeds, retaining only a wake reference. Eleven focused and 54 combined
+Temporal tests passed; full disposable upgrade-to-029/downgrade-to-002/upgrade-to-
+029 plus retention passed. Targeted lint/security/whitespace passed. The previous
+1,918-test full suite predates this diff; no new full result is claimed while disk
+is low. No live signal/publisher/worker, provider call, production migration, VM
+restart or budget change occurred. Operator deployment/alerts, real server/replay,
+reconciliation/retry generations, coding workflows and remaining original/60–68
+requirements remain open. See `docs/TEMPORAL_REFRESH_DELIVERY.md`. Goal stays active.

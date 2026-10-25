@@ -135,3 +135,9 @@ Still required before activation or claiming Sprint 62 complete:
 Current code does not claim these proofs or enable transport to compensate for their
 absence. See [single-owner migration](WORKFLOW_OWNERSHIP.md) and
 [transactional startup delivery](TEMPORAL_START_DELIVERY.md).
+
+The following schema-029 checkpoint adds
+[transactional API-to-refresh delivery](TEMPORAL_REFRESH_DELIVERY.md), including
+the actual existing approval transaction. Capture remains off and no publisher
+runs. This supersedes only the historical absence of signal-delivery code, not
+the live server, replay, reconciliation or activation gates above.

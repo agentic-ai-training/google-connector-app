@@ -576,3 +576,10 @@ informational executor path, approval pins and truthful uncertainty handling.
 No Temporal server/worker/admission is active; coding workflow, API signal delivery,
 reconciliation, replay and live evidence remain open. See
 [current Workspace bridge](WORKSPACE_TEMPORAL_EXECUTION.md).
+
+25 October: schema 029 captures actual Workspace approval/clarification/cancel/
+resume changes into a metadata-only coalesced refresh outbox. Nonce-fenced ACKs
+preserve newer generations. The SDK adapter sends no authority/content and cannot
+start/replace workflows. Capture is independently off; no publisher runs. Targeted
+SQL/SDK-double and full migration rollback/forward tests passed; real signal/replay
+and activation remain open. See [delivery contract](TEMPORAL_REFRESH_DELIVERY.md).

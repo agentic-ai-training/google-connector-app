@@ -4595,3 +4595,30 @@ still handle the remote boundary. A per-worker semaphore is not global fairness.
 restrictions. It is not the keyless OS/container sandbox that runs generated code.
 Trusted activities may use private credentials; generated coding workloads must
 not inherit them. See [actual bridge and evidence boundaries](WORKSPACE_TEMPORAL_EXECUTION.md).
+
+### Deep dictionary: coalescing and wake-up generations
+
+**Coalescing register.** Keep one wake row per workflow, not copies of private
+answers. Work exists when `desired > acknowledged`. Business content stays in its
+original private ledger; only the need to reread it is compressed.
+
+**Stale ACK.** If generation 7 is in flight when approval creates generation 8,
+acknowledge only 7. Generation 8 must remain pending. The nonce identifies the
+current sender; the generation identifies which updates that sender observed.
+
+```python
+desired = 8
+inflight = 7
+acknowledged = inflight  # Do not blindly assign desired.
+assert desired > acknowledged
+```
+
+**Hint versus command idempotence.** Repeating “reread your ledger” grants no
+authority. Repeating “send email” needs stronger reconciliation. A wake signal must
+not contain a trusted approval Boolean, recipient or message body.
+
+**Transactional notification.** Commit the decision and wake generation together.
+Capture/capacity failure rolls back both. A best-effort signal after HTTP success
+has a crash gap; an outbox makes missing delivery observable and retryable. A signal
+ACK still does not prove task completion. See [implemented delivery and evidence
+limits](TEMPORAL_REFRESH_DELIVERY.md).
