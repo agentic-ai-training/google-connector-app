@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -1320,10 +1321,18 @@ async def test_verified_failed_sibling_is_reconciled_without_retry(monkeypatch):
     async def event(*args, **kwargs):
         events.append((args, kwargs))
 
+    @asynccontextmanager
+    async def commit(pool, run):
+        # This unit test isolates readback routing. Real ownership/transaction
+        # fencing is exercised against PostgreSQL in test_tool_admission.py.
+        async with pool.acquire() as conn:
+            yield conn
+
     monkeypatch.setattr(
         "app.runs.worker.reconcile_failed_step", reconciled,
     )
-    monkeypatch.setattr("app.runs.worker.append_event", event)
+    monkeypatch.setattr("app.runs.worker.append_event_conn", event)
+    monkeypatch.setattr("app.runs.worker.fenced_postgres_commit", commit)
 
     count = await _reconcile_verified_failed_siblings(
         _Pool(), {"id": "run-1", "user_id": "user-1"},

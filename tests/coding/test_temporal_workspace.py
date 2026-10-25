@@ -1,7 +1,7 @@
 """Actual Workspace executor through SDK ActivityEnvironment and disposable SQL."""
 import asyncio
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import sys
@@ -93,7 +93,8 @@ async def prepared(pool, *, receipt=True):
     environment = ActivityEnvironment()
     environment.info = replace(environment.info, namespace='test-namespace', workflow_namespace='test-namespace',
         workflow_id='gca.workspace.' + str(identity), workflow_run_id=str(execution), workflow_type='gca.workspace.v1',
-        task_queue='test-queue', activity_id='step.' + str(step_id))
+        task_queue='test-queue', activity_id='step.' + str(step_id), started_time=datetime.now(timezone.utc),
+        start_to_close_timeout=timedelta(minutes=5))
     class ForbiddenGraph:
         async def ainvoke(self, *args, **kwargs):
             pytest.fail('informational execution must not call a model')
@@ -210,9 +211,32 @@ async def test_duplicate_inflight_delivery_cannot_overwrite_uncertainty(database
     assert await duplicate.run(activities.execute_step, request) == 'uncertain'
     release.set()
     assert await first == 'uncertain'
-    assert await environment.run(activities.finalize, FinalizeRequest(reference)) == 'partial'
+    assert await environment.run(activities.finalize, FinalizeRequest(reference)) == 'failed'
     row = await database.fetchrow('SELECT * FROM agent_runs WHERE id=$1', UUID(reference.run_id))
     assert row['side_effect_integrity'] == 0 and row['functional_completion'] < 100
+
+
+async def test_duplicate_after_atomic_step_commit_does_not_invent_uncertainty(database, monkeypatch):
+    activities, environment, reference, request = await prepared(database)
+    from app.runs import worker
+    original = worker._execute_step
+    committed, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def delayed_return(*args):
+        calls.append('executor')
+        result = await original(*args)
+        committed.set()
+        await release.wait()
+        return result
+    monkeypatch.setattr(worker, '_execute_step', delayed_return)
+    first = asyncio.create_task(environment.run(activities.execute_step, request))
+    await asyncio.wait_for(committed.wait(), timeout=5)
+    duplicate = ActivityEnvironment()
+    duplicate.info = replace(environment.info, attempt=2)
+    assert await duplicate.run(activities.execute_step, request) == 'succeeded'
+    release.set()
+    assert await first == 'succeeded' and calls == ['executor']
+    assert await environment.run(activities.finalize, FinalizeRequest(reference)) == 'completed'
 
 
 async def test_approval_uses_current_plan_and_preserves_temporal_executor_pin(database, monkeypatch):

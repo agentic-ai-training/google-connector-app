@@ -60,7 +60,7 @@ initialization. No hang occurred; process-isolating those probes remains work.
 This is **invocation admission**, not atomic revocation of a remote RPC. Cancellation
 can race after a successful check, and a request already on the wire may finish.
 It does not undo effects or establish exactly-once execution. Atomic late-completion
-write fences, durable incremental receipts for partially completed composites,
+write fences (subsequently implemented locally; see the checkpoint below), durable incremental receipts for partially completed composites,
 safe retry generations, compensation and full signal/server/replay/load evidence
 remain open. Additional stale-denial event/monitoring coverage remains operational
 work; not every denied context is claimed to have a dedicated persisted event.
@@ -68,3 +68,11 @@ work; not every denied context is claimed to have a dedicated persisted event.
 No production deployment, provider/model call, VM restart, live admission/publisher
 activation or budget change occurred. See [verified recovery](TEMPORAL_VERIFIED_RECOVERY.md)
 and [Workspace Temporal execution](WORKSPACE_TEMPORAL_EXECUTION.md).
+
+## Subsequent completion checkpoint
+
+The SQL-only late-completion fences, same-transaction completion events and
+Temporal journal outcome are now implemented. PostgreSQL also has bounded
+metadata-only completion retry and reconstructs all persisted step receipts.
+This closes the local completion-record race, not the remote effect/reconciliation
+boundary. See [atomic completion and evidence limits](ATOMIC_WORKFLOW_COMPLETION.md).

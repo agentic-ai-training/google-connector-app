@@ -217,13 +217,19 @@ async def resolve_contextual_request(
 async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
                        phase=None, message=None, payload=None):
     async with pool.acquire() as conn:
-        return await conn.fetchval(
-            """INSERT INTO agent_run_events
-               (run_id,step_id,user_id,event_type,phase,message,payload)
-               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id""",
-            run_id, step_id, user_id, event_type, phase, message,
-            _json(payload or {}),
-        )
+        return await append_event_conn(conn, run_id, user_id, event_type, step_id=step_id,
+                                       phase=phase, message=message, payload=payload)
+
+
+async def append_event_conn(conn, run_id, user_id, event_type, *, step_id=None,
+                            phase=None, message=None, payload=None):
+    """Same event contract, participating in an existing business transaction."""
+    return await conn.fetchval(
+        """INSERT INTO agent_run_events
+           (run_id,step_id,user_id,event_type,phase,message,payload)
+           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id""",
+        run_id, step_id, user_id, event_type, phase, message, _json(payload or {}),
+    )
 
 
 async def create_run(pool, user_id, message, session_id, idempotency_key=None,

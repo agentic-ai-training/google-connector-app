@@ -598,3 +598,13 @@ token/lineage/deadline. Cancellation and stale contexts stop new calls without
 inventing provider failures. Worker cancellation preserves cancellation and does
 not finalize replacement-owned work. This does not revoke in-flight RPCs or prove
 atomic completion fencing. See [admission boundary](LIVE_TOOL_ADMISSION.md).
+
+25 October, subsequent checkpoint: short SQL-only completion transactions now
+lock and recheck live run/step/journal authority. Step outputs/artifacts/events and
+Temporal journal outcomes commit together; run completion/retry/error events share
+their state transaction. A completed write is not rerun to recover a lost final
+summary: persisted receipts rebuild output with at most three metadata-only
+automatic retries. Local fault-injection and SDK activity tests exercise these
+boundaries, not live provider/server behavior. See
+[atomic completion](ATOMIC_WORKFLOW_COMPLETION.md). Per-tool partial receipts,
+safe retry generations, compensation and remaining original/60–68 scope stay open.

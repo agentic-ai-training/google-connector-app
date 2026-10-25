@@ -4669,3 +4669,38 @@ lost ownership can legitimately prevent a call. Do not record a fictional provid
 attempt or turn cancellation into an execution bug. Preserve uncertainty where an
 earlier call may already have crossed the boundary. See
 [current admission gate and open guarantees](LIVE_TOOL_ADMISSION.md).
+
+### Deep dictionary: completion linearization and metadata retries
+
+**Linearization point.** Concurrent cancellation and completion need an observable
+ordering. Lock the current run, verify authority, then commit outcome and event in
+one transaction. Cancellation waiting on that lock rechecks its active-status
+predicate after the winner commits. This orders local records, not remote RPCs.
+
+**Lock-order graph.** Use run → step → journal, never a reverse edge. A fixed
+ordering removes cycles among transactions following that ordering. It is not a
+proof against every unrelated trigger/query in the database. Keep critical
+sections SQL-only, bound waits, and test actual blocked sessions.
+
+**Atomic outcome and event.** `step completed` plus its event must commit together.
+Otherwise a crash can leave a completed step with no completion notification.
+Temporal's journal outcome belongs in that same transaction. Database rollback
+undoes SQL, not an already-completed Google write.
+
+```python
+# Conceptual ordering; use the project's actual fenced transaction contexts.
+async with fenced_step_commit(pool, run, step, succeeded=True) as conn:
+    await persist_verified_outcome(conn)
+    await append_completion_event(conn)
+# Provider I/O must remain outside this lock-holding block.
+```
+
+**Metadata-only recovery.** Rebuild a final summary from committed ordered step
+outputs, rather than invoking the original operations again. Track a durable retry
+counter with the queued state/event, and stop after a finite budget. Work is O(n)
+over persisted steps plus output bytes. It is fundamentally different from retrying
+an email send. A permanent event-sink failure must not cause an unbounded queue.
+
+**Evidence granularity.** A synthetic stored write receipt proves recovery does
+not invoke a write again; it does not prove Google delivered the original message.
+See [implementation, diagrams and remaining guarantees](ATOMIC_WORKFLOW_COMPLETION.md).

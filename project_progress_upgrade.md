@@ -2552,6 +2552,12 @@ changes become production evidence.
   signal delivery, reconciliation generations, server history replay and live
   rollout remain open; this item stays unchecked. See
   `docs/WORKSPACE_TEMPORAL_EXECUTION.md`.
+  The subsequent 25-October completion checkpoint adds SQL-only live-owner fences,
+  atomic step/artifact/event/journal outcomes and bounded metadata-only PostgreSQL
+  completion retries. Saved receipts survive restarts without re-executing tools.
+  This closes local completion-record races, not remote exactly-once effects or
+  the still-open retry generations, partial-composite receipts and server/replay
+  proof. See `docs/ATOMIC_WORKFLOW_COMPLETION.md`; this item stays unchecked.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3415,3 +3421,21 @@ The fresh disk check subsequently showed 5.8 GiB free, allowing a complete codin
 regression: 1,954 passed without skips (96.90 seconds, seven previously described
 SDK/multithreaded-fork warnings). This verifies the current coding regression scope,
 not live provider behavior, rollback traffic or completion of the original goal.
+
+Progress 2026-10-25, atomic completion: current run/step/Temporal-journal authority
+is rechecked under short SQL-only locks before persisting outcomes. Step output,
+artifacts, verification/completion events and Temporal journal outcome share a
+transaction; PostgreSQL run summaries/retry/terminal events do likewise. Metadata-
+only completion retry is durably capped at three and never repeats a completed
+write or loads its Google credentials. Output includes all saved completed-step
+receipts after resume. Thirty-six focused SQL/SDK tests and 224 selected unit tests
+passed; complete coding regression passed 1,963 without skips in 82.58 seconds.
+Thirteen warnings concern the existing Google SDK deprecation and twelve existing
+multithreaded-fork process-death probes; those probes still need isolation. Targeted
+lint, medium-confidence/medium-severity security and whitespace checks passed.
+Bandit's broader low-confidence check still flags the pre-existing static SQL
+owner-predicate substitution; no user input enters that substitution. No live
+provider/model call, production change, cloud restart or budget change occurred.
+See `docs/ATOMIC_WORKFLOW_COMPLETION.md`. All other original/60–68 requirements,
+including live evidence and data-dependent learning, retain their existing scope.
+The full unit suite also passed 281 tests in 6.07 seconds (one existing SDK warning).

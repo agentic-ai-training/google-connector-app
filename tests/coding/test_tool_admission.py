@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 
 from app.runs.tool_admission import (
     ExecutionAuthority, ToolAdmissionDenied, execution_authority, require_tool_admission,
+    CompletionFenced, fenced_postgres_commit, fenced_step_commit,
 )
 
 
@@ -180,7 +181,7 @@ async def test_actual_postgres_worker_preserves_cancellation_and_clears_only_its
         if claimed:
             return None
         claimed = True
-        return {'id': UUID(state['step_id'])}
+        return {'id': UUID(state['step_id']), 'operation': 'answer_information'}
     async def dependencies(*args):
         return []
     async def cancelled(*args):
@@ -212,7 +213,7 @@ async def test_actual_worker_does_not_finalize_a_replacement_owners_run(admitted
         if claimed:
             return None
         claimed = True
-        return {'id': UUID(state['step_id'])}
+        return {'id': UUID(state['step_id']), 'operation': 'answer_information'}
     async def dependencies(*args):
         return []
     async def stolen(*args):
@@ -264,3 +265,115 @@ async def test_temporal_cancelled_workflow_finalizes_uncertainty_before_return(m
     reference = WorkflowReference('gca.temporal.start.v1','workspace',str(uuid4()),'workflow-v1','executor-v1')
     assert await WorkspaceWorkflow().run(reference) == 'cancelled'
     assert calls == ['gca.workspace.inspect', 'gca.workspace.finalize']
+
+
+async def event_table(pool):
+    await pool.execute('''CREATE TABLE agent_run_events(id BIGSERIAL PRIMARY KEY,run_id UUID,step_id UUID,user_id TEXT,
+      event_type TEXT,phase TEXT,message TEXT,payload JSONB)''')
+
+
+@pytest.mark.asyncio
+async def test_step_and_completion_event_share_one_transaction(admitted):
+    pool, authority, state = admitted
+    from app.runs.repository import append_event_conn
+    await event_table(pool)
+    run = dict(await pool.fetchrow('SELECT * FROM agent_runs WHERE id=$1', authority.run_id))
+    step = {'id': UUID(state['step_id'])}
+    token = execution_authority.set(authority)
+    try:
+        await pool.execute('''CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'synthetic event failure'; END $$;
+          CREATE TRIGGER reject_completion BEFORE INSERT ON agent_run_events FOR EACH ROW EXECUTE FUNCTION reject_event();''')
+        with pytest.raises(asyncpg.RaiseError, match='synthetic event failure'):
+            async with fenced_step_commit(pool, run, step, succeeded=True) as conn:
+                await conn.execute("UPDATE agent_run_steps SET status='completed' WHERE id=$1", step['id'])
+                await append_event_conn(conn, run['id'], run['user_id'], 'step_completed', step_id=step['id'])
+        assert await pool.fetchval('SELECT status FROM agent_run_steps') == 'running'
+        assert await pool.fetchval('SELECT count(*) FROM agent_run_events') == 0
+    finally:
+        execution_authority.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_late_completion_cannot_write_after_lease_transfer(admitted):
+    pool, authority, state = admitted
+    run = dict(await pool.fetchrow('SELECT * FROM agent_runs WHERE id=$1', authority.run_id))
+    await pool.execute("UPDATE agent_runs SET lease_owner='replacement' WHERE id=$1", authority.run_id)
+    token = execution_authority.set(authority)
+    try:
+        with pytest.raises(CompletionFenced) as error:
+            async with fenced_step_commit(pool, run, {'id': UUID(state['step_id'])}, succeeded=True):
+                pytest.fail('stale completion must not enter the commit section')
+        assert 'provider_called' not in error.value.evidence
+        assert error.value.evidence['prior_effects'] == 'requires_reconciliation'
+        assert await pool.fetchval('SELECT status FROM agent_run_steps') == 'running'
+        assert await pool.fetchval('SELECT lease_owner FROM agent_runs') == 'replacement'
+    finally:
+        execution_authority.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_run_completion_serializes_with_actual_cancellation_predicate(admitted):
+    pool, authority, _ = admitted
+    run = dict(await pool.fetchrow('SELECT * FROM agent_runs WHERE id=$1', authority.run_id))
+    token = execution_authority.set(authority)
+    cancellation = None
+    try:
+        async with pool.acquire() as cancel_conn:
+            pid = cancel_conn.get_server_pid()
+            async with fenced_postgres_commit(pool, run) as conn:
+                cancellation = asyncio.create_task(cancel_conn.execute("UPDATE agent_runs SET status='cancelled' WHERE id=$1 "
+                    "AND status IN ('queued','awaiting_approval','running')", authority.run_id))
+                async def wait_for_row_lock():
+                    while not await pool.fetchval("SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1", pid):
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(wait_for_row_lock(), timeout=2)
+                assert not cancellation.done()
+                await conn.execute("UPDATE agent_runs SET status='completed' WHERE id=$1", authority.run_id)
+            assert await cancellation == 'UPDATE 0'
+        assert await pool.fetchval('SELECT status FROM agent_runs') == 'completed'
+    finally:
+        execution_authority.reset(token)
+        if cancellation is not None and not cancellation.done():
+            await cancellation
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reject_event', [False, True])
+async def test_temporal_step_and_journal_completion_are_atomic(admitted, reject_event):
+    pool, original, state = admitted
+    from app.runs.repository import append_event_conn
+    nonce, execution = uuid4(), uuid4()
+    step_id = UUID(state['step_id'])
+    await pool.execute("UPDATE agent_runs SET orchestration_owner='temporal',lease_owner=NULL,lease_expires_at=NULL")
+    await pool.execute('ALTER TABLE temporal_workspace_steps ADD COLUMN completed_at TIMESTAMPTZ,ADD COLUMN error_category TEXT')
+    await pool.execute("INSERT INTO temporal_workspace_steps VALUES($1,$2,$3,$4,'executing',NULL,NULL)",
+        original.run_id, step_id, nonce, execution)
+    await pool.execute("INSERT INTO temporal_start_intents VALUES($1,'workspace','started',$2)", original.run_id, execution)
+    await event_table(pool)
+    authority = ExecutionAuthority('temporal', original.run_id, 'alice','version-1',str(nonce),step_id,execution,
+        datetime.now(timezone.utc)+timedelta(minutes=1))
+    run = dict(await pool.fetchrow('SELECT * FROM agent_runs'))
+    token = execution_authority.set(authority)
+    try:
+        async def complete():
+            async with fenced_step_commit(pool, run, {'id': step_id}, succeeded=True) as conn:
+                await conn.execute("UPDATE agent_run_steps SET status='completed' WHERE id=$1", step_id)
+                await append_event_conn(conn, run['id'], 'alice','step_completed',step_id=step_id)
+        if reject_event:
+            await pool.execute('''CREATE FUNCTION reject_event() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN RAISE EXCEPTION 'synthetic event failure'; END $$;
+              CREATE TRIGGER reject_completion BEFORE INSERT ON agent_run_events FOR EACH ROW EXECUTE FUNCTION reject_event();''')
+            with pytest.raises(asyncpg.RaiseError):
+                await complete()
+            assert await pool.fetchval('SELECT status FROM agent_run_steps') == 'running'
+            assert await pool.fetchval('SELECT state FROM temporal_workspace_steps') == 'executing'
+            assert await pool.fetchval('SELECT count(*) FROM agent_run_events') == 0
+        else:
+            await complete()
+            assert await pool.fetchval('SELECT status FROM agent_run_steps') == 'completed'
+            assert await pool.fetchval('SELECT state FROM temporal_workspace_steps') == 'succeeded'
+            assert await pool.fetchval('SELECT completed_at IS NOT NULL FROM temporal_workspace_steps')
+            assert await pool.fetchval('SELECT count(*) FROM agent_run_events') == 1
+    finally:
+        execution_authority.reset(token)

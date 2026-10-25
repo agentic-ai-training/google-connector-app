@@ -1,5 +1,6 @@
 """Live per-tool fencing, using trusted execution context rather than model state."""
 import asyncio
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,14 @@ class ToolAdmissionDenied(ExecutionFailure):
             category='cancelled' if reason == 'run_cancelled' else 'execution_fenced',
             component='tool_admission', boundary='pre_tool_live_ledger',
             evidence={'reason_code': reason, 'provider_called': False})
+
+
+class CompletionFenced(ToolAdmissionDenied):
+    def __init__(self, reason: str):
+        ExecutionFailure.__init__(self, 'Completion is no longer admitted; earlier provider effects may require reconciliation.',
+            category='cancelled' if reason == 'run_cancelled' else 'execution_fenced',
+            component='completion_fence', boundary='completion_live_ledger',
+            evidence={'reason_code': reason, 'prior_effects': 'requires_reconciliation'})
 
 
 async def require_tool_admission(pool, state) -> None:
@@ -95,3 +104,77 @@ async def require_tool_admission(pool, state) -> None:
         raise ExecutionFailure('Live tool admission could not be verified; no provider call was made.',
             category='network', component='tool_admission', boundary='pre_tool_live_ledger',
             evidence={'reason_code': 'admission_database_unavailable', 'provider_called': False}) from None
+
+
+class _ConnectionView:
+    """Borrow a connection only for admission reads inside its owning transaction."""
+    def __init__(self, conn):
+        self.conn = conn
+
+    @asynccontextmanager
+    async def acquire(self, **kwargs):
+        yield self.conn
+
+
+def _run_scope(run):
+    authority = execution_authority.get()
+    if (authority is None or authority.run_id != run['id'] or authority.user_id != run['user_id']
+            or authority.executor_version != run['executor_version']):
+        raise CompletionFenced('completion_context_mismatched')
+    return authority
+
+
+@asynccontextmanager
+async def fenced_postgres_commit(pool, run):
+    """SQL-only critical section; never hold this context over provider I/O."""
+    from app.runs.workflow_ownership import WorkflowOwnershipError, require_postgres_lease
+    authority = _run_scope(run)
+    if authority.owner != 'postgres' or authority.token != run['lease_owner']:
+        raise CompletionFenced('postgres_completion_context_mismatched')
+    async with pool.acquire(timeout=5) as conn, conn.transaction():
+        await conn.execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'")
+        row = await conn.fetchrow('SELECT id,status FROM agent_runs WHERE id=$1 AND user_id=$2 FOR UPDATE',
+            authority.run_id, authority.user_id)
+        if row is not None and row['status'] == 'cancelled':
+            raise CompletionFenced('run_cancelled')
+        try:
+            await require_postgres_lease(_ConnectionView(conn), 'workspace', run)
+        except WorkflowOwnershipError:
+            raise CompletionFenced('postgres_completion_fenced') from None
+        yield conn
+
+
+@asynccontextmanager
+async def fenced_step_commit(pool, run, step, *, succeeded):
+    """Lock run→step→journal; persist business outcome and journal outcome atomically."""
+    authority = _run_scope(run)
+    state = {'run_id': str(run['id']), 'step_id': str(step['id']), 'user_id': run['user_id']}
+    async with pool.acquire(timeout=5) as conn, conn.transaction():
+        await conn.execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'")
+        if not await conn.fetchval('SELECT id FROM agent_runs WHERE id=$1 AND user_id=$2 FOR UPDATE',
+                run['id'], run['user_id']):
+            raise CompletionFenced('completion_run_not_visible')
+        if not await conn.fetchval('SELECT id FROM agent_run_steps WHERE id=$1 AND run_id=$2 FOR UPDATE',
+                step['id'], run['id']):
+            raise CompletionFenced('completion_step_not_visible')
+        if authority.owner == 'temporal':
+            journal = await conn.fetchrow('''SELECT execution_token,state FROM temporal_workspace_steps
+              WHERE run_id=$1 AND step_id=$2 FOR UPDATE''', run['id'], step['id'])
+            if journal is None or str(journal['execution_token']) != authority.token or journal['state'] != 'executing':
+                raise CompletionFenced('temporal_completion_fenced')
+        try:
+            await require_tool_admission(_ConnectionView(conn), state)
+        except ToolAdmissionDenied as error:
+            raise CompletionFenced(error.evidence['reason_code']) from None
+        except ExecutionFailure:
+            raise ExecutionFailure('Completion admission could not be verified; earlier effects require reconciliation.',
+                category='network', component='completion_fence', boundary='completion_live_ledger',
+                evidence={'prior_effects': 'requires_reconciliation'}) from None
+        yield conn
+        if authority.owner == 'temporal':
+            result = await conn.execute('''UPDATE temporal_workspace_steps SET state=$1,completed_at=clock_timestamp(),
+              error_category=CASE WHEN $1='failed' THEN 'execution' ELSE NULL END
+              WHERE run_id=$2 AND step_id=$3 AND execution_token=$4 AND state='executing' ''',
+              'succeeded' if succeeded else 'failed', run['id'], step['id'], UUID(authority.token))
+            if result != 'UPDATE 1':
+                raise CompletionFenced('temporal_completion_fenced')
