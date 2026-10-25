@@ -2,12 +2,14 @@
 import asyncio
 from contextlib import suppress
 import json
+from datetime import timedelta
 from uuid import UUID
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from app.runs.temporal_contracts import FinalizeRequest, RunSnapshot, StepReference, StepRequest, WorkflowReference
+from app.runs.tool_admission import ExecutionAuthority, execution_authority
 
 
 def _json_row(row):
@@ -160,6 +162,7 @@ class WorkspaceActivities:
         stop = asyncio.Event()
         heartbeat = asyncio.create_task(self._heartbeat(request.run, token, request.step_id, stop))
         credential_token = None
+        authority_token = None
         outcome = 'uncertain'
         try:
             # Repeat the live binding check immediately before credentials, not
@@ -168,6 +171,9 @@ class WorkspaceActivities:
                 current, receipt = await self._bound(conn, request.run)
             if current is None or not receipt or current['status'] == 'cancelled':
                 return 'cancelled'
+            deadline = info.started_time + min(info.start_to_close_timeout or timedelta(minutes=5), timedelta(minutes=5))
+            authority_token = execution_authority.set(ExecutionAuthority('temporal', identity, run['user_id'],
+                self.executor_version, str(token), step_id, UUID(info.workflow_run_id), deadline))
             if step.get('operation') not in {'answer_information', 'answer_workspace_chat'}:
                 credentials = await load_google_credentials(self.pool, run['user_id'])
                 if credentials is None:
@@ -183,6 +189,8 @@ class WorkspaceActivities:
             state = await self.pool.fetchval('SELECT status FROM agent_run_steps WHERE id=$1', step_id)
             outcome = 'failed' if state == 'failed' else 'uncertain'
         finally:
+            if authority_token is not None:
+                execution_authority.reset(authority_token)
             if credential_token is not None:
                 request_google_credentials.reset(credential_token)
             stop.set()

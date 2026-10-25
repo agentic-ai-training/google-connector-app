@@ -36,6 +36,7 @@ from app.tools.base import (
 from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
 from app.runs.planner import classify_request
+from app.runs.tool_admission import require_tool_admission
 from app.okf.retriever import pack_operational_knowledge, retrieve_operational_knowledge
 from app.config.feature_flags import feature_enabled
 from app.config.settings import get_settings
@@ -471,6 +472,9 @@ async def _record_model_event(pool, state, event_type, model, fallback_model=Non
 
 
 async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool):
+    # Denial is a typed admission decision, not a fictional provider/tool failure.
+    # Keep it outside the provider-error conversion below.
+    await require_tool_admission(pool, state)
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))
     user_token = tool_user_id.set(state.get("user_id"))

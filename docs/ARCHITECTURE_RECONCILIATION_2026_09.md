@@ -591,3 +591,10 @@ contract, matching plan, quiescence and pre-effect approval when required. Chang
 invalidate proof; ordinary PostgreSQL behavior remains compatible. See
 [verified recovery](TEMPORAL_VERIFIED_RECOVERY.md). Retry generations, compensation
 and all live activation/replay gates remain open.
+
+25 October: the shared tool-invocation path now checks a private trusted execution
+context against live tenant/run/step/owner/version and PostgreSQL lease or Temporal
+token/lineage/deadline. Cancellation and stale contexts stop new calls without
+inventing provider failures. Worker cancellation preserves cancellation and does
+not finalize replacement-owned work. This does not revoke in-flight RPCs or prove
+atomic completion fencing. See [admission boundary](LIVE_TOOL_ADMISSION.md).

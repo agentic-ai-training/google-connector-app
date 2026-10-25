@@ -3398,3 +3398,20 @@ full-suite result is claimed; disk fell to 750 MB. No real provider/model call,
 production migration, activation, VM restart or budget change occurred. See
 `docs/TEMPORAL_VERIFIED_RECOVERY.md`. Retry generations, compensation, coding
 workflows and all remaining original/60–68/live requirements stay active.
+
+Progress 2026-10-25, live per-tool admission: trusted worker/activity context is now
+checked against current tenant/run/step/owner/version, lease or journal token and
+deadline before invoking the existing shared tools. Model state cannot grant that
+context. Cancellation remains cancelled; stale executions do not finalize another
+owner's run, and denials are not fictional provider/tool failures. Fifteen small
+admission tests and the selected 245-test core/context/lineage suite passed, with
+targeted lint/security/whitespace checks. No new production, cloud/model call,
+publisher/worker activation, VM restart or funding change occurred. This does not
+cover atomic late-completion fences, durable partial-composite receipts, safe retry
+generations or real server/replay/load proof; those remain open alongside all
+original/60–68 work. See `docs/LIVE_TOOL_ADMISSION.md`. Goal remains active.
+
+The fresh disk check subsequently showed 5.8 GiB free, allowing a complete coding
+regression: 1,954 passed without skips (96.90 seconds, seven previously described
+SDK/multithreaded-fork warnings). This verifies the current coding regression scope,
+not live provider behavior, rollback traffic or completion of the original goal.

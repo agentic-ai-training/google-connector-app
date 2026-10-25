@@ -49,7 +49,12 @@ class WorkspaceWorkflow:
                     await workflow.sleep(timedelta(seconds=5))
                     continue
                 self.status = snapshot.status
-                if snapshot.status in {'completed', 'cancelled', 'deleted'}:
+                if snapshot.status == 'cancelled':
+                    await workflow.execute_activity('gca.workspace.finalize', FinalizeRequest(reference, 'cancelled'),
+                        result_type=str, start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=RetryPolicy(maximum_attempts=3))
+                    return 'cancelled'
+                if snapshot.status in {'completed', 'deleted'}:
                     return snapshot.status
                 if snapshot.status in {'awaiting_approval', 'awaiting_clarification', 'partial', 'failed'}:
                     try:

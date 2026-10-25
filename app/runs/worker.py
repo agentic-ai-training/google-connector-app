@@ -21,6 +21,7 @@ from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
 from app.runs.repository import append_event
+from app.runs.tool_admission import ExecutionAuthority, execution_authority
 from app.runs.workflow_ownership import (
     WorkflowOwnershipError, postgres_claim_predicate, require_postgres_lease,
 )
@@ -1809,6 +1810,8 @@ async def _execute_step(app, pool, run, step, dependencies):
 
 async def execute_run(app, pool, run):
     await require_postgres_lease(pool, 'workspace', run)
+    authority_token = execution_authority.set(ExecutionAuthority(
+        'postgres', run['id'], run['user_id'], run['executor_version'], run['lease_owner']))
     run_id = run["id"]
     user_id = run["user_id"]
     heartbeat = asyncio.create_task(_heartbeat(pool, run_id, run["lease_owner"]))
@@ -1940,6 +1943,26 @@ async def execute_run(app, pool, run):
         run_duration.labels("completed").observe(time.perf_counter() - started)
     except Exception as exc:
         category = classify_error(exc)
+        if category in {'cancelled', 'execution_fenced'}:
+            # A stale execution must not finalize another owner's run. A user's
+            # cancellation remains cancellation, never a synthetic tool failure.
+            if category == 'cancelled':
+                async with pool.acquire() as conn, conn.transaction():
+                    current = await conn.fetchrow('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', run_id)
+                    if (current and current['deleted_at'] is None and current['status'] == 'cancelled'
+                            and current['lease_owner'] == run['lease_owner']):
+                        uncertain = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agent_run_steps WHERE run_id=$1 "
+                            "AND status='running' AND NOT read_only)", run_id)
+                        await conn.execute("UPDATE agent_run_steps SET status='cancelled',error_category='cancelled',"
+                            "error_message='User cancellation stopped further tool admission',completed_at=now() "
+                            "WHERE run_id=$1 AND status='running'", run_id)
+                        await conn.execute('''UPDATE agent_runs SET lease_owner=NULL,lease_expires_at=NULL,
+                          side_effect_integrity=CASE WHEN $2 THEN 0 ELSE side_effect_integrity END
+                          WHERE id=$1''', run_id, uncertain)
+                        await conn.execute('''INSERT INTO agent_run_events(run_id,user_id,event_type,phase,message,payload)
+                          VALUES($1,$2,'execution_cancelled','cancelled','Further tool admission stopped',$3::jsonb)''',
+                          run_id, user_id, json.dumps({'uncertain_write': bool(uncertain)}))
+            return
         retrying = False
         async with pool.acquire() as conn, conn.transaction():
             running_steps = await conn.fetch(
@@ -2045,6 +2068,7 @@ async def execute_run(app, pool, run):
         run_failures.labels(category).inc()
         run_duration.labels(terminal_status).observe(time.perf_counter() - started)
     finally:
+        execution_authority.reset(authority_token)
         if credential_token is not None:
             request_google_credentials.reset(credential_token)
         heartbeat.cancel()

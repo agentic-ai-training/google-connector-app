@@ -4645,3 +4645,27 @@ in-order subsequence. Verifying only one artifact cannot establish the whole tas
 slow process saved it. Append a new observation to renew, preserving the older one.
 A B-tree prefix supports O(log n) proof lookup; source hashing costs O(source bytes
 plus relevant artifact metadata). See [implemented recovery](TEMPORAL_VERIFIED_RECOVERY.md).
+
+### Deep dictionary: trusted context and admission races
+
+**Context variable versus model state.** An immutable `ContextVar` value scopes
+trusted worker authority to one asynchronous call tree. A dictionary produced or
+augmented by a model is not the same authority. Reset tokens in `finally`, and
+keep credentials/nonces out of prompts. Child tasks inherit context, not a global
+cross-tenant mutable singleton. Process/container isolation remains separate.
+
+**Freshness versus cached permission.** A once-valid plan cannot prove that the
+user has not cancelled or that another worker now owns the lease. Recheck current
+ledger state at the invocation boundary. An uncertain database result is not
+permission to continue. The check is bounded and content-free.
+
+**TOCTOU.** Time-of-check/time-of-use races remain between the database check and
+remote invocation. A short admission check is not an atomic transaction with
+Google. Holding a database lock over a slow cloud call is not a universal solution.
+Reconcile already-admitted effects and separately fence their completion writes.
+
+**Expected lifecycle denial versus tool failure.** Cancellation, erased state and
+lost ownership can legitimately prevent a call. Do not record a fictional provider
+attempt or turn cancellation into an execution bug. Preserve uncertainty where an
+earlier call may already have crossed the boundary. See
+[current admission gate and open guarantees](LIVE_TOOL_ADMISSION.md).
