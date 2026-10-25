@@ -112,6 +112,11 @@ and blocked records. It does not automatically delete evidence, cancel workflows
 switch owners or prove external drain. The broader [single-owner rollout contract](WORKFLOW_OWNERSHIP.md)
 and all unchecked Sprint 62 obligations remain in force.
 
+The next schema-028 source checkpoint adds the first actual Workspace business
+workflow/activities through the [existing executor bridge](WORKSPACE_TEMPORAL_EXECUTION.md).
+This supersedes only the historical absence of that Workspace code—not the live
+server, replay, coding-workflow, signal delivery, reconciliation or activation gates.
+
 Sources: [official Python client](https://docs.temporal.io/develop/python/client/temporal-client),
 [retry/error handling](https://docs.temporal.io/develop/python/best-practices/error-handling),
 [official SDK distribution](https://pypi.org/project/temporalio/).

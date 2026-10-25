@@ -94,3 +94,9 @@ The next schema-027 checkpoint supplies [transactional start intents and a bound
 SDK adapter](TEMPORAL_START_DELIVERY.md). It closes the local database-to-start
 delivery contract with default-off transport; it does not supply the still-missing
 business workflows, activities, replay or live service proof described above.
+
+The subsequent schema-028 checkpoint implements the first actual
+[Workspace workflow and existing-executor activity bridge](WORKSPACE_TEMPORAL_EXECUTION.md).
+Local SDK activity/sandbox and real SQL tests exist; coding activities, safe retry/
+reconciliation, API signals, server replay/live rollout and operational gates remain
+open. Earlier “not implemented” notes describe the corresponding historical stage.

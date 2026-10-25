@@ -4552,3 +4552,46 @@ an external operation remains uncertain. Preserve only the minimal reconciliatio
 reference, never reconstruct the deleted prompt/body, and forbid new starts when
 the parent is absent. External history erasure is a separate lifecycle obligation.
 See [the current startup controller and its exact evidence limits](TEMPORAL_START_DELIVERY.md).
+
+### Deep dictionary: deterministic workflow, activity and uncertain effect
+
+**Deterministic control flow is not a hardcoded business answer.** The outer
+workflow replays commands/timers using stable recorded results. Dynamic language
+understanding and Google calls belong inside activities. Our workflow reads ready
+step UUIDs from the existing plan DAG; it does not introduce one canned workflow
+for each English sentence. Typed tools and bounded model fallback remain inside
+the same business executor as before.
+
+**Activity is a retry boundary.** Selecting a function as an activity chooses the
+unit the scheduler may redeliver. “Send email then store receipt” has a gap after
+send. Record the intent before crossing the boundary, and reconcile the same
+identity after loss. A completed SDK call is not a substitute for postconditions.
+Current business activities use one automatic attempt; metadata reads can retry.
+
+**Knowledge lattice / monotone uncertainty.** Once two overlapping executions or a
+lost worker make an effect uncertain, a late local success alone cannot erase the
+uncertainty. Keep the original fact and require an independent reconciliation
+proof. A Boolean `success` field loses this information; a small state machine
+with an immutable identity and protected uncertainty is more expressive.
+
+```text
+new → executing → succeeded
+              ↘ failed (known verified failure)
+              ↘ uncertain (lost or overlapping outcome)
+uncertain ⇏ succeeded merely because a late callback arrived
+```
+
+**Signals as hints, not authority.** A refresh wakes the workflow; it does not
+approve a send. Reread the authenticated approval record and compare the hash of
+the current typed plan. Capture the signal revision before an activity read, so
+a notification arriving during that read is not lost before the wait starts.
+
+**Concurrency versus parallel authority.** Four ready DAG steps may run together,
+but no two controllers may own the same business step. A row lock plus unique
+journal claim prevents duplicate admission; provider idempotency and reconciliation
+still handle the remote boundary. A per-worker semaphore is not global fairness.
+
+**Sandbox versus isolation.** The Temporal Python sandbox checks workflow replay
+restrictions. It is not the keyless OS/container sandbox that runs generated code.
+Trusted activities may use private credentials; generated coding workloads must
+not inherit them. See [actual bridge and evidence boundaries](WORKSPACE_TEMPORAL_EXECUTION.md).

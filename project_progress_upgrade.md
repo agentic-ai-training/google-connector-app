@@ -2544,6 +2544,14 @@ changes become production evidence.
   See `docs/WORKFLOW_EVENT_OUTBOX.md`; this item stays unchecked.
 - [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
   ledger projections, retries, timers, signals, cancellation and compensation.
+  Local schema-028 checkpoint now implements the first Workspace SDK workflow,
+  typed reference-only activities and real existing step-executor/verifier bridge.
+  A write-ahead activity journal rejects repeated uncertain effects; finalization
+  preserves truthful completion and existing incident/evaluation facts. Local SDK
+  sandbox/activity and full-schema SQL tests pass. Coding workflow, authenticated
+  signal delivery, reconciliation generations, server history replay and live
+  rollout remain open; this item stays unchecked. See
+  `docs/WORKSPACE_TEMPORAL_EXECUTION.md`.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3337,3 +3345,26 @@ Final local evidence: all 1,906 coding tests passed without skips (52.49 seconds
 one existing Google SDK deprecation warning), plus targeted lint/security/whitespace
 checks. The optional SDK was installed locally without provider extras and pinned
 for CI contract tests; no Temporal service was connected or started.
+
+Progress 2026-10-24, actual Workspace Temporal control flow: schema 028 and typed
+SDK workflow/activities now bridge to the existing `_execute_step`, tool contracts,
+LangGraph fallback and postcondition verifier rather than a toy parallel executor.
+History carries only references/state. Current binding/first-execution/approval
+checks precede credentials. The write-ahead journal prevents redelivery from
+repeating an uncertain effect; late success cannot overwrite uncertainty or create
+false 100%. Timers, bounded metadata retries/lifecycle, refresh hints, cancellation,
+model-usage summaries and idempotent failure/evaluation projection are implemented.
+Existing clarification/approval preserves immutable Temporal version pins while
+retaining old PostgreSQL behavior. Twelve focused local tests passed through the
+actual SDK sandbox/activity environment and full disposable schema; migration
+upgrade-to-028/downgrade-to-002/upgrade-to-028 plus empty-data retention passed.
+These are not real server/replay/Google mutation proofs. Coding activities, API
+signal delivery, reconciliation/retry generations, compensation and all outstanding
+live/capacity/privacy gates remain open. No provider call, live worker, transport
+activation, production migration, VM restart or budget change occurred. See
+`docs/WORKSPACE_TEMPORAL_EXECUTION.md`. The original goal remains active.
+Checkpoint recorded 2026-10-25: the final full coding suite passed 1,918 tests
+without skips (55.85 seconds; seven warnings). Six warnings concern existing
+process-death probes using fork after multithreaded SDK initialization; one is the
+existing Google SDK deprecation. No hang occurred, but process-isolating those
+probes remains test hardening. Targeted lint/security/whitespace checks passed.

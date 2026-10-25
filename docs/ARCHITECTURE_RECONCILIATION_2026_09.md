@@ -567,3 +567,12 @@ memo rather than reassigning the run or restarting writes. Parent erasure remove
 private business data without erasing a pending start obligation; missing parents
 cannot authorize fresh starts. Local SQL and SDK-double tests are not real Temporal
 server/business/replay evidence. See [startup delivery](TEMPORAL_START_DELIVERY.md).
+
+Schema 028 adds the actual first Workspace Temporal workflow and typed activities,
+using the existing executor/verifier and private business ledger. A per-step
+write-ahead journal blocks duplicate uncertain effects; history gets references,
+not user content. Local SDK sandbox/activity and SQL tests verify the real
+informational executor path, approval pins and truthful uncertainty handling.
+No Temporal server/worker/admission is active; coding workflow, API signal delivery,
+reconciliation, replay and live evidence remain open. See
+[current Workspace bridge](WORKSPACE_TEMPORAL_EXECUTION.md).
