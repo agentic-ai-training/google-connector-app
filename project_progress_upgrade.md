@@ -2575,6 +2575,13 @@ changes become production evidence.
   an incompatible command was rejected. This is tested local Workspace evidence,
   not real writes, abrupt-crash/HA/load or production/cross-version rollout proof.
   See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`; this story remains unchecked.
+  Schema 033 adds the PostgreSQL half of ordered-prefix continuation: actual
+  authenticated Resume verifies fresh receipts/readback, issues a bounded
+  source-bound single-use grant, and the shared tool boundary reuses exactly the
+  proven prefix while invoking only the never-attempted suffix. Actual Sheet and
+  Chat helper tests cover reuse and full readback. Temporal write generations,
+  uncertain/attempted suffix recovery and compensation remain open. See
+  `docs/VERIFIED_PREFIX_CONTINUATION.md`; this story remains unchecked.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3512,3 +3519,25 @@ migration, publisher/admission activation, model/Google call, VM restart or paid
 allocation occurred. See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`. Production rollout,
 real writes, abrupt crashes/HA/load, cross-version replay, coding workflows and all
 other unchecked original/60–68 requirements remain open. The goal stays active.
+
+Progress 2026-10-26, verified-prefix continuation: schema 033 and the actual
+authenticated Resume/PostgreSQL executor now recover an exact ordered write
+prefix without repeating its provider call. Fresh private receipts, deterministic
+readback, a rechecked source/plan/dependency snapshot and current approval issue
+an expiring single-use lease-bound grant. The real Sheet and Chat helpers consume
+that grant, reuse the prior result, enforce resource lineage and invoke only the
+never-attempted suffix. Unknown/attempted suffixes and Temporal write generations
+stay blocked. Prefix artifacts are retained only after readback; ordinary failed
+step results no longer become falsely verified/safe-to-delete artifacts. Grant,
+queue and reconciliation event changes commit atomically. Twenty-seven focused
+prefix/artifact cases are included in the final 2,321 coding/unit tests passed
+without skips (94.87 seconds; thirteen existing SDK/fork warnings). All 44 golden
+plans, 16 no-network replay fixtures, disposable upgrade-to-033/downgrade-to-002/
+upgrade-to-033 plus retention, targeted lint/security/whitespace passed. Five
+actual local Temporal server cases passed in 6.53 seconds and all five histories
+replayed offline in a fresh process; these remain read/info/restart proofs, not
+write-generation evidence. No production/cloud restart, provider/model call or
+new spending occurred. See `docs/VERIFIED_PREFIX_CONTINUATION.md`. Temporal write
+generations, uncertain/attempted suffix reconciliation, compensation, coding
+workflows, production/load/restore proof and all other original/60–68 requirements
+remain open. The original goal stays active, not complete or paused.

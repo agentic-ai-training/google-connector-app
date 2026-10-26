@@ -476,6 +476,13 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
     # Denial is a typed admission decision, not a fictional provider/tool failure.
     # Keep it outside the provider-error conversion below.
     await require_tool_admission(pool, state, tool_name=tool.name)
+    from app.runs.prefix_continuation import before_tool, after_tool
+    reused, recovered = await before_tool(pool, state, tool.name, call)
+    if reused:
+        envelope = project_tool_result(tool.name, recovered,
+            max_tokens=get_settings().runtime_tool_result_max_tokens)
+        return ToolMessage(content=json.dumps(envelope.compact_result, default=str),
+            tool_call_id=call['id'], name=tool.name), recovered, envelope
     receipt = await begin_receipt(pool, state, tool.name, call)
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))
@@ -493,6 +500,7 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
         # Persist the response before projection, logging or the next tool can
         # fail. Receipt persistence failure must not become a normal ToolMessage.
         await finish_receipt(pool, receipt, result=result, returned=True)
+        after_tool(tool.name, call, result)
         envelope = project_tool_result(
             tool.name, result,
             max_tokens=get_settings().runtime_tool_result_max_tokens,

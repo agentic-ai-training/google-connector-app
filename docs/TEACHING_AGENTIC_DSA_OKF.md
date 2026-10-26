@@ -4830,3 +4830,54 @@ environment whitelist keep developer/API credentials out of these trusted tests.
 They are not an OS isolation boundary for arbitrary generated code. Bound process
 lifetimes, stop only the owned process group, verify listener shutdown and retain
 only synthetic evidence. See [actual proof, commands and limitations](LOCAL_TEMPORAL_SERVER_PROOF.md).
+
+### Deep dictionary addition: verified-prefix continuation
+
+**Verified prefix versus a retry.** For an ordered contract `T = (create, populate)`,
+an encrypted successful `create` result does not complete the task. After current
+provider readback, recovery may return exactly that result to the executor without
+calling `create` again, then invoke `populate` only if it was never attempted.
+An unknown `populate` acceptance is not evidence that it is safe to repeat.
+
+**Sequence invariant.** With cursor `i`, the next invocation must equal `T[i]`.
+For `i < k`, where `k` is the proven prefix length, both tool identity and canonical
+arguments must match the saved receipt. For `i >= k`, use ordinary admission and a
+new write-ahead receipt. A cursor is not permission: tenant, lease, approval,
+source hash and expiry must also remain current. Reaching `len(T)` is necessary
+but not sufficient: the verifier must still prove the complete requested state.
+
+```python
+# Teaching model, not the project's authorization implementation.
+def classify_next(required, prefix, cursor, name, arguments):
+    if cursor >= len(required) or name != required[cursor]:
+        raise ValueError('out-of-order operation')
+    if cursor < len(prefix):
+        saved = prefix[cursor]
+        if saved['arguments'] != arguments:
+            raise ValueError('not the same operation')
+        return 'reuse', saved['result']
+    return 'new invocation requires live authority and write-ahead evidence', None
+```
+
+**Capability grant versus cached data.** A cached result answers “what happened?”
+An expiring single-use grant answers “may this exact plan continue now?” Separate
+them: schema 033 grants contain hashes and opaque references; private results stay
+encrypted. A result being present never overrides current authorization.
+
+**Compare-and-set and fencing.** Consumption takes run → step locks and records
+the current lease hash once. Concurrent callers cannot both consume the same
+grant. Per-call cursor admission also rejects concurrent use of the same
+in-memory prefix. Neither a Python `ContextVar` nor an in-memory lock alone is a
+durable ownership boundary; live SQL fencing provides that boundary.
+
+**Complexity.** Checking one position is O(1) in contract length; comparing its
+arguments costs O(argument bytes). Loading/hashing the bounded receipt sequence
+costs O(k + payload bytes), and hashing dependencies costs O(dependency output
+bytes). Provider readback adds real network latency. “O(1) cursor” does not imply
+O(1) recovery, nor do more tokens make uncertain external writes retryable.
+
+**Monotone budgets.** Explicit continuations append immutable grants and increment
+attempt counts. They do not reset the automatic retry counter or erase prior
+uncertainty. The current local path permits at most three explicit PostgreSQL
+continuations; Temporal needs its own journal generation rather than inheriting
+that permission. See [actual implementation and limits](VERIFIED_PREFIX_CONTINUATION.md).

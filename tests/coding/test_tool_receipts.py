@@ -231,7 +231,8 @@ async def test_partial_composite_does_not_become_false_success_or_recreate_exist
     await failed_sheet(c, monkeypatch, composite=True)
     from app.api.routes.runs import _reconcile_and_resume
     decision = await _reconcile_and_resume(c.pool, c.identity, 'synthetic-user', c.step_id)
-    assert decision.state == 'manual_required' and decision.reason_code == 'write_contract_incomplete'
+    # Historical/planless data cannot authorize a fresh continuation grant.
+    assert decision.state == 'manual_required' and decision.reason_code == 'prefix_continuation_authority_required'
     assert c.calls == ['provider']
     assert await c.pool.fetchval('SELECT status FROM agent_run_steps WHERE id=$1', c.step_id) == 'failed'
 

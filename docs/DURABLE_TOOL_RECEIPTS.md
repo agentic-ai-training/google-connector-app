@@ -136,3 +136,11 @@ universal automatic repair is claimed. The original goal remains active.
 See [invocation admission](LIVE_TOOL_ADMISSION.md),
 [atomic completion](ATOMIC_WORKFLOW_COMPLETION.md) and
 [verified Temporal recovery](TEMPORAL_VERIFIED_RECOVERY.md).
+
+26 October follow-up: schema 033 adds authenticated, expiring single-use
+**PostgreSQL verified-prefix continuation** for the existing ordered contracts.
+A fresh exact prefix that passed readback can be reused without another RPC;
+only its never-attempted suffix runs under the existing admission/receipt/verifier
+path. Uncertain/attempted suffixes and Temporal write generations remain blocked,
+not reclassified as safely retryable. See
+[implementation, authority and evidence limits](VERIFIED_PREFIX_CONTINUATION.md).

@@ -13,7 +13,7 @@ from app.tools.contracts import (
 
 
 ReconciliationState = Literal[
-    "safe_to_retry", "already_completed", "manual_required",
+    "safe_to_retry", "already_completed", "manual_required", "continue_verified_prefix",
 ]
 
 
@@ -119,6 +119,16 @@ async def reconcile_failed_step(
     )
     evidence["verification"] = outcome.evidence
     if outcome.passed and not contract_satisfied(contract, executions):
+        from app.runs.prefix_continuation import ordered_prefix
+        # Only fresh private invocation evidence can support continuation. A
+        # legacy partial list or arbitrary successful prose cannot grant it.
+        if step.get('receipt_source_digest') and ordered_prefix(step, executions):
+            names = {item['tool'] for item in executions}
+            unaccounted = any(item.get('tool_name') in WRITE_TOOLS and item.get('tool_name') not in names
+                for item in step.get('historical_tool_attempts') or [])
+            if not unaccounted:
+                return ReconciliationDecision('continue_verified_prefix', 'verified_ordered_prefix', step_id,
+                    {**evidence, 'prefix_length': len(executions), 'automatic_retry': False})
         return ReconciliationDecision('manual_required', 'write_contract_incomplete', None, evidence)
     if outcome.passed:
         return ReconciliationDecision(

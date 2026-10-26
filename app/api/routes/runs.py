@@ -22,6 +22,7 @@ from app.runs.repository import (
     InvalidClarificationAnswers,
     RunLimitExceeded,
     append_event,
+    append_event_conn,
     cancel_run,
     clarify_run,
     create_run,
@@ -206,6 +207,9 @@ async def _reconcile_and_resume(
             run_id, step_row["id"],
         )
         receipts = await receipt_evidence(conn, run_id, step_row['id'], user_id)
+        reconciliation_observed_at = await conn.fetchval('SELECT clock_timestamp()')
+        from app.runs.prefix_continuation import source_hash as prefix_source_hash
+        prefix_source = await prefix_source_hash(conn, dict(run_row), dict(step_row))
         await conn.execute(
             """UPDATE agent_runs SET current_phase='reconciling',
                current_step_id=$1 WHERE id=$2""",
@@ -215,6 +219,7 @@ async def _reconcile_and_resume(
     run = dict(run_row)
     step = dict(step_row)
     step['receipt_write_uncertain'] = receipts.blocked
+    step['receipt_source_digest'] = receipts.digest
     if receipts.executions:
         output = dict(step.get('output_data') or {})
         # New receipts are the ordered invocation evidence. Do not merge stale
@@ -272,9 +277,17 @@ async def _reconcile_and_resume(
                 max_tokens=2_000).compact_result} for item in receipts.executions]
             locked_step['output_data'] = {**step['output_data'], 'tool_executions': compact}
         try:
+            from app.runs.prefix_continuation import bind_prefix_decision
+            decision = await bind_prefix_decision(conn, dict(current_run), dict(locked), decision,
+                receipts, user_id, resume_executor_version, reconciliation_observed_at, prefix_source)
             decision = await bind_decision(conn, dict(current_run), locked_step, decision, proof_source, user_id)
         except ResolutionConflict as error:
             raise HTTPException(409, str(error)) from None
+        if decision.state == 'continue_verified_prefix':
+            from app.runs.worker import _store_artifacts
+            from app.runs.verifier import extract_artifacts
+            # Only the readback-proven prefix, not the unfinished whole step.
+            await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions), verified=True)
         if decision.state == "already_completed":
             if receipts.executions and current_run.get('orchestration_owner') != 'temporal':
                 from app.runs.temporal_resolution import verified_receipt
@@ -283,14 +296,14 @@ async def _reconcile_and_resume(
                                 'verification': 'Deterministic readback reconciled per-tool receipts'}, default=str))
                 from app.runs.worker import _store_artifacts
                 from app.runs.verifier import extract_artifacts
-                await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions))
+                await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions), verified=True)
             await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',
                    error_category=NULL,error_message=NULL,completed_at=COALESCE(completed_at,now())
                    WHERE id=$1""",
                 step_row["id"],
             )
-        elif decision.state == "safe_to_retry":
+        elif decision.state in {"safe_to_retry", "continue_verified_prefix"}:
             await conn.execute(
                 """UPDATE agent_run_steps SET status='pending',started_at=NULL,
                    completed_at=NULL,error_category=NULL,error_message=NULL WHERE id=$1""",
@@ -314,22 +327,22 @@ async def _reconcile_and_resume(
                    WHERE id=$1 AND user_id=$2""",
                 run_id, user_id, resume_executor_version,
             )
-    await append_event(
-        pool, run_id, user_id, "run_reconciled",
-        step_id=step_row["id"], phase="reconciliation",
-        message=f"Resume decision: {decision.reason_code}",
-        payload={
-            "state": decision.state,
-            "reason_code": decision.reason_code,
-            "resume_step_id": decision.resume_step_id,
-            "evidence": decision.evidence,
-            "previous_executor_version": previous_executor_version,
-            "resume_executor_version": (
-                resume_executor_version
-                if decision.state != "manual_required" else previous_executor_version
-            ),
-        },
-    )
+        await append_event_conn(
+            conn, run_id, user_id, "run_reconciled",
+            step_id=step_row["id"], phase="reconciliation",
+            message=f"Resume decision: {decision.reason_code}",
+            payload={
+                "state": decision.state,
+                "reason_code": decision.reason_code,
+                "resume_step_id": decision.resume_step_id,
+                "evidence": decision.evidence,
+                "previous_executor_version": previous_executor_version,
+                "resume_executor_version": (
+                    resume_executor_version
+                    if decision.state != "manual_required" else previous_executor_version
+                ),
+            },
+        )
     write_reconciliation.labels(
         step.get("service") or "unknown",
         step.get("operation") or "unknown",

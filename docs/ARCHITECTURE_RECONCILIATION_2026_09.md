@@ -640,3 +640,14 @@ after shutdown; an incompatible activity command was rejected. This supplies loc
 server evidence for those tested paths, not production availability, abrupt crash,
 HA, real writes or cross-version rollout proof. CI now has an opt-in runner/evidence
 step but no remote CI result is claimed. See [scope and artifacts](LOCAL_TEMPORAL_SERVER_PROOF.md).
+
+26 October, prefix recovery: schema 033 connects the actual authenticated Resume
+and PostgreSQL executor to exact, readback-verified ordered-prefix reuse. A
+single-use grant binds the current plan, input/dependency evidence, approvals,
+cohort, unchanged executor and encrypted receipt snapshot. The existing Sheet and
+Chat typed helpers receive the original result without recreating the resource;
+only the never-attempted suffix invokes a provider, then full readback decides
+completion. Grant/queue/reconciliation event commit atomically. Unknown writes,
+attempted suffixes, changed authority and Temporal write generations stay blocked.
+This is local synthetic-provider proof, not production or exactly-once remote
+transactions. See [details and rollout limits](VERIFIED_PREFIX_CONTINUATION.md).

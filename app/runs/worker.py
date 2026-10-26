@@ -1258,23 +1258,24 @@ async def _create_deterministic_calendar_event(pool, run, step):
     }
 
 
-async def _store_artifacts(conn, run, step, artifacts):
+async def _store_artifacts(conn, run, step, artifacts, *, verified=False):
     for index, artifact in enumerate(artifacts):
         external_id = artifact.get("external_id") or f"url-{index}"
         await conn.execute(
             """INSERT INTO agent_artifacts
                (run_id,step_id,user_id,artifact_type,external_id,url,metadata,
                 verification_status,verified_at,safe_to_delete)
-               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'verified',now(),$8)
+               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$9,CASE WHEN $9='verified' THEN now() END,$8)
                ON CONFLICT(run_id,artifact_type,external_id) DO UPDATE SET
                  url=COALESCE(EXCLUDED.url,agent_artifacts.url),
                  metadata=agent_artifacts.metadata||EXCLUDED.metadata,
-                 safe_to_delete=agent_artifacts.safe_to_delete OR EXCLUDED.safe_to_delete,
-                 verification_status='verified',verified_at=now()""",
+                 safe_to_delete=CASE WHEN EXCLUDED.verification_status='verified'
+                   THEN agent_artifacts.safe_to_delete OR EXCLUDED.safe_to_delete ELSE FALSE END,
+                 verification_status=EXCLUDED.verification_status,verified_at=EXCLUDED.verified_at""",
             run["id"], step["id"], run["user_id"], step["service"] or "google_resource",
             external_id, artifact.get("url"),
             json.dumps({"source": "tool_result", **artifact.get("metadata", {})}),
-            bool(artifact.get("safe_to_delete")),
+            bool(verified and artifact.get("safe_to_delete")), 'verified' if verified else 'unverified',
         )
 
 
@@ -1327,6 +1328,12 @@ async def _reconcile_verified_failed_siblings(pool, run) -> int:
 
 
 async def _execute_step(app, pool, run, step, dependencies):
+    from app.runs.prefix_continuation import continuation_scope
+    async with continuation_scope(pool, run, step):
+        return await _execute_step_body(app, pool, run, step, dependencies)
+
+
+async def _execute_step_body(app, pool, run, step, dependencies):
     run_id = run["id"]
     user_id = run["user_id"]
     await append_event(pool, run_id, user_id, "step_started", step_id=step["id"],
@@ -1748,6 +1755,8 @@ async def _execute_step(app, pool, run, step, dependencies):
     if not verified and error_category:
         evidence = result.get("error") or evidence
     if verified:
+        from app.runs.prefix_continuation import require_complete_prefix
+        require_complete_prefix()
         output = _verified_terminal_output(step, output, result)
     content_lineage = None
     if verified and step.get("operation") == "compose":
@@ -1779,7 +1788,7 @@ async def _execute_step(app, pool, run, step, dependencies):
             elapsed_ms, None if verified else (error_category or "verification"),
             None if verified else evidence, step["id"],
         )
-        await _store_artifacts(conn, run, step, artifacts)
+        await _store_artifacts(conn, run, step, artifacts, verified=verified)
         await append_event_conn(
             conn, run_id, user_id,
             "verification_succeeded" if verified else "verification_failed",
