@@ -4785,3 +4785,48 @@ otherwise repeated expiry can grow metadata indefinitely without running a tool.
 disjoint. A CI set-equality assertion against the trusted registry detects missing
 classification. A live invocation guard enforces it; a Boolean in a plan is not
 sufficient by itself. See [actual read-generation implementation and open proof](TEMPORAL_READ_RETRY_GENERATIONS.md).
+
+### Deep dictionary: server histories, replay and proof boundaries
+
+**Workflow replay versus replaying tool effects.** The SDK compares deterministic
+workflow commands with recorded history. It does not send the old Gmail message
+again. Activities remain I/O boundaries. Deterministic workflow code must not read
+the private database or call model/Google APIs during replay.
+
+**Mock fixture versus real server history.** A simulator can check a proposed plan
+without network effects. A genuine server history additionally records scheduling,
+activity completions, signals, cancellation and timers. Keep both tests; neither
+alone proves all production behavior. Current local tests exercise both real
+startup/refresh adapters and saved-history replay, not just a fake success flag.
+
+**Worker restart versus server restart.** A new task poller reconstructs workflow
+state from history still held by the server. A server restart must also recover
+its persistence. The local test stops/reopens SQLite and retains the first
+execution ID. A clean stop is not abrupt crash, replica failover or power-loss
+durability. PostgreSQL restore needs its own drill.
+
+```mermaid
+flowchart LR
+    W[Deterministic workflow] --> C[Recorded commands and events]
+    C --> H[Bounded content-checked history]
+    H --> R[Fresh offline replay]
+    R --> A{Commands still compatible?}
+    A -->|Yes| P[Replay evidence]
+    A -->|No| F[Reject incompatibility; do not invoke external tools]
+```
+
+**Negative control.** A test that only accepts matching history might not reveal
+a broken verifier. Deliberately alter one scheduled activity type and require
+rejection. Pair that with successful original-history replay to distinguish a
+working compatibility check from a checker that rejects everything.
+
+**Integrity versus provenance.** A SHA-256 digest detects disagreement with the
+saved metadata. It does not prove who generated that metadata or approve a
+candidate for deployment. Trusted CI identity, scoped publication and human
+promotion gates remain separate. A `replay_passed` Boolean is not proof by itself.
+
+**Environment isolation versus sandboxing.** A temporary HOME/cwd and explicit
+environment whitelist keep developer/API credentials out of these trusted tests.
+They are not an OS isolation boundary for arbitrary generated code. Bound process
+lifetimes, stop only the owned process group, verify listener shutdown and retain
+only synthetic evidence. See [actual proof, commands and limitations](LOCAL_TEMPORAL_SERVER_PROOF.md).

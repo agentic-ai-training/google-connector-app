@@ -146,3 +146,13 @@ Schema 030 adds [source-bound verified-completion recovery](TEMPORAL_VERIFIED_RE
 through the actual resume helper. Original uncertainty remains; deterministic
 readback can append an expiring resolution. Retry generations, lost-worker
 quiescence, compensation and real server/replay evidence remain open.
+
+## Subsequent real-server evidence — 26 October
+
+The SDK-double boundary described in earlier checkpoints is now supplemented by
+five actual loopback server scenarios and fresh-process saved-history replay.
+They cover information execution, lost-start ACK recovery, read-generation resume
+after worker restart, cancellation, erasure and clean SQLite server restart with
+stable first execution. No real Google/model writes or production service were
+activated. Abrupt crash/HA/load, coding workflows and production/cross-version
+rollout evidence remain open. See [real-server proof](LOCAL_TEMPORAL_SERVER_PROOF.md).

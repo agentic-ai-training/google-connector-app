@@ -135,3 +135,9 @@ See [write-ahead tool receipts](DURABLE_TOOL_RECEIPTS.md),
 [verified write recovery](TEMPORAL_VERIFIED_RECOVERY.md),
 [live invocation gates](LIVE_TOOL_ADMISSION.md) and
 [original ownership constraints](WORKFLOW_OWNERSHIP.md).
+
+Subsequent real-server checkpoint: read-generation Resume and actual refresh were
+also exercised after worker restart and clean SQLite server restart, followed by
+fresh-process history replay. This strengthens the local evidence above but does
+not establish production model/write, abrupt crash, HA or cross-version rollout
+correctness. See [measured server scope](LOCAL_TEMPORAL_SERVER_PROOF.md).

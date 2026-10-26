@@ -630,3 +630,13 @@ tokens and callbacks distinguish generations; old uncertainty stays intact and
 old deliveries cannot poison new work. This is not a write retry, owner transfer,
 live activation or history-replay proof. See
 [read generations and deployment limits](TEMPORAL_READ_RETRY_GENERATIONS.md).
+
+26 October, real local server checkpoint: actual SDK startup/refresh adapters,
+Workspace workflow/activities and private SQL were exercised against loopback
+Temporal Server 1.32.0 (CLI 1.9.1, SDK 1.34.0). Five scenarios covered lost-start ACK,
+worker restart/read generation, cancellation, erasure and persistent SQLite server
+restart. Saved histories replayed both in-process and in a fresh offline process
+after shutdown; an incompatible activity command was rejected. This supplies local
+server evidence for those tested paths, not production availability, abrupt crash,
+HA, real writes or cross-version rollout proof. CI now has an opt-in runner/evidence
+step but no remote CI result is claimed. See [scope and artifacts](LOCAL_TEMPORAL_SERVER_PROOF.md).

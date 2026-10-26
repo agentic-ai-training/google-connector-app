@@ -2569,6 +2569,12 @@ changes become production evidence.
   remains, and stale deliveries cannot alter newer generations. Write retries,
   unfinished-composite execution, compensation and real server/replay proof remain
   open. See `docs/TEMPORAL_READ_RETRY_GENERATIONS.md`; this story stays unchecked.
+  Five real loopback Temporal server scenarios now cover startup ACK loss,
+  worker/read-generation resume, cancellation, erasure and clean persistent SQLite
+  restart. All five saved histories also replayed in a fresh offline process;
+  an incompatible command was rejected. This is tested local Workspace evidence,
+  not real writes, abrupt-crash/HA/load or production/cross-version rollout proof.
+  See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`; this story remains unchecked.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3488,3 +3494,21 @@ VM restart or budget change occurred. Write retry generations, partial-composite
 continuation, compensation, coding workflows and actual server/history replay,
 load/rollout and all other original/60–68 work remain open. See
 `docs/TEMPORAL_READ_RETRY_GENERATIONS.md`. The full original goal remains active.
+
+Progress 2026-10-26, actual local Temporal proof: a sanitized runner now starts
+pinned CLI 1.9.1/Server 1.32.0 on loopback, drives real SDK 1.34.0 startup/refresh,
+Workspace workflow/activities and disposable migrated PostgreSQL, then shuts down
+and verifies listeners/process groups. Five scenarios passed: lost start ACK,
+worker restart/read-generation resume, cancellation, erasure and clean SQLite
+server restart retaining first execution. All five saved content-checked histories
+also passed fresh-process offline replay; an intentionally incompatible command
+was rejected. Final server run: 5 passed in 5.18 seconds. Final coding/unit run:
+2,294 passed without skips in 66.15 seconds (thirteen existing SDK/fork warnings),
+including nine harness environment/artifact/owned-process cleanup checks. Targeted
+lint/security, CI YAML and whitespace checks passed. Backend CI has a read-only,
+no-persisted-checkout-credential server-proof step and narrowly scoped seven-day
+synthetic artifact retention; it has not been dispatched remotely. No production
+migration, publisher/admission activation, model/Google call, VM restart or paid
+allocation occurred. See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`. Production rollout,
+real writes, abrupt crashes/HA/load, cross-version replay, coding workflows and all
+other unchecked original/60–68 requirements remain open. The goal stays active.

@@ -26,6 +26,8 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -41,6 +43,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt
@@ -55,6 +59,20 @@ jobs:
           ALLOW_DEV_AUTH: 'true'
           JWT_SECRET_KEY: automated-test-only-secret-at-least-32-bytes
           COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+      - name: Prove real local Temporal startup, recovery and offline history replay
+        timeout-minutes: 7
+        run: python scripts/verify_temporal_server_local.py
+        env:
+          COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+      - name: Retain synthetic Temporal replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-local-proof
+          path: .gca-local/temporal-proof/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Lint and security-audit Python
         run: |
           pip install flake8 pip-audit bandit
