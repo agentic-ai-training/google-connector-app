@@ -76,6 +76,16 @@ WRITE_TOOLS = frozenset(
     tool for contract in WRITE_CONTRACTS.values() for tool in contract.required_tools
 )
 
+# Explicit inventory, not a name-prefix heuristic or a model claim. New registered
+# tools must be classified before a read-only execution may invoke them.
+READ_TOOLS = frozenset({
+    'search_gmail', 'list_recent_gmail_senders', 'count_gmail_senders', 'count_gmail_messages',
+    'get_gmail_message', 'list_gmail_threads', 'list_calendar_events', 'get_calendar_event',
+    'check_calendar_availability', 'search_drive', 'get_drive_file', 'read_google_doc',
+    'read_google_sheet', 'list_tasks', 'search_contacts', 'get_contact', 'list_chat_spaces',
+    'get_meet_space', 'list_meet_conferences', 'list_meet_participants',
+})
+
 
 def write_contract_for(
     service: str | None,

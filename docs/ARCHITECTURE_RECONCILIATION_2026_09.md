@@ -620,3 +620,13 @@ A fresh keyless subprocess crash and synthetic effect counter exercise recovery
 without repetition. No live provider, server, migration or deployment proof is
 claimed. Safe retry generations and unfinished-composite execution remain open.
 See [durable tool receipts](DURABLE_TOOL_RECEIPTS.md).
+
+26 October: schema 032 appends bounded, source-bound read retry generations to the
+actual Workspace activity journal. The existing authenticated Resume flow issues
+an expiring permit only for a current typed read plan, prior completed activity,
+read-safe enforcement provenance and remaining persisted retry budget. The shared
+tool boundary rejects writes/unclassified tools in read steps. New activity IDs,
+tokens and callbacks distinguish generations; old uncertainty stays intact and
+old deliveries cannot poison new work. This is not a write retry, owner transfer,
+live activation or history-replay proof. See
+[read generations and deployment limits](TEMPORAL_READ_RETRY_GENERATIONS.md).

@@ -10,6 +10,7 @@ from temporalio.exceptions import ApplicationError
 
 from app.runs.temporal_contracts import FinalizeRequest, RunSnapshot, StepReference, StepRequest, WorkflowReference
 from app.runs.tool_admission import ExecutionAuthority, execution_authority
+from app.runs.temporal_read_retry import current_journal, next_reference, retry_permit
 
 
 def _json_row(row):
@@ -61,13 +62,13 @@ class WorkspaceActivities:
                 return RunSnapshot(run['status'])
             if not receipt:
                 return RunSnapshot('awaiting_start_receipt')
-            rows = await conn.fetch('''SELECT candidate.id,candidate.read_only FROM agent_run_steps candidate
+            rows = await conn.fetch('''SELECT candidate.id,candidate.run_id,candidate.read_only FROM agent_run_steps candidate
               WHERE candidate.run_id=$1 AND candidate.status='pending'
               AND NOT EXISTS(SELECT 1 FROM unnest(candidate.dependencies) dependency
                 LEFT JOIN agent_run_steps required ON required.run_id=candidate.run_id AND required.step_key=dependency
                 WHERE required.id IS NULL OR required.status<>'completed')
               ORDER BY sequence_no LIMIT 4''', UUID(reference.run_id))
-            return RunSnapshot('running', [StepReference(str(row['id']), row['read_only']) for row in rows])
+            return RunSnapshot('running', [await next_reference(conn, row) for row in rows])
 
     async def _heartbeat(self, reference, token, step_id, stop):
         while not stop.is_set():
@@ -100,8 +101,14 @@ class WorkspaceActivities:
         from app.runs import worker
         from app.db.oauth_credentials import load_google_credentials
         from app.db.google_clients import request_google_credentials
+        try:
+            request.validate()
+        except (ValueError, TypeError, AttributeError):
+            raise ApplicationError('Invalid step generation reference', type='WorkflowInput', non_retryable=True) from None
         identity, step_id = UUID(request.run.run_id), UUID(request.step_id)
         info = activity.info()
+        if info.activity_id != request.activity_id:
+            raise ApplicationError('Step activity identity mismatch', type='WorkflowBinding', non_retryable=True)
         async with self.pool.acquire() as conn, conn.transaction():
             run, receipt = await self._bound(conn, request.run, locked=True)
             if run is None or run['status'] == 'cancelled':
@@ -111,15 +118,33 @@ class WorkspaceActivities:
             step = await conn.fetchrow('SELECT * FROM agent_run_steps WHERE id=$1 AND run_id=$2 FOR UPDATE', step_id, identity)
             if step is None:
                 return 'deleted'
-            prior = await conn.fetchrow('SELECT * FROM temporal_workspace_steps WHERE run_id=$1 AND step_id=$2', identity, step_id)
+            prior = await current_journal(conn, identity, step_id, locked=True)
+            permit = None
             if prior:
+                generation = prior.get('generation', 0)
+                if request.generation < generation:
+                    return 'superseded'
+                if request.generation > generation:
+                    if request.generation != generation + 1 or step['status'] != 'pending':
+                        return 'not_admitted'
+                    permit, rejected = await retry_permit(conn, run, _json_row(step), request, prior)
+                    if rejected:
+                        if rejected != 'superseded':
+                            await conn.execute("UPDATE agent_run_steps SET status='failed',error_category='worker_reconciliation',"
+                                "error_message='Read retry permit expired or source changed; explicit review required' WHERE id=$1", step_id)
+                        return rejected
+                elif step['status'] == 'pending' and (await next_reference(conn, step)).generation > generation:
+                    return 'superseded'
+            elif request.generation != 0:
+                return 'not_admitted'
+            if prior and permit is None:
                 if (step['status'] == 'completed'
                         and await conn.fetchval("SELECT to_regclass('temporal_step_resolutions') IS NOT NULL")
                         and await conn.fetchval('SELECT temporal_step_resolved($1,$2)', identity, step_id)):
                     return 'succeeded'
                 if prior['state'] == 'executing':
                     await conn.execute("UPDATE temporal_workspace_steps SET state='uncertain',error_category='worker_reconciliation' "
-                        'WHERE run_id=$1 AND step_id=$2', identity, step_id)
+                        'WHERE run_id=$1 AND step_id=$2 AND execution_token=$3', identity, step_id, prior['execution_token'])
                     return 'uncertain'
                 if prior['state'] != 'succeeded' or step['status'] != 'completed':
                     await conn.execute("UPDATE agent_run_steps SET status='failed',error_category='worker_reconciliation',"
@@ -143,16 +168,19 @@ class WorkspaceActivities:
                 except (ValueError, TypeError):
                     raise ApplicationError('Current typed plan is invalid', type='WorkflowPlan', non_retryable=True) from None
                 approved = await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM run_approvals
-                  WHERE run_id=$1 AND requested_from=$2 AND status='approved' AND action_hash=$3)''',
+                  WHERE run_id=$1 AND requested_from=$2 AND status='approved' AND action_hash=$3
+                    AND expires_at>clock_timestamp())''',
                   identity, run['user_id'], digest)
                 if not approved:
                     await conn.execute("UPDATE agent_run_steps SET status='failed',error_category='policy_violation',"
                         "error_message='Current plan approval evidence is required before this step' WHERE id=$1", step_id)
                     return 'not_admitted'
             token = await conn.fetchval('''INSERT INTO temporal_workspace_steps
-              (run_id,step_id,run_parent_id,step_parent_id,workflow_execution_id,activity_id,read_only)
-              VALUES($1,$2,$1,$2,$3,$4,$5) RETURNING execution_token''',
-              identity, step_id, UUID(info.workflow_run_id), info.activity_id, step['read_only'])
+              (run_id,step_id,run_parent_id,step_parent_id,workflow_execution_id,activity_id,read_only,
+               execution_token,generation,execution_policy,retry_permit_id)
+              VALUES($1,$2,$1,$2,$3,$4,$5,coalesce($6,gen_random_uuid()),$7,'read-safe-v1',$8) RETURNING execution_token''',
+              identity, step_id, UUID(info.workflow_run_id), info.activity_id, step['read_only'],
+              permit['execution_token'] if permit else None, request.generation, UUID(request.permit_id) if permit else None)
             claimed = await conn.fetchrow('''UPDATE agent_run_steps SET status='running',attempt_count=attempt_count+1,
               started_at=now() WHERE id=$1 RETURNING *''', step_id)
             await conn.execute("UPDATE agent_runs SET status='running',current_phase='execution',started_at=COALESCE(started_at,now()),"
@@ -204,9 +232,12 @@ class WorkspaceActivities:
                         WHEN $1='failed' THEN 'execution' ELSE NULL END
                       WHERE run_id=$2 AND step_id=$3 AND execution_token=$4 AND state='executing' ''',
                       outcome, identity, step_id, token)
+                    await conn.execute('''UPDATE temporal_workspace_steps SET completed_at=clock_timestamp()
+                      WHERE run_id=$1 AND step_id=$2 AND execution_token=$3 AND state='uncertain' AND completed_at IS NULL''',
+                      identity, step_id, token)
             await asyncio.shield(asyncio.wait_for(finish(), timeout=5))
-        recorded = await self.pool.fetchval('SELECT state FROM temporal_workspace_steps WHERE run_id=$1 AND step_id=$2',
-            identity, step_id)
+        recorded = await self.pool.fetchval('SELECT state FROM temporal_workspace_steps WHERE run_id=$1 AND step_id=$2 '
+            'AND execution_token=$3', identity, step_id, token)
         return recorded or 'uncertain'
 
     @activity.defn(name='gca.workspace.finalize')
@@ -223,6 +254,8 @@ class WorkspaceActivities:
             steps = [_json_row(row) for row in rows]
             resolution_schema = await conn.fetchval("SELECT to_regclass('temporal_step_resolutions') IS NOT NULL")
             unresolved = ("AND NOT temporal_step_resolved(run_id,step_id)" if resolution_schema else '')
+            if await conn.fetchval("SELECT to_regclass('temporal_read_retry_permits') IS NOT NULL"):
+                unresolved += ' AND NOT temporal_read_superseded(run_id,step_id,execution_token)'
             uncertain = await conn.fetchval(("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "
                 "AND state IN ('executing','uncertain') __RESOLUTION__) ").replace('__RESOLUTION__', unresolved), identity)
             if uncertain:

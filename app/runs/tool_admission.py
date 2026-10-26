@@ -40,7 +40,7 @@ class CompletionFenced(ToolAdmissionDenied):
             evidence={'reason_code': reason, 'prior_effects': 'requires_reconciliation'})
 
 
-async def require_tool_admission(pool, state) -> None:
+async def require_tool_admission(pool, state, *, tool_name=None) -> None:
     # The rollback /chat path has no durable identity. Do not reinterpret a missing
     # durable database as legacy authorization when a run ID IS present.
     if not state.get('run_id'):
@@ -76,7 +76,8 @@ async def require_tool_admission(pool, state) -> None:
             async with pool.acquire(timeout=2) as conn:
                 row = await conn.fetchrow('''SELECT r.status AS run_status,r.deleted_at,r.executor_version,
                   COALESCE(to_jsonb(r)->>'orchestration_owner','postgres') AS owner,
-                  r.lease_owner,r.lease_expires_at>now() AS lease_current,s.status AS step_status
+                  r.lease_owner,r.lease_expires_at>now() AS lease_current,s.status AS step_status,
+                  (to_jsonb(s)->>'read_only')::boolean AS step_read_only
                   FROM agent_runs r JOIN agent_run_steps s ON s.run_id=r.id
                   WHERE r.id=$1 AND s.id=$2 AND r.user_id=$3''', run_id, step_id, authority.user_id, timeout=2)
                 if row is None or row['deleted_at'] is not None:
@@ -86,6 +87,12 @@ async def require_tool_admission(pool, state) -> None:
                 if (row['run_status'] != 'running' or row['step_status'] != 'running'
                         or row['owner'] != authority.owner or row['executor_version'] != authority.executor_version):
                     raise ToolAdmissionDenied('live_execution_binding_changed')
+                if tool_name is not None and row['step_read_only']:
+                    from app.tools.contracts import READ_TOOLS
+                    if tool_name not in READ_TOOLS:
+                        raise ExecutionFailure('A read-only step cannot invoke an unclassified or write tool.',
+                            category='policy_violation', component='tool_admission', boundary='read_only_contract',
+                            evidence={'provider_called': False, 'reason_code': 'read_only_tool_policy'})
                 if authority.owner == 'postgres':
                     if not row['lease_current'] or row['lease_owner'] != authority.token:
                         raise ToolAdmissionDenied('postgres_lease_lost')
@@ -98,7 +105,7 @@ async def require_tool_admission(pool, state) -> None:
                       run_id, step_id, nonce, authority.workflow_execution_id, timeout=2)
                     if not admitted:
                         raise ToolAdmissionDenied('temporal_activity_fenced')
-    except ToolAdmissionDenied:
+    except ExecutionFailure:
         raise
     except Exception:
         raise ExecutionFailure('Live tool admission could not be verified; no provider call was made.',
@@ -159,7 +166,8 @@ async def fenced_step_commit(pool, run, step, *, succeeded):
             raise CompletionFenced('completion_step_not_visible')
         if authority.owner == 'temporal':
             journal = await conn.fetchrow('''SELECT execution_token,state FROM temporal_workspace_steps
-              WHERE run_id=$1 AND step_id=$2 FOR UPDATE''', run['id'], step['id'])
+              WHERE run_id=$1 AND step_id=$2 AND execution_token::text=$3 FOR UPDATE''',
+              run['id'], step['id'], authority.token)
             if journal is None or str(journal['execution_token']) != authority.token or journal['state'] != 'executing':
                 raise CompletionFenced('temporal_completion_fenced')
         try:

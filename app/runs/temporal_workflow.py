@@ -69,10 +69,11 @@ class WorkspaceWorkflow:
                 if snapshot.ready:
                     # Every business activity is one attempt. A repeated delivery
                     # reconciles the SQL journal; it cannot repeat an uncertain send.
-                    outcomes = await asyncio.gather(*(workflow.execute_activity('gca.workspace.step', StepRequest(reference, step.step_id),
-                            result_type=str, activity_id='step.' + step.step_id,
+                    requests = [StepRequest(reference, step.step_id, step.generation, step.permit_id) for step in snapshot.ready[:4]]
+                    outcomes = await asyncio.gather(*(workflow.execute_activity('gca.workspace.step', request,
+                            result_type=str, activity_id=request.activity_id,
                             start_to_close_timeout=timedelta(minutes=5), heartbeat_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=1)) for step in snapshot.ready[:4]), return_exceptions=True)
+                            retry_policy=RetryPolicy(maximum_attempts=1)) for request in requests), return_exceptions=True)
                     if any(isinstance(outcome, BaseException) for outcome in outcomes):
                         await workflow.execute_activity('gca.workspace.finalize', FinalizeRequest(reference, 'activity_failure'),
                             result_type=str, start_to_close_timeout=timedelta(seconds=30),

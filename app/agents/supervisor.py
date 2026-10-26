@@ -475,7 +475,7 @@ async def _record_model_event(pool, state, event_type, model, fallback_model=Non
 async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool):
     # Denial is a typed admission decision, not a fictional provider/tool failure.
     # Keep it outside the provider-error conversion below.
-    await require_tool_admission(pool, state)
+    await require_tool_admission(pool, state, tool_name=tool.name)
     receipt = await begin_receipt(pool, state, tool.name, call)
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))

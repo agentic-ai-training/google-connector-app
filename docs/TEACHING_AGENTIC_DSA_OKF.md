@@ -4748,3 +4748,40 @@ that commits a synthetic effect and receipt, then exits abruptly. Recovery must
 leave the effect counter at one. This proves that boundary under local PostgreSQL,
 not real Google delivery or a production Temporal replay. See
 [implementation and operational limits](DURABLE_TOOL_RECEIPTS.md).
+
+### Deep dictionary: retry generations and supersession
+
+**Redelivery versus a new attempt.** Repeating the same activity ID is recovery of
+that invocation, not new permission to call Google. A new generation has a distinct
+nonce and activity ID plus explicit source-bound authorization. Never reset an old
+uncertain row to `executing` to make a retry look fresh.
+
+**Append-only attempt graph.** A bounded chain links each read attempt to its exact
+predecessor: `generation 0 → permit 1 → generation 1`. The parent token prevents
+skipping or attaching to a different attempt. A compound B-tree key indexes
+`(run, step, generation)`; selecting the latest generation is not selecting any
+matching row. Retain original outcomes for audit and fault analysis.
+
+```mermaid
+flowchart LR
+    O[Old read: uncertain, finished] --> P[Authenticated expiring permit]
+    P --> N[New read generation: separate token]
+    N --> V[Verified current result]
+    O -. old delivery .-> S[Superseded; cannot mutate new step]
+    W[Uncertain write] --> M[Separate reconciliation; no read permit]
+```
+
+**Monotone history versus effective state.** The old uncertain read does not become
+successful. A proven read-only successor can make it irrelevant to current task
+completion. That logic cannot be applied to an unknown email send: its side effect
+may still matter even if a later action succeeds.
+
+**Renewal versus budget reset.** An expired, unused permit may be replaced by a new
+reference after explicit review, while the original remains immutable. This does
+not reset attempt counts. Bound both actual attempts and permission-history growth;
+otherwise repeated expiry can grow metadata indefinitely without running a tool.
+
+**Classification as an invariant.** Read/write tool membership must be explicit and
+disjoint. A CI set-equality assertion against the trusted registry detects missing
+classification. A live invocation guard enforces it; a Boolean in a plan is not
+sufficient by itself. See [actual read-generation implementation and open proof](TEMPORAL_READ_RETRY_GENERATIONS.md).

@@ -87,6 +87,29 @@ async def test_actual_tool_wrapper_stops_between_calls_after_cancel(admitted, mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('name', ['send_gmail', 'unclassified_tool'])
+async def test_read_only_step_blocks_write_or_unclassified_tool_before_receipt_and_provider(admitted, name):
+    pool, authority, state = admitted
+    from app.agents import supervisor
+    from app.agents.errors import ExecutionFailure
+    await pool.execute('ALTER TABLE agent_run_steps ADD COLUMN read_only BOOLEAN DEFAULT TRUE')
+    calls = []
+    @tool(name)
+    async def probe() -> dict:
+        """Synthetic forbidden provider, never Google."""
+        calls.append('provider')
+        return {}
+    token = execution_authority.set(authority)
+    try:
+        with pytest.raises(ExecutionFailure) as error:
+            await supervisor.execute_tool_call(probe, {'id':'read-only-violation','args':{}}, state, pool)
+        assert error.value.category == 'policy_violation' and error.value.evidence['provider_called'] is False
+        assert calls == []
+    finally:
+        execution_authority.reset(token)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('assignment,reason', [
     ("deleted_at=now()", 'run_or_step_not_visible'),
     ("lease_owner='other-worker'", 'postgres_lease_lost'),

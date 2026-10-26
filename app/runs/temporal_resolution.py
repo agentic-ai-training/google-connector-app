@@ -59,13 +59,12 @@ async def bind_decision(conn, run, step, decision, source, actor):
         return decision
     if not await conn.fetchval("SELECT to_regclass('temporal_workspace_steps') IS NOT NULL"):
         return ReconciliationDecision('manual_required', 'temporal_recovery_schema_required', None)
-    journal = await conn.fetchrow('SELECT * FROM temporal_workspace_steps WHERE run_id=$1 AND step_id=$2 FOR UPDATE',
-        run['id'], step['id'])
+    from app.runs.temporal_read_retry import current_journal, issue_read_retry
+    journal = await current_journal(conn, run['id'], step['id'], locked=True)
     if journal is None:
         return decision  # No activity ever crossed this step's write-ahead boundary.
     if decision.state == 'safe_to_retry':
-        return ReconciliationDecision('manual_required', 'temporal_retry_generation_required', None,
-            {**decision.evidence, 'journal_state': journal['state'], 'automatic_retry': False})
+        return await issue_read_retry(conn, run, step, decision, source, actor, journal)
     if decision.state != 'already_completed':
         return decision
     if journal['state'] == 'executing' or journal['completed_at'] is None:

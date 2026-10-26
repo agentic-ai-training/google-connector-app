@@ -23,6 +23,8 @@ class WorkflowReference:
 class StepReference:
     step_id: str
     read_only: bool
+    generation: int = 0
+    permit_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,22 @@ class RunSnapshot:
 class StepRequest:
     run: WorkflowReference
     step_id: str
+    generation: int = 0
+    permit_id: str | None = None
+
+    def validate(self):
+        self.run.validate()
+        if (str(UUID(self.step_id)) != self.step_id or type(self.generation) is not int
+                or not 0 <= self.generation <= 3
+                or (self.generation == 0 and self.permit_id is not None)
+                or (self.generation > 0 and (not self.permit_id or str(UUID(self.permit_id)) != self.permit_id))):
+            raise ValueError('invalid step generation reference')
+
+    @property
+    def activity_id(self):
+        self.validate()
+        return ('step.' + self.step_id if self.generation == 0 else
+                f'step.{self.step_id}.g{self.generation}.{self.permit_id}')
 
 
 @dataclass(frozen=True)

@@ -2563,6 +2563,12 @@ changes become production evidence.
   survive later composite/step failures, and unresolved writes block repetition.
   This is evidence retention, not automatic unfinished-composite continuation or
   safe retry generations. See `docs/DURABLE_TOOL_RECEIPTS.md`.
+  Schema 032 subsequently implements the read-only portion of safe retry
+  generations through authenticated Resume, expiring source-bound permits, current
+  typed read contracts, quiescence and persisted retry budgets. Old uncertainty
+  remains, and stale deliveries cannot alter newer generations. Write retries,
+  unfinished-composite execution, compensation and real server/replay proof remain
+  open. See `docs/TEMPORAL_READ_RETRY_GENERATIONS.md`; this story stays unchecked.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3463,3 +3469,22 @@ change occurred. See `docs/DURABLE_TOOL_RECEIPTS.md`. Remote-effect-before-respo
 reconciliation, safe retry generations, unfinished-composite continuation,
 compensation, real replay/load and all remaining original/60–68 requirements remain
 open. The original goal stays active, not complete or narrowed to this checkpoint.
+
+Progress 2026-10-26, read-only Temporal retry generations: schema 032 preserves
+prior journal rows and appends new source-bound permits/generations through the
+actual authenticated Resume flow. A new generation requires current typed read
+contracts, explicit tool classification, new-policy provenance, prior quiescence,
+no historical write evidence and the persisted attempt budget. Expiry/renewal,
+eight-permit lifetime cap, generation bounds, current approval and independent SQL
+admission are enforced. Old deliveries cannot fail or complete a newer step;
+callbacks/completion checks are token/generation-specific. The shared invocation
+gate also denies write/unclassified tools in read-only PostgreSQL/Temporal steps.
+Nineteen focused generation cases are included in 2,285 coding/unit tests passed
+without skips (64.18 seconds; thirteen existing SDK/fork warnings). All 44 golden
+plans and 16 no-network workflow fixtures passed. Full disposable upgrade-to-032/
+downgrade-to-002/upgrade-to-032 plus retention and targeted lint/security/whitespace
+passed. No production migration, worker/transport activation, provider/model call,
+VM restart or budget change occurred. Write retry generations, partial-composite
+continuation, compensation, coding workflows and actual server/history replay,
+load/rollout and all other original/60–68 work remain open. See
+`docs/TEMPORAL_READ_RETRY_GENERATIONS.md`. The full original goal remains active.

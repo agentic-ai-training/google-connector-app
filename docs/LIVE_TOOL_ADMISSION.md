@@ -82,3 +82,9 @@ step completion, integrated with real authenticated recovery. This preserves an
 already-recorded intermediate response, not a response lost before receipt commit.
 Safe retry generations and unfinished-composite continuation are still separate
 work. See [receipt capture and local crash proof](DURABLE_TOOL_RECEIPTS.md).
+
+26 October: durable read-only steps now also require an explicitly classified read
+tool before invocation; writes and unclassified tools fail as policy decisions
+without provider calls. This enforcement provenance supports the new bounded
+[read retry generations](TEMPORAL_READ_RETRY_GENERATIONS.md), not permission to
+repeat an uncertain write.
