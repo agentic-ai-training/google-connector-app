@@ -135,3 +135,27 @@ See [read generations](TEMPORAL_READ_RETRY_GENERATIONS.md),
 [tool receipts](DURABLE_TOOL_RECEIPTS.md),
 [startup delivery](TEMPORAL_START_DELIVERY.md) and
 [refresh delivery](TEMPORAL_REFRESH_DELIVERY.md).
+
+## Subsequent schema-034 proof
+
+The isolated runner now requires **seven** scenarios and offline histories. Two
+additional real server cases cover a write-prefix worker restart/Resume/refresh
+and an unknown write that is never repeated. The successful case checks exactly
+one synthetic resolver effect and one synthetic send, exact content and truthful
+100% completion after full readback. The unknown case checks one synthetic send,
+no new generation, zero side-effect integrity and no repetition on cancellation.
+All private content remains outside reference-only workflow history.
+
+The final seven server cases passed in 8.66 seconds; all seven histories also replayed
+in a fresh offline process. Artifacts:
+`.gca-local/temporal-proof/20261027T092756Z-93c980d2/` (ignored synthetic data).
+The write-prefix case additionally expires an unused permit, renews through the
+authenticated API and verifies that admission, rather than renewal, increments
+the attempt count. Waiting requires the workflow query and SQL state to agree;
+the previous query-only observation could see a stale `failed` after requeue.
+Transient development-server queue-reader `shard status unknown` errors were
+observed during startup in this passing run; no clean-log/HA claim is made.
+The expanded runner expects these seven artifacts; the older five-case bundle
+remains historical evidence, not a seven-case proof. This still does not prove
+real Google delivery, unknown-outcome lookup, abrupt-crash/HA/load, production
+rollout or compensation. See [exact mechanism](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).

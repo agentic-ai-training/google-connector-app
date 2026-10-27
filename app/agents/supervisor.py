@@ -16,7 +16,7 @@ from app.agents.router import get_llm, get_model_name, route_model_node
 from app.agents.context_budget import fit_messages_to_budget
 from app.agents.errors import (
     ModelContextLengthFailure, ModelQuotaFailure,
-    ToolExecutionFailure, ToolSelectionFailure,
+    ToolExecutionFailure, ToolSelectionFailure, WriteReconciliationRequired,
     is_provider_context_length_error,
 )
 from app.agents.state import AgentState
@@ -44,7 +44,7 @@ from app.config.settings import get_settings
 from app.tools.result_projection import project_tool_result
 from app.tools.result_store import store_private_tool_result
 from app.tools.contracts import (
-    WriteContract, attempted_required_tools, bind_ordered_output_lineage,
+    WRITE_TOOLS, WriteContract, attempted_required_tools, bind_ordered_output_lineage,
     contract_satisfied, missing_required_tools, next_ordered_required_tool,
     successful_required_tools,
 )
@@ -484,6 +484,7 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
         return ToolMessage(content=json.dumps(envelope.compact_result, default=str),
             tool_call_id=call['id'], name=tool.name), recovered, envelope
     receipt = await begin_receipt(pool, state, tool.name, call)
+    response_saved = False
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))
     user_token = tool_user_id.set(state.get("user_id"))
@@ -500,6 +501,7 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
         # Persist the response before projection, logging or the next tool can
         # fail. Receipt persistence failure must not become a normal ToolMessage.
         await finish_receipt(pool, receipt, result=result, returned=True)
+        response_saved = True
         after_tool(tool.name, call, result)
         envelope = project_tool_result(
             tool.name, result,
@@ -542,6 +544,10 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
     except ToolReceiptFailure:
         raise
     except Exception as exc:
+        if receipt is not None and tool.name in WRITE_TOOLS:
+            # Never convert response loss OR a later projection/logging failure
+            # into a ToolMessage that invites the model to repeat a real write.
+            raise WriteReconciliationRequired(tool.name, str(receipt.identity), response_saved=response_saved) from None
         elapsed = int((time.perf_counter() - started) * 1000)
         if not isinstance(tool, GoogleWorkspaceBaseTool):
             tool_errors.labels(tool.name).inc()

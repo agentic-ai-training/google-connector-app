@@ -12,7 +12,8 @@ from temporalio.worker import Replayer
 
 from app.runs.temporal_workflow import WorkspaceWorkflow
 
-CASES = ('lost-start-ack-and-completion','refresh-retry-worker-restart','sdk-cancellation','erasure-refresh','sqlite-server-restart')
+CASES = ('lost-start-ack-and-completion','refresh-retry-worker-restart','sdk-cancellation','erasure-refresh',
+         'sqlite-server-restart','write-prefix-refresh-worker-restart','unknown-write-blocked')
 
 
 async def replay_directory(directory):

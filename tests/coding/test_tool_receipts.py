@@ -100,6 +100,29 @@ async def test_duplicate_call_id_cannot_dispatch_again(case):
     assert await c.pool.fetchval('SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1', c.identity) == 1
 
 
+@pytest.mark.parametrize('response_saved', [False, True])
+async def test_durable_write_errors_never_invite_a_model_retry(case, monkeypatch, response_saved):
+    from app.agents.errors import WriteReconciliationRequired
+    c = case
+    @tool
+    async def send_gmail(text: str) -> dict:
+        """Synthetic remote effect counter; no real email."""
+        c.calls.append('provider')
+        if not response_saved:
+            raise TimeoutError('Synthetic response loss after effect')
+        return {'id': 'synthetic-message'}
+    async def failed_log(*args, **kwargs):
+        raise RuntimeError('Synthetic post-response log failure')
+    monkeypatch.setattr(supervisor, '_record_tool_call', failed_log)
+    with pytest.raises(WriteReconciliationRequired) as error:
+        await supervisor.execute_tool_call(send_gmail, c.call, c.state, c.pool)
+    assert error.value.category == 'worker_reconciliation'
+    assert error.value.evidence['provider_response_saved'] is response_saved
+    assert c.calls == ['provider']
+    assert await c.pool.fetchval('SELECT state FROM agent_tool_receipts WHERE run_id=$1', c.identity) == (
+        'returned' if response_saved else 'unknown')
+
+
 async def test_reservation_and_event_failure_roll_back_before_provider(case):
     c = case
     await reject_event(c, 'tool_receipt_dispatched')

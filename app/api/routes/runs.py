@@ -279,15 +279,10 @@ async def _reconcile_and_resume(
         try:
             from app.runs.prefix_continuation import bind_prefix_decision
             decision = await bind_prefix_decision(conn, dict(current_run), dict(locked), decision,
-                receipts, user_id, resume_executor_version, reconciliation_observed_at, prefix_source)
+                receipts, user_id, resume_executor_version, reconciliation_observed_at, prefix_source, proof_source)
             decision = await bind_decision(conn, dict(current_run), locked_step, decision, proof_source, user_id)
         except ResolutionConflict as error:
             raise HTTPException(409, str(error)) from None
-        if decision.state == 'continue_verified_prefix':
-            from app.runs.worker import _store_artifacts
-            from app.runs.verifier import extract_artifacts
-            # Only the readback-proven prefix, not the unfinished whole step.
-            await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions), verified=True)
         if decision.state == "already_completed":
             if receipts.executions and current_run.get('orchestration_owner') != 'temporal':
                 from app.runs.temporal_resolution import verified_receipt

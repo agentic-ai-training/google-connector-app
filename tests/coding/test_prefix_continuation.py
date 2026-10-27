@@ -236,7 +236,7 @@ async def test_no_grant_for_unproven_or_unauthorized_work(case, monkeypatch, blo
             decision = await recovery.bind_prefix_decision(conn, {**run, 'orchestration_owner': 'temporal'}, step,
                 ReconciliationDecision('continue_verified_prefix','verified_ordered_prefix',str(c.step_id)),
                 receipts, 'synthetic-user', 'test-v1')
-        assert decision.reason_code == 'temporal_prefix_generation_required'
+        assert decision.reason_code == 'temporal_prefix_provenance_required'
         return
     decision = await authorize(c)
     assert decision.state == 'manual_required'

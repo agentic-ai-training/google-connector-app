@@ -124,14 +124,25 @@ class WorkspaceActivities:
                 generation = prior.get('generation', 0)
                 if request.generation < generation:
                     return 'superseded'
+                if request.generation == generation and generation > 0:
+                    admitted_permit = prior.get('prefix_permit_id') or prior.get('retry_permit_id')
+                    if request.permit_id != str(admitted_permit):
+                        # Renewal can replace a permit before its generation is
+                        # admitted. The old same-number activity must not mark
+                        # its replacement executing journal uncertain.
+                        return 'superseded'
                 if request.generation > generation:
                     if request.generation != generation + 1 or step['status'] != 'pending':
                         return 'not_admitted'
-                    permit, rejected = await retry_permit(conn, run, _json_row(step), request, prior)
+                    if step['read_only']:
+                        permit, rejected = await retry_permit(conn, run, _json_row(step), request, prior)
+                    else:
+                        from app.runs.temporal_prefix_retry import prefix_permit
+                        permit, rejected = await prefix_permit(conn, run, _json_row(step), request, prior)
                     if rejected:
                         if rejected != 'superseded':
                             await conn.execute("UPDATE agent_run_steps SET status='failed',error_category='worker_reconciliation',"
-                                "error_message='Read retry permit expired or source changed; explicit review required' WHERE id=$1", step_id)
+                                "error_message='Recovery permit expired or source changed; explicit review required' WHERE id=$1", step_id)
                         return rejected
                 elif step['status'] == 'pending' and (await next_reference(conn, step)).generation > generation:
                     return 'superseded'
@@ -177,10 +188,13 @@ class WorkspaceActivities:
                     return 'not_admitted'
             token = await conn.fetchval('''INSERT INTO temporal_workspace_steps
               (run_id,step_id,run_parent_id,step_parent_id,workflow_execution_id,activity_id,read_only,
-               execution_token,generation,execution_policy,retry_permit_id)
-              VALUES($1,$2,$1,$2,$3,$4,$5,coalesce($6,gen_random_uuid()),$7,'read-safe-v1',$8) RETURNING execution_token''',
+               execution_token,generation,execution_policy,retry_permit_id,prefix_permit_id)
+              VALUES($1,$2,$1,$2,$3,$4,$5,coalesce($6,gen_random_uuid()),$7,$8,$9,$10) RETURNING execution_token''',
               identity, step_id, UUID(info.workflow_run_id), info.activity_id, step['read_only'],
-              permit['execution_token'] if permit else None, request.generation, UUID(request.permit_id) if permit else None)
+              permit['execution_token'] if permit else None, request.generation,
+              'read-safe-v1' if step['read_only'] else 'prefix-safe-v1',
+              UUID(request.permit_id) if permit and step['read_only'] else None,
+              UUID(request.permit_id) if permit and not step['read_only'] else None)
             claimed = await conn.fetchrow('''UPDATE agent_run_steps SET status='running',attempt_count=attempt_count+1,
               started_at=now() WHERE id=$1 RETURNING *''', step_id)
             await conn.execute("UPDATE agent_runs SET status='running',current_phase='execution',started_at=COALESCE(started_at,now()),"
@@ -256,8 +270,13 @@ class WorkspaceActivities:
             unresolved = ("AND NOT temporal_step_resolved(run_id,step_id)" if resolution_schema else '')
             if await conn.fetchval("SELECT to_regclass('temporal_read_retry_permits') IS NOT NULL"):
                 unresolved += ' AND NOT temporal_read_superseded(run_id,step_id,execution_token)'
+            if await conn.fetchval("SELECT to_regclass('temporal_prefix_generations') IS NOT NULL"):
+                unresolved += ' AND NOT temporal_prefix_superseded(run_id,step_id,execution_token)'
             uncertain = await conn.fetchval(("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "
                 "AND state IN ('executing','uncertain') __RESOLUTION__) ").replace('__RESOLUTION__', unresolved), identity)
+            if await conn.fetchval("SELECT to_regclass('agent_tool_receipts') IS NOT NULL"):
+                uncertain = uncertain or await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM agent_tool_receipts
+                  WHERE run_id=$1 AND NOT read_only AND state IN ('dispatched','unknown'))''', identity)
             if uncertain:
                 await conn.execute("UPDATE temporal_workspace_steps SET state='uncertain',error_category='worker_reconciliation' "
                     "WHERE run_id=$1 AND state='executing'", identity)

@@ -156,3 +156,11 @@ after worker restart, cancellation, erasure and clean SQLite server restart with
 stable first execution. No real Google/model writes or production service were
 activated. Abrupt crash/HA/load, coding workflows and production/cross-version
 rollout evidence remain open. See [real-server proof](LOCAL_TEMPORAL_SERVER_PROOF.md).
+
+Schema 034 extends that evidence with guarded write-prefix continuation through
+the actual Resume/activity/tool path. The read-only SQL guard remains independent;
+new write generations require a fresh exact prefix, current approval and prior
+quiescence. Unknown sends remain blocked, including response loss and downstream
+logging failures. Seven real local server cases now replay in a fresh offline
+process. See [write-prefix generations](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).
+This does not activate production or complete coding/compensation/HA/load scope.

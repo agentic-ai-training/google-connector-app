@@ -72,16 +72,21 @@ async def current_authority(conn, run, step, actor):
 
 
 async def bind_prefix_decision(conn, run, step, decision, receipts, actor, executor_version, observed_at=None,
-        observed_source=None):
+        observed_source=None, temporal_source=None):
     from app.runs.reconciliation import ReconciliationDecision
     if decision.state != 'continue_verified_prefix':
         return decision
     def blocked(reason):
         return ReconciliationDecision('manual_required', reason, None, decision.evidence)
-    # Temporal requires its own new journal generation/permit. Never turn this
-    # PostgreSQL grant into permission to reset or bypass a Temporal journal.
-    if run.get('orchestration_owner', 'postgres') != 'postgres':
-        return blocked('temporal_prefix_generation_required')
+    owner = run.get('orchestration_owner', 'postgres')
+    if owner not in {'postgres','temporal'}:
+        return blocked('prefix_continuation_owner_required')
+    journal = None
+    if owner == 'temporal':
+        from app.runs.temporal_prefix_retry import preflight
+        journal, reason = await preflight(conn, run, step, decision, temporal_source)
+        if reason:
+            return blocked(reason)
     if not await conn.fetchval("SELECT to_regclass('tool_prefix_continuations') IS NOT NULL"):
         return blocked('prefix_continuation_schema_required')
     if observed_at is None or not await conn.fetchval('''SELECT clock_timestamp()>=$1::timestamptz
@@ -92,23 +97,45 @@ async def bind_prefix_decision(conn, run, step, decision, receipts, actor, execu
         return blocked('prefix_continuation_authority_required')
     if step.get('error_category') in {'policy_violation','planning','authentication','permission'}:
         return blocked('prefix_external_or_policy_gate')
-    if await conn.fetchval('''SELECT count(*) FROM tool_prefix_continuations WHERE run_id=$1 AND step_id=$2''',
-            run['id'], step['id']) >= 3:
-        return blocked('prefix_continuation_budget_exhausted')
-    if await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM tool_prefix_continuations
-      WHERE run_id=$1 AND step_id=$2 AND next_attempt=$3)''', run['id'], step['id'], step['attempt_count']+1):
-        return blocked('prefix_continuation_already_issued')
     source = await source_hash(conn, run, step)
     if source is None:
         return blocked('prefix_dependencies_not_verified')
     if not observed_source or source != observed_source:
         return blocked('prefix_source_changed_during_readback')
+    prior = await conn.fetchrow('''SELECT *,expires_at>clock_timestamp() AS fresh FROM tool_prefix_continuations
+      WHERE run_id=$1 AND step_id=$2 AND next_attempt=$3 ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE''',
+      run['id'], step['id'], step['attempt_count']+1)
+    if prior:
+        fresh = prior['fresh']
+        if owner == 'temporal':
+            fresh = fresh and await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM temporal_prefix_generations
+              WHERE id=$1 AND prefix_grant_id=$1 AND expires_at>clock_timestamp()
+                AND source_hash=temporal_resolution_source($2,$3))''', prior['id'], run['id'], step['id'])
+        if prior['consumed_at'] is not None:
+            return blocked('prefix_continuation_already_consumed')
+        if fresh:
+            if prior['source_hash'] == source and prior['receipt_digest'] == receipts.digest:
+                return decision
+            return blocked('prefix_continuation_source_changed')
+        if not await conn.fetchval("SELECT to_regclass('temporal_prefix_generations') IS NOT NULL"):
+            return blocked('prefix_grant_renewal_schema_required')
+    if await conn.fetchval('''SELECT count(*) FROM tool_prefix_continuations WHERE run_id=$1 AND step_id=$2''',
+            run['id'], step['id']) >= 3:
+        return blocked('prefix_continuation_budget_exhausted')
+    from app.runs.worker import _store_artifacts
+    from app.runs.verifier import extract_artifacts
+    # Save only readback-proven artifacts before the Temporal source hash is
+    # frozen; the original observation was checked before this intentional edit.
+    await _store_artifacts(conn, run, step, extract_artifacts(receipts.executions), verified=True)
     identity = uuid4()
     await conn.execute('''INSERT INTO tool_prefix_continuations(id,run_id,step_id,prior_attempt,next_attempt,
       source_hash,receipt_digest,prefix_length,executor_version,expires_at)
       VALUES($1,$2,$3,$4,$4+1,$5,$6,$7,$8,clock_timestamp()+interval '15 minutes'-interval '1 second')''',
       identity, run['id'], step['id'], step['attempt_count'], source, receipts.digest,
       len(receipts.executions), executor_version)
+    if journal is not None:
+        from app.runs.temporal_prefix_retry import register
+        await register(conn, run, step, identity, journal, decision, temporal_source)
     await append_event_conn(conn, run['id'], actor, 'write_prefix_continuation_issued', step_id=step['id'],
         phase='reconciliation', payload={'permit_id': str(identity), 'prefix_length': len(receipts.executions),
         'next_attempt': step['attempt_count']+1, 'automatic_retry': False})
@@ -137,15 +164,36 @@ class Continuation:
 active_continuation: ContextVar[Continuation | None] = ContextVar('verified_write_prefix', default=None)
 
 
+async def _temporal_grant_current(conn, run, step, owner, permit):
+    if owner.owner != 'temporal':
+        return True
+    return await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps j
+      JOIN temporal_prefix_generations p ON p.id=j.prefix_permit_id
+      WHERE j.run_id=$1 AND j.step_id=$2 AND j.execution_token::text=$3 AND j.state='executing'
+        AND p.id=$4 AND p.prefix_grant_id=$4 AND p.execution_token=j.execution_token
+        AND p.workflow_execution_id=j.workflow_execution_id AND p.expires_at>clock_timestamp())''',
+      run['id'], step['id'], owner.token, permit['id'])
+
+
 @asynccontextmanager
 async def continuation_scope(pool, run, step):
     context = None
-    if not step.get('read_only', True) and run.get('orchestration_owner', 'postgres') == 'postgres':
+    if not step.get('read_only', True):
         async with fenced_step_commit(pool, run, step, succeeded=None) as conn:
             exists = await conn.fetchval("SELECT to_regclass('tool_prefix_continuations') IS NOT NULL")
             permit = await conn.fetchrow('''SELECT *,expires_at>clock_timestamp() AS fresh FROM tool_prefix_continuations
-              WHERE run_id=$1 AND step_id=$2 AND next_attempt=$3 FOR UPDATE''',
+              WHERE run_id=$1 AND step_id=$2 AND next_attempt=$3 ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE''',
               run['id'], step['id'], step['attempt_count']) if exists else None
+            if run.get('orchestration_owner') == 'temporal':
+                owner = execution_authority.get()
+                journal = await conn.fetchrow('''SELECT to_jsonb(j)->>'prefix_permit_id' AS prefix_permit
+                  FROM temporal_workspace_steps j WHERE run_id=$1 AND step_id=$2 AND execution_token::text=$3''',
+                  run['id'], step['id'], owner.token)
+                expected = journal['prefix_permit'] if journal else None
+                if (permit is not None and str(permit['id']) != expected) or (expected and permit is None):
+                    raise ContinuationDenied('temporal_prefix_grant_mismatched')
+                if permit and not await _temporal_grant_current(conn, run, step, owner, permit):
+                    raise ContinuationDenied('temporal_prefix_grant_expired')
             if permit:
                 live_run = dict(await conn.fetchrow('SELECT * FROM agent_runs WHERE id=$1', run['id']))
                 live_step = dict(await conn.fetchrow('SELECT * FROM agent_run_steps WHERE id=$1', step['id']))
@@ -214,7 +262,8 @@ async def before_tool(pool, state, name, call):
         owner = execution_authority.get()
         if (not live or not live['fresh'] or live['authority_hash'] != digest(owner.token)
                 or await source_hash(conn, run, step) != live['source_hash']
-                or not await current_authority(conn, run, step, run['user_id'])):
+                or not await current_authority(conn, run, step, run['user_id'])
+                or not await _temporal_grant_current(conn, run, step, owner, live)):
             raise ContinuationDenied('continuation_authority_changed')
         if reused:
             receipts = await receipt_evidence(conn, run['id'], step['id'], run['user_id'])

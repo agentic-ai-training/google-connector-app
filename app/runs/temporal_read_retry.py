@@ -102,6 +102,9 @@ async def next_reference(conn, row):
     journal = await current_journal(conn, identity, step_id)
     if not journal:
         return StepReference(str(step_id), row['read_only'])
+    if not row['read_only']:
+        from app.runs.temporal_prefix_retry import next_prefix_reference
+        return await next_prefix_reference(conn, row, journal)
     permit = await conn.fetchrow('''SELECT id,generation FROM temporal_read_retry_permits WHERE run_id=$1
       AND step_id=$2 AND generation=$3 ORDER BY issued_at DESC,id DESC LIMIT 1''', identity, step_id, journal['generation']+1)
     if permit:

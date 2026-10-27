@@ -651,3 +651,13 @@ completion. Grant/queue/reconciliation event commit atomically. Unknown writes,
 attempted suffixes, changed authority and Temporal write generations stay blocked.
 This is local synthetic-provider proof, not production or exactly-once remote
 transactions. See [details and rollout limits](VERIFIED_PREFIX_CONTINUATION.md).
+
+26 October, schema 034: verified-prefix recovery now also creates a distinct
+Temporal write generation through the existing authenticated Resume, activity
+journal and shared step executor. Separate read/write permit guards, positive
+prior quiescence, immutable nonce/source/actor bindings and current approval
+prevent arbitrary retries or owner transfer. Unknown write and post-response
+processing failures raise reconciliation decisions instead of inviting model
+repetition. Seven real loopback server scenarios and their fresh-process offline
+histories passed; write effects are synthetic and production remains inactive.
+See [new path and unproven limits](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).

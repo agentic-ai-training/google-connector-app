@@ -2582,6 +2582,15 @@ changes become production evidence.
   Chat helper tests cover reuse and full readback. Temporal write generations,
   uncertain/attempted suffix recovery and compensation remain open. See
   `docs/VERIFIED_PREFIX_CONTINUATION.md`; this story remains unchecked.
+  Schema 034 adds independently guarded Temporal write-prefix generations with
+  fresh exact receipts/readback, positive prior quiescence, current approval,
+  monotone budgets and new activity/nonces. The old read-only SQL guard is
+  retained. Unknown writes and post-response failures cannot invite model retry.
+  Seven real loopback server cases now include prefix worker restart/Resume and
+  an unknown synthetic send that is never repeated; all seven histories replay
+  offline in a fresh process. General unknown-write lookup, compensation, coding
+  workflows and live/crash/HA/load evidence remain open. See
+  `docs/TEMPORAL_WRITE_PREFIX_GENERATIONS.md`; this story stays unchecked.
 - [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
   never both execute it. Prove replay, crash recovery and migration rollback.
   Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
@@ -3541,3 +3550,30 @@ new spending occurred. See `docs/VERIFIED_PREFIX_CONTINUATION.md`. Temporal writ
 generations, uncertain/attempted suffix reconciliation, compensation, coding
 workflows, production/load/restore proof and all other original/60–68 requirements
 remain open. The original goal stays active, not complete or paused.
+
+Progress 2026-10-27, Temporal write-prefix generations: schema 034 connects the
+existing authenticated Resume, positive prior activity quiescence, readback-proven
+prefix grants and a separate immutable generation/token/actor/source permit to
+the real activity/step executor. Schema 032's complete read-only SQL guard is
+retained, and disjoint constraints/triggers prevent read/write permit substitution.
+Unused/expired grants renew only through fresh bounded authorization; same-number
+old permit deliveries cannot poison the replacement journal. Actual Sheet and
+Chat activity paths reuse the original resource/result, invoke only the
+never-attempted suffix and verify exact dependency content. Durable write response
+loss and later projection/logging errors raise reconciliation failures instead of
+model-facing retry invitations; unresolved write receipt markers independently
+block false success. Final coding/unit regression: 2,345 passed without skips in
+104.39 seconds (thirteen existing SDK/fork warnings), including 22 new
+Temporal-prefix and two new durable-write error cases. Seven real local server
+scenarios passed in 8.66 seconds and seven histories replayed in a fresh offline
+process, now including unused-permit renewal and an unknown synthetic send that
+is never repeated. A stale-query observation race in the proof helper was fixed;
+the passing dev server also emitted transient queue-reader shard-status errors,
+retained as a production-readiness caveat. Full disposable schema-034 upgrade/
+downgrade/upgrade plus retention, all 44 golden plans, 16 no-network workflow
+replay fixtures and targeted lint/security/whitespace passed.
+No production migration, model/Google call, VM restart or new cloud spending
+occurred. See `docs/TEMPORAL_WRITE_PREFIX_GENERATIONS.md`. Unknown-write lookup,
+general write retries, compensation, coding workflows, real provider/crash/HA/
+load/restore/rollout evidence and all other original/60–68 scope remain open.
+The original goal stays active, not complete or narrowed to this checkpoint.

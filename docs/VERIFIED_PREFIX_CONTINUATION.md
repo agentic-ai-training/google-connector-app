@@ -111,3 +111,10 @@ See [private receipts](DURABLE_TOOL_RECEIPTS.md),
 [live invocation admission](LIVE_TOOL_ADMISSION.md),
 [Temporal read generations](TEMPORAL_READ_RETRY_GENERATIONS.md) and
 [local server proof](LOCAL_TEMPORAL_SERVER_PROOF.md).
+
+Subsequent schema-034 checkpoint: the same recovery boundary now supports a
+separately guarded Temporal write-prefix generation. It preserves the old
+journal, adds a new source-bound execution token, and keeps read permissions
+separate. Two additional real server/replay scenarios cover prefix continuation
+and refusal to repeat an unknown write. See
+[current Temporal path and remaining limits](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).

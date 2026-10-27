@@ -48,8 +48,8 @@ def artifacts(tmp_path,monkeypatch):
 @pytest.mark.asyncio
 async def test_offline_checker_runs_replayer_instead_of_trusting_passed_flag(artifacts):
     directory,calls = artifacts
-    assert await replay.replay_directory(directory)==5
-    assert len(calls)==5
+    assert await replay.replay_directory(directory)==len(replay.CASES)
+    assert len(calls)==len(replay.CASES)
 
 
 @pytest.mark.asyncio

@@ -4881,3 +4881,60 @@ attempt counts. They do not reset the automatic retry counter or erase prior
 uncertainty. The current local path permits at most three explicit PostgreSQL
 continuations; Temporal needs its own journal generation rather than inheriting
 that permission. See [actual implementation and limits](VERIFIED_PREFIX_CONTINUATION.md).
+
+### Deep dictionary addition: write generations and uncertainty
+
+**Monotone generation versus retry count.** A new generation is an append-only
+execution identity `(run, step, generation, permit)`, not a reset of the old
+activity's outcome. Compare the incoming generation with the current journal:
+older deliveries cannot mutate newer work; a higher number still requires an
+exact permit and source proof. Increasing an integer is not authorization.
+
+**Disjoint capability types.** A read retry and a write-prefix continuation have
+different invariants. Do not represent both as a generic `retry_allowed=True`.
+Schema 034 uses separate permit tables, mutually exclusive journal references and
+independent SQL triggers. The activity chooses using the private step's actual
+read/write classification, not a caller's claim that a mutation is a read.
+
+**Positive quiescence.** “Lease expired” and “activity completed” are not equivalent.
+A timed-out process may still be running or a provider may already have accepted
+a mutation. A finished activity plus fresh exact prefix receipts can justify
+continuing a never-attempted suffix. Unknown acceptance cannot justify a resend.
+
+**Supersession versus rewriting history.** Keep the old uncertain row intact.
+An independently admitted successor can make only that exact predecessor token
+irrelevant to *current* finalization because its known prefix was verified and
+reused. The successor's own uncertainty still blocks completion. This resembles
+an append-only event log with a derived current-state projection, not deleting
+an inconvenient failed node from a DAG.
+
+**Transport failure versus business failure.** If a send succeeds remotely but
+its response is lost, a timeout proves loss of acknowledgement, not absence of
+the message. Likewise, a local logging failure after receipt persistence must
+not become a model-facing “tool failed, try again.” The project now raises a
+typed durable reconciliation failure and preserves whether a response was saved.
+
+```mermaid
+flowchart LR
+    A[Reserve receipt] --> B[Invoke provider]
+    B -->|Response captured| C[Persist private response]
+    B -->|Response lost| U[Unknown acceptance: block repetition]
+    C --> D[Projection / logging / verification]
+    D -->|Local failure| R[Readback reconciliation, not model retry]
+    D -->|Verified full contract| S[Business completion]
+```
+
+**Evidence complexity.** For at most `g` retained generations and `k` receipts,
+reconciliation examines O(g + k + payload bytes), plus provider readback latency.
+The current bounds are three explicit continuations and 64 invocation receipts.
+Indexes narrow a single step lookup; they do not make decryption, hashing or
+network readback constant-time. The real SDK/server tests prove only their tested
+paths, not arbitrary model correctness or distributed exactly-once delivery.
+See [implemented write generations and actual evidence](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).
+
+**Renewal is not an execution.** A permit that expires before admission did not
+create a new activity or provider effect. Append a fresh, independently verified
+permit for the same next generation; do not change an expired row or increment a
+fictional attempt to evade a unique constraint. Lookup selects the newest grant,
+and a delayed old delivery is superseded. Renewals consume the same lifetime
+grant budget, so repeated expiration cannot create an unbounded loop.

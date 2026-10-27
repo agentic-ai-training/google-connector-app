@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from langchain_core.tools import tool
 import pytest
 import pytest_asyncio
 
@@ -131,7 +132,11 @@ async def started(c, *, lose_ack=False):
 
 async def until_status(c, handle, expected):
     async with asyncio.timeout(20):
-        while await handle.query('status',rpc_timeout=timedelta(seconds=3)) != expected:
+        while True:
+            observed=await handle.query('status',rpc_timeout=timedelta(seconds=3))
+            business=await c.pool.fetchval('SELECT status FROM agent_runs WHERE id=$1',c.identity)
+            if observed==business==expected:
+                break
             await asyncio.sleep(0.05)
     assert await c.pool.fetchval('SELECT status FROM agent_runs WHERE id=$1',c.identity) == expected
 
@@ -209,6 +214,117 @@ async def test_real_refresh_read_retry_after_worker_restart_and_replay(case, mon
     rows = await c.pool.fetch('SELECT generation,state FROM temporal_workspace_steps WHERE run_id=$1 ORDER BY generation',c.identity)
     assert [tuple(row.values()) for row in rows]==[(0,'uncertain'),(1,'succeeded')]
     await replay(c,handle,'refresh-retry-worker-restart')
+
+
+async def configure_chat(c, monkeypatch, *, lose_send_response=False):
+    from app.agents import supervisor
+    from app.db import oauth_credentials
+    from app.runs import verifier
+    from app.api.routes import runs
+    c.destination,c.text='synthetic@example.invalid',PRIVATE+' CHAT CONTENT'
+    c.resolves,c.sends=[],[]
+    c.abort_suffix=not lose_send_response
+    args={'allowed_tools':['resolve_chat_destination','send_chat_message'],
+        'tool_arguments':{'destination':c.destination,'text':c.text}}
+    plan=ExecutionPlan(objective=PRIVATE,services=['chat'],steps=[PlanStep(
+        id='identity',title='Send exact Chat',service='chat',operation='send',read_only=False,arguments=args)])
+    await c.pool.execute('UPDATE agent_runs SET plan=$2::jsonb WHERE id=$1',c.identity,plan.model_dump())
+    await c.pool.execute("UPDATE agent_run_steps SET read_only=FALSE,service='chat',operation='send',input_data=$2::jsonb,"
+        "max_attempts=1 WHERE id=$1",c.step_id,args)
+    @tool
+    async def resolve_chat_destination(destination: str) -> dict:
+        """Synthetic resolver, not Google."""
+        c.resolves.append(destination)
+        return {'name':'spaces/synthetic','readbackVerified':True}
+    @tool
+    async def send_chat_message(space_id: str, text: str) -> dict:
+        """Synthetic message counter; response can be deliberately lost."""
+        c.sends.append((space_id,text))
+        if lose_send_response:
+            raise TimeoutError('Synthetic transport lost the response after the effect')
+        return {'name':'spaces/synthetic/messages/one'}
+    monkeypatch.setattr(worker,'get_toolsets',lambda:{'chat':[resolve_chat_destination,send_chat_message]})
+    original=worker.execute_tool_call
+    async def stop_before_send(tool,*args,**kwargs):
+        if tool.name=='send_chat_message' and c.abort_suffix:
+            raise TimeoutError('Synthetic stop before suffix invocation')
+        return await original(tool,*args,**kwargs)
+    monkeypatch.setattr(worker,'execute_tool_call',stop_before_send)
+    async def credentials(*args):
+        return SimpleNamespace(synthetic=True)
+    async def record(*args,**kwargs):
+        return None
+    monkeypatch.setattr(oauth_credentials,'load_google_credentials',credentials)
+    monkeypatch.setattr(runs,'load_google_credentials',credentials)
+    monkeypatch.setattr(supervisor,'_record_tool_call',record)
+    monkeypatch.setattr(runs,'get_settings',lambda:SimpleNamespace(executor_version='unrelated',deployment_version='unrelated'))
+    class Reply:
+        def __init__(self,value):
+            self.value=value
+        def execute(self):
+            return self.value
+    monkeypatch.setattr(verifier.google,'chat_service',SimpleNamespace(spaces=lambda:SimpleNamespace(
+        get=lambda **kw:Reply({'name':'spaces/synthetic'}),messages=lambda:SimpleNamespace(get=lambda **kw:Reply({
+            'name':'spaces/synthetic/messages/one','space':{'name':'spaces/synthetic'},'text':c.text})))))
+
+
+async def test_real_write_prefix_worker_restart_refresh_and_replay(case,monkeypatch):
+    c=case
+    await configure_chat(c,monkeypatch)
+    handle=await started(c)
+    async with running(c):
+        await until_status(c,handle,'failed')
+    assert c.resolves==[c.destination] and c.sends==[]
+    # Actual authenticated resume and real refresh transport while no task poller
+    # is running. Neither the signal nor history carries private tool content.
+    from app.api.routes.runs import _reconcile_and_resume
+    assert (await _reconcile_and_resume(c.pool,c.identity,'synthetic-server-user',c.step_id)).state=='continue_verified_prefix'
+    first_permit=await c.pool.fetchval('SELECT id FROM temporal_prefix_generations WHERE run_id=$1',c.identity)
+    # Advance only this synthetic proof's permit expiry instead of sleeping for
+    # fifteen minutes. Application code cannot edit these immutable rows.
+    await c.pool.execute('ALTER TABLE temporal_prefix_generations DISABLE TRIGGER temporal_prefix_generation_binding')
+    try:
+        await c.pool.execute("UPDATE temporal_prefix_generations SET issued_at=now()-interval '20 minutes',"
+            "verification_started_at=now()-interval '20 minutes',expires_at=now()-interval '5 minutes' WHERE run_id=$1",c.identity)
+    finally:
+        await c.pool.execute('ALTER TABLE temporal_prefix_generations ENABLE TRIGGER temporal_prefix_generation_binding')
+    assert await refresh.deliver_one(c.pool,refresh.TemporalRefreshTransport(c.client),run_id=c.identity)
+    async with running(c):
+        await until_status(c,handle,'failed')
+    assert c.resolves==[c.destination] and c.sends==[]
+    assert await c.pool.fetchval('SELECT attempt_count FROM agent_run_steps WHERE id=$1',c.step_id)==1
+    assert (await _reconcile_and_resume(c.pool,c.identity,'synthetic-server-user',c.step_id)).state=='continue_verified_prefix'
+    assert await c.pool.fetchval('SELECT count(*) FROM temporal_prefix_generations WHERE run_id=$1',c.identity)==2
+    assert await c.pool.fetchval('SELECT count(*) FROM temporal_prefix_generations WHERE run_id=$1 AND id<>$2',c.identity,first_permit)==1
+    assert await refresh.deliver_one(c.pool,refresh.TemporalRefreshTransport(c.client),run_id=c.identity)
+    c.abort_suffix=False
+    async with running(c):
+        assert await asyncio.wait_for(handle.result(),timeout=25)=='completed'
+    assert c.resolves==[c.destination] and c.sends==[('spaces/synthetic',c.text)]
+    rows=await c.pool.fetch('SELECT generation,state,read_only FROM temporal_workspace_steps WHERE run_id=$1 ORDER BY generation',c.identity)
+    assert [tuple(row.values()) for row in rows]==[(0,'uncertain',False),(1,'succeeded',False)]
+    assert await c.pool.fetchval('SELECT count(*) FROM agent_model_calls WHERE run_id=$1',c.identity)==0
+    assert await c.pool.fetchval('SELECT side_effect_integrity FROM agent_runs WHERE id=$1',c.identity)==100
+    await replay(c,handle,'write-prefix-refresh-worker-restart')
+
+
+async def test_real_unknown_write_never_repeats_and_replays(case,monkeypatch):
+    c=case
+    await configure_chat(c,monkeypatch,lose_send_response=True)
+    handle=await started(c)
+    async with running(c):
+        await until_status(c,handle,'failed')
+        from app.api.routes.runs import _reconcile_and_resume
+        decision=await _reconcile_and_resume(c.pool,c.identity,'synthetic-server-user',c.step_id)
+        assert decision.state=='manual_required' and decision.reason_code=='tool_receipt_write_outcome_uncertain'
+        assert await c.pool.fetchval('SELECT side_effect_integrity FROM agent_runs WHERE id=$1',c.identity)==0
+        assert await c.pool.fetchval('SELECT count(*) FROM temporal_prefix_generations WHERE run_id=$1',c.identity)==0
+        assert c.resolves==[c.destination] and len(c.sends)==1
+        await handle.cancel(rpc_timeout=timedelta(seconds=3))
+        with pytest.raises(WorkflowFailureError):
+            await asyncio.wait_for(handle.result(),timeout=25)
+    assert c.sends==[('spaces/synthetic',c.text)]
+    await replay(c,handle,'unknown-write-blocked')
 
 
 async def test_real_sdk_cancellation_preserves_business_cancellation_and_replays(case, monkeypatch):
