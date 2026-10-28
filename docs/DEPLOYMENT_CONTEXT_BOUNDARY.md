@@ -30,7 +30,7 @@ bounded regular files, contain the critical denials and have no negation rules.
 Dockerfile-specific ignore overrides are rejected until separately reviewed.
 
 `--docker` adds an actual Docker-engine test against that synthetic scratch-only
-context. It pins a local Unix daemon/default builder, an empty Docker config and a
+context. It pins a local Unix daemon/default builder, a credential-free Docker config and a
 minimal child environment. No image pull, RUN step, provider secret or real source
 upload is needed. The CI step is configured but not yet published/run; local Docker
 engine proof has **not** been claimed. A missing engine fails, never passes by skip.
@@ -46,3 +46,26 @@ performed by this checkpoint.
 
 References: [Docker contexts](https://docs.docker.com/build/concepts/context/),
 [Railway uploads](https://docs.railway.com/cli/up).
+
+## Superseding local Docker Desktop proof — 28 October
+
+Docker Desktop was started without reset, pruning, deletion or changes to existing
+images/volumes. The explicit local Unix socket reported Engine 28.4.0, Linux ARM64
+and about 4.11 GB VM memory. The initial audit failed **in the audit harness**, not
+because the project image was too large: its isolated empty Docker config hid the
+installed Buildx plugin and the legacy builder rejected `--builder` (exit 125).
+
+The Mac harness now exposes only the fixed installed Docker Desktop Buildx bundle
+through `cliPluginsExtraDirs` in a private temporary config. It copies no registry
+credentials, credential helper, saved context or proxy settings. Missing, symlinked,
+group/world-writable or non-executable bundle files fail closed. Linux continues
+using system plugin directories. This is installed-path checking, not a signature
+or supply-chain attestation. See [Docker CLI plugin discovery](https://github.com/docker/cli/blob/master/cli-plugins/manager/manager_unix.go).
+
+The actual `python -m scripts.verify_deployment_context --docker` then returned
+`passed_synthetic_export`, with all **30 private** canaries excluded and all
+**10 public** canaries retained. All **14 focused tests passed**; targeted lint and
+medium-severity/medium-confidence security checks passed. No production content or
+credentials entered that scratch-only export. This supersedes the earlier missing
+local-engine proof, not the remaining actual Railway-upload, content-secret scan,
+current AMD64 application image, startup/load or production deployment proofs.

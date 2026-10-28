@@ -18,7 +18,10 @@ worker usage must be added together. Budgets/alerts are not hard resource caps.
 
 1. Validate [private context exclusions](DEPLOYMENT_CONTEXT_BOUNDARY.md), reviewed
    source and content-secret scan before any upload. The local synthetic Git test
-   is passed; actual Docker engine CI is pending.
+   is passed; on 28 October the real Docker Desktop scratch export also passed
+   (30 private/10 public canaries, 14 focused tests) after fixing isolated Buildx
+   discovery. Actual Railway upload, current application-image and CI proofs
+   remain distinct and pending.
 2. Confirm legitimate workspace ownership/access and trial networking. If a
    disposable network probe is needed, first specify exact public image, endpoints,
    maximum duration/cost and automatic stop/cleanup. No production keys/private

@@ -3677,3 +3677,17 @@ proof boundaries. Live CI and supply-chain proof, frontend trust/recovery contro
 current-trust consumption at downstream deployment/promotion gates, coding Temporal
 integration, the full fresh-candidate canary lifecycle and the remaining original
 and Sprints 60–68 requirements remain open. The original goal remains active.
+
+### 28 October — real Docker Desktop private-context proof
+
+The exact local Docker Desktop socket is available without a reset or prune. The
+initial scratch-export audit exposed a harness defect: its credential-free config
+hid Buildx, selecting the legacy builder and rejecting `--builder`. A bounded Mac
+bundle-path configuration now exposes the installed plugin without copying saved
+credentials, contexts or proxy configuration. Actual scratch-only engine export
+passed all 30 private/10 public canaries; all 14 focused tests, targeted lint and
+medium-severity/medium-confidence security checks passed. No real production
+context, image pull, RUN step, migration, model request or cloud write occurred.
+This closes only the local synthetic engine boundary; it is not an AMD64 image,
+Railway upload/startup/load or production deployment proof. See
+`docs/DEPLOYMENT_CONTEXT_BOUNDARY.md`. The original goal remains active.

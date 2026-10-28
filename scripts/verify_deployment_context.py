@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import stat
 from pathlib import Path
 import subprocess  # nosec B404
 import sys
@@ -28,10 +29,32 @@ REQUIRED_DENY_PATTERNS = frozenset({
     '**/backups', '**/*credentials*.json', '**/*oauth*.json', '**/client_secret*.json',
     '**/token*.json', '**/token*.pkl', '**/*.pem', '**/*.key', '**/id_rsa*', '**/id_ed25519*',
 })
+DOCKER_DESKTOP_BUILDX = Path('/Applications/Docker.app/Contents/Resources/cli-plugins/docker-buildx')
 
 
 class ContextAuditError(RuntimeError):
     pass
+
+
+def _docker_plugin_config(config):
+    """Keep credentials/contexts absent while exposing only the installed Mac bundle.
+
+    Docker otherwise searches for Buildx beneath --config, which is intentionally
+    empty here. Linux CI uses its normal system plugin directories, not $HOME.
+    """
+    if sys.platform != 'darwin':
+        return 'system_plugin_directories'
+    try:
+        info = DOCKER_DESKTOP_BUILDX.lstat()
+    except OSError:
+        raise ContextAuditError('Docker Desktop bundled Buildx is required for this local proof') from None
+    if (not stat.S_ISREG(info.st_mode) or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not os.access(DOCKER_DESKTOP_BUILDX, os.X_OK)):
+        raise ContextAuditError('Docker Desktop bundled Buildx must be a regular protected executable')
+    target = config / 'config.json'
+    target.write_text(json.dumps({'cliPluginsExtraDirs': [str(DOCKER_DESKTOP_BUILDX.parent)]}))
+    target.chmod(0o600)
+    return 'docker_desktop_bundle'
 
 
 def _read_policy(root, name):
@@ -92,11 +115,12 @@ def audit(root: Path, *, docker=False, runner=subprocess.run) -> dict:
                   'public_canaries': len(PUBLIC_PATHS), 'docker_engine': 'not_requested'}
         if docker:
             output = temporary / 'exported'
-            config = temporary / 'empty-docker-config'
+            config = temporary / 'isolated-docker-config'
             config.mkdir(mode=0o700)
+            plugin_source = _docker_plugin_config(config)
             socket = Path.home() / '.docker/run/docker.sock' if sys.platform == 'darwin' else Path('/var/run/docker.sock')
             # No real source/secret file, image pull, RUN instruction or provider
-            # connection. Pin a local daemon/default builder and an empty config;
+            # connection. Pin a local daemon/default builder and a keyless config;
             # a saved remote context or registry credential must not be selected.
             built = _run(['docker', '--host', 'unix://' + str(socket), '--config', str(config),
                           'build', '--builder', 'default', '--network=none', '--output', 'type=local,dest=' + str(output),
@@ -109,6 +133,7 @@ def audit(root: Path, *, docker=False, runner=subprocess.run) -> dict:
             if any(not (copied / name).is_file() for name in PUBLIC_PATHS):
                 raise ContextAuditError('Docker context omitted a required synthetic source')
             result['docker_engine'] = 'passed_synthetic_export'
+            result['docker_cli_plugin_source'] = plugin_source
         return result
 
 
