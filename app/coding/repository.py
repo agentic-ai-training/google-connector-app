@@ -261,6 +261,33 @@ async def decide_coding_run(
     return public_run(updated)
 
 
+async def request_publication_reconciliation(pool, *, run_id: str, user_id: str, action_hash: str) -> dict:
+    """Request only read-back of a dispatched intent, never renew write approval.
+
+    The existing owner/plan/expiry checks still apply when the worker claims it.
+    Prepared intents are deliberately excluded: this action cannot begin writes.
+    """
+    from app.coding.publication_receipts import source_hash
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow('''SELECT *,approval_expires_at>clock_timestamp() AS live_approval
+          FROM coding_runs WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE''', run_id, user_id)
+        if (not row or row['status'] != 'reconciling' or row.get('orchestration_owner', 'postgres') != 'postgres'
+                or row['lease_owner'] is not None or row['approval_status'] != 'approved' or not row['live_approval']
+                or row['approved_by'] != user_id or row['approval_action_hash'] != action_hash or row['plan_hash'] != action_hash):
+            raise CodingRunConflict('coding publication is not eligible for read-only reconciliation under current approval')
+        receipt = await conn.fetchrow('''SELECT * FROM coding_publication_receipts
+          WHERE run_id=$1 AND user_id=$2 AND state IN ('dispatched','returned')
+            AND expires_at>clock_timestamp() AND encrypted_manifest IS NOT NULL''', run_id, user_id)
+        if not receipt or receipt['source_hash'] != source_hash(row):
+            raise CodingRunConflict('coding publication evidence is unavailable or bound to another source')
+        updated = await conn.fetchrow('''UPDATE coding_runs SET status='approved',current_phase='publication_reconciliation_requested',
+          available_at=now(),error_category=NULL,error_message=NULL,updated_at=now() WHERE id=$1 RETURNING *''', run_id)
+        await append_coding_event(conn, run_id=run_id, user_id=user_id,
+            event_type='coding_publication_reconciliation_requested', phase='publication_reconciliation_requested',
+            message='Owner requested read-only reconciliation of retained GitHub publication; no write approval was renewed')
+    return public_run(updated)
+
+
 async def cancel_coding_run(
     pool, *, run_id: str, user_id: str, reason: str,
 ) -> dict | None:

@@ -35,6 +35,7 @@ from app.db.oauth_credentials import decrypt_private_payload, encrypt_private_pa
 from app.improvements.publisher import github_api_headers
 from app.coding.execution_fence import BorrowedConnection, CodingExecutionFenced, coding_commit, require_coding_authority
 from app.coding.owned_process import OwnedProcessError, run_owned
+from app.coding import publication_receipts
 
 
 MAX_ARCHIVE_BYTES = 134_217_728
@@ -440,7 +441,7 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
                          plan_hash: str, workspace: Path, paths: list[str],
                          candidate_build_id: str | None = None, *, guard) -> dict:
     base_url = f"https://api.github.com/repos/{repository}"
-    branch = f"coding/{run_id[:8]}-{plan_hash[:8]}"
+    branch = f"coding/{run_id}-{plan_hash[:16]}"
     async with httpx.AsyncClient(timeout=60) as client:
         await guard()
         client.headers.update(await github_api_headers(client, repository))
@@ -513,6 +514,174 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
     }
 
 
+def _publication_files(manifest):
+    files = manifest.get('files')
+    if not isinstance(files, dict) or not files:
+        raise publication_receipts.PublicationReconciliationRequired()
+    decoded = {}
+    for path, encoded in files.items():
+        parsed = PurePosixPath(path)
+        if (not path or parsed.is_absolute() or '..' in parsed.parts or '\\' in path or '\x00' in path
+                or parsed.as_posix() != path):
+            raise publication_receipts.PublicationReconciliationRequired()
+        decoded[path] = base64.b64decode(encoded, validate=True)
+    return decoded
+
+
+async def _verify_publication(row, manifest, *, guard, publication=None):
+    """Read-only reconciliation of exact head, base, file delta and open draft PR.
+
+    A missing ref/PR is uncertain, not permission to repeat a prior dispatch.
+    No credentials, network responses or private file contents enter run events.
+    """
+    fail = publication_receipts.PublicationReconciliationRequired
+    repository = row['repository']
+    branch = f"coding/{row['id']}-{row['plan_hash'][:16]}"
+    base_url = f'https://api.github.com/repos/{repository}'
+    async with httpx.AsyncClient(timeout=60) as client:
+        await guard()
+        client.headers.update(await github_api_headers(client, repository))
+        async def get(path, **kwargs):
+            await guard()
+            response = await client.get(base_url + path, **kwargs)
+            if response.status_code != 200:
+                raise fail()
+            return response.json()
+        ref = await get(f'/git/ref/heads/{branch}')
+        commit = ref.get('object', {}).get('sha', '')
+        if not re.fullmatch('[0-9a-f]{40}', commit):
+            raise fail()
+        if publication and (publication.get('branch') != branch or publication.get('commit') != commit):
+            raise fail()
+        head = await get(f'/git/commits/{commit}')
+        if [p.get('sha') for p in head.get('parents', [])] != [row['base_commit']]:
+            raise fail()
+        base = await get(f"/git/commits/{row['base_commit']}")
+        async def tree(sha):
+            result = await get(f'/git/trees/{sha}', params={'recursive': '1'})
+            if result.get('truncated') is not False or not isinstance(result.get('tree'), list):
+                raise fail()
+            return {item['path']: (item['mode'], item['type'], item['sha']) for item in result['tree']
+                    if item['type'] != 'tree'}
+        old = await tree(base['tree']['sha'])
+        actual = await tree(head['tree']['sha'])
+        expected = dict(old)
+        for path, content in _publication_files(manifest).items():
+            # Git object identity, not a security digest or content authentication.
+            sha = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content,
+                usedforsecurity=False).hexdigest()
+            mode = old.get(path, ('100644',))[0]
+            if mode not in {'100644', '100755'}:
+                raise fail()
+            expected[path] = (mode, 'blob', sha)
+        if actual != expected:
+            raise fail()
+        pulls = await get('/pulls', params={'state': 'open', 'head': f"{repository.split('/')[0]}:{branch}",
+            'base': row['base_ref'], 'per_page': '100'})
+        if not isinstance(pulls, list) or len(pulls) != 1:
+            raise fail()
+        pull = await get(f"/pulls/{pulls[0]['number']}")
+        number = pull.get('number')
+        url = f'https://github.com/{repository}/pull/{number}'
+        if (type(number) is not int or number <= 0 or pull.get('state') != 'open' or pull.get('draft') is not True
+                or pull.get('head', {}).get('sha') != commit or pull.get('head', {}).get('ref') != branch
+                or pull.get('head', {}).get('repo', {}).get('full_name') != repository
+                or pull.get('base', {}).get('ref') != row['base_ref']
+                or pull.get('base', {}).get('repo', {}).get('full_name') != repository or pull.get('html_url') != url
+                or (publication and (publication.get('number') != number or publication.get('url') != url))):
+            raise fail()
+    return {'branch': branch, 'commit': commit, 'number': number, 'url': url}
+
+
+async def _publish_frozen_unchecked(pool, row, manifest, *, guard, publication=None, dispatched=False):
+    if publication is None and not dispatched:
+        # A SQL-only write-ahead transition must commit before any GitHub mutation.
+        await publication_receipts.dispatch(pool, row)
+        with tempfile.TemporaryDirectory(prefix='coding-publication-') as temporary:
+            workspace = Path(temporary)
+            for path, content in _publication_files(manifest).items():
+                destination = workspace / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+            publication = await _publish_draft(row['repository'], row['base_ref'], row['base_commit'], str(row['id']),
+                row['plan_hash'], workspace, list(manifest['files']), manifest.get('linked_build_id'), guard=guard)
+        # This late receipt may survive lease loss/cancellation, not tenant erasure.
+        await publication_receipts.returned(pool, row, publication)
+    verified = await _verify_publication(row, manifest, guard=guard, publication=publication)
+    if dispatched and publication is None:
+        await publication_receipts.returned(pool, row, verified)
+    return verified
+
+
+async def _publish_frozen(pool, row, manifest, *, guard, publication=None, dispatched=False):
+    try:
+        return await _publish_frozen_unchecked(pool, row, manifest, guard=guard,
+            publication=publication, dispatched=dispatched)
+    except CodingExecutionFenced:
+        raise  # Preserve the winning owner/cancellation; receipt remains for later reconciliation.
+    except Exception:
+        try:
+            saved = await publication_receipts.load(pool, row)
+        except CodingExecutionFenced:
+            raise
+        except Exception:
+            raise publication_receipts.PublicationReconciliationRequired() from None
+        if saved is not None and saved[0] == 'prepared':
+            # The dispatch transition did not commit, so this protocol could not
+            # have called a mutating RPC. Retry the same frozen intent, not the CLI.
+            raise CodingWorkerError('publication_pre_dispatch',
+                'Publication was not dispatched; validated frozen files are retained for a bounded retry', retryable=True) from None
+        raise publication_receipts.PublicationReconciliationRequired() from None
+
+
+async def _prepare_publication(pool, row, plan_bytes, *, guard, workspace):
+    saved = await publication_receipts.load(pool, row)
+    if saved is not None:
+        state, manifest, result = saved
+        publication = await _publish_frozen(pool, row, manifest, guard=guard, publication=result,
+            dispatched=state == 'dispatched')
+        return manifest, publication
+    commit = await _repository_snapshot(row['repository'], row['base_commit'], workspace, guard=guard)
+    await guard()
+    if commit != row['base_commit']:
+        raise CodingWorkerError('integrity', 'Base commit changed during execution')
+    plan_path = workspace.parent / 'plan.json'
+    plan_path.write_bytes(plan_bytes)
+    plan_path.chmod(0o600)
+    payload = await _run_local(['execute-plan', '--workspace', str(workspace), '--plan', str(plan_path),
+        '--approve', row['approval_action_hash']], guard=guard)
+    changed_paths = [item['path'] for item in payload.get('changes', []) if item.get('changed') is True]
+    if not changed_paths or len(set(changed_paths)) != len(changed_paths):
+        raise CodingWorkerError('postcondition', 'Approved plan produced no unique changed files')
+    plan = json.loads(plan_bytes)
+    approved_paths = {action['path'] for action in plan['actions']
+        if action.get('tool') in {'apply_exact_patch', 'create_file'}}
+    if not set(changed_paths) <= approved_paths:
+        raise CodingWorkerError('postcondition', 'Changed files exceed the approved mutation paths')
+    async with pool.acquire() as conn:
+        linked = await conn.fetchval('SELECT id FROM candidate_builds WHERE coding_run_id=$1', row['id'])
+    files = {path: base64.b64encode(_bounded_private_file(str(workspace / path), workspace,
+        limit=MAX_MANIFEST_BYTES)).decode() for path in changed_paths}
+    if linked:
+        # Governed candidate_build_files stores text. Reject unsupported binary
+        # candidates before any publication rather than failing bookkeeping later.
+        for content in files.values():
+            try:
+                base64.b64decode(content, validate=True).decode('utf-8')
+            except UnicodeError:
+                raise CodingWorkerError('postcondition', 'Governed candidate files must be valid UTF-8 text') from None
+        path = f'.improvement-proposals/{linked}.candidate.json'
+        value = {'version': 1, 'build_id': str(linked), 'coding_run_id': str(row['id']),
+            'base_commit': row['base_commit'], 'plan_hash': row['plan_hash'], 'files': changed_paths}
+        files[path] = base64.b64encode((json.dumps(value, indent=2, sort_keys=True) + '\n').encode()).decode()
+    manifest = {'version': 1, 'files': files, 'changed_paths': changed_paths,
+        'linked_build_id': str(linked) if linked else None, 'validation': 'passed'}
+    _publication_files(manifest)
+    await publication_receipts.prepare(pool, row, manifest)
+    publication = await _publish_frozen(pool, row, manifest, guard=guard)
+    return manifest, publication
+
+
 async def _execute(pool, row) -> None:
     await require_coding_authority(pool, row)
     if not row["encrypted_plan"] or not row["plan_hash"]:
@@ -528,56 +697,11 @@ async def _execute(pool, row) -> None:
         workspace.mkdir()
         async def guard():
             await require_coding_authority(pool, row)
-        commit = await _repository_snapshot(row["repository"], row["base_commit"], workspace, guard=guard)
-        await guard()
-        if commit != row["base_commit"]:
-            raise CodingWorkerError("integrity", "Base commit changed during execution")
-        plan_path = root / "plan.json"
-        plan_path.write_bytes(plan_bytes)
-        plan_path.chmod(0o600)
         started = time.monotonic()
-        payload = await _run_local(
-            [
-                "execute-plan", "--workspace", str(workspace),
-                "--plan", str(plan_path), "--approve", row["approval_action_hash"],
-            ], guard=guard,
-        )
-        changed_paths = [
-            item["path"] for item in payload.get("changes", []) if item.get("changed") is True
-        ]
-        if not changed_paths:
-            raise CodingWorkerError("postcondition", "Approved plan produced no changed files")
-        async with pool.acquire() as conn:
-            linked_build_id = await conn.fetchval(
-                "SELECT id FROM candidate_builds WHERE coding_run_id=$1",
-                row["id"],
-            )
-        publish_paths = list(changed_paths)
-        if linked_build_id:
-            manifest_directory = workspace / ".improvement-proposals"
-            manifest_directory.mkdir(mode=0o700, exist_ok=True)
-            manifest_relative = (
-                f".improvement-proposals/{linked_build_id}.candidate.json"
-            )
-            manifest_payload = {
-                "version": 1,
-                "build_id": str(linked_build_id),
-                "coding_run_id": str(row["id"]),
-                "base_commit": row["base_commit"],
-                "plan_hash": row["plan_hash"],
-                "files": changed_paths,
-            }
-            (workspace / manifest_relative).write_text(
-                json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            publish_paths.append(manifest_relative)
-        publication = await _publish_draft(
-            row["repository"], row["base_ref"], row["base_commit"], str(row["id"]),
-            row["plan_hash"], workspace, publish_paths,
-            str(linked_build_id) if linked_build_id else None,
-            guard=guard,
-        )
+        manifest, publication = await _prepare_publication(pool, row, plan_bytes, guard=guard, workspace=workspace)
+        changed_paths = manifest['changed_paths']
+        linked_build_id = manifest['linked_build_id']
+        frozen_files = _publication_files(manifest)
         async with coding_commit(pool, row) as conn:
             await _record_step(
                 conn, row, phase="executing", status="completed", sequence_no=1,
@@ -615,7 +739,7 @@ async def _execute(pool, row) -> None:
                     linked_build_id,
                 )
                 for path in changed_paths:
-                    content = (workspace / path).read_text(encoding="utf-8")
+                    content = frozen_files[path].decode('utf-8')
                     await conn.execute(
                         """INSERT INTO candidate_build_files
                            (build_id,path,change_type,preimage_hash,result_hash,content)
@@ -818,6 +942,14 @@ async def process_one_coding_run(pool) -> bool:
                         message='Further coding actions are blocked; earlier effects may require reconciliation')
             except CodingExecutionFenced:
                 pass  # Cancellation/replacement won before the metadata commit.
+    except publication_receipts.PublicationReconciliationRequired:
+        async with coding_commit(pool, row, approval_required=False) as conn:
+            await conn.execute('''UPDATE coding_runs SET status='reconciling',current_phase='publication_reconciliation',
+              error_category='publication_reconciliation',error_message=$1,lease_owner=NULL,lease_expires_at=NULL,
+              updated_at=now() WHERE id=$2''', str(publication_receipts.PublicationReconciliationRequired()), row['id'])
+            await append_coding_event(conn, run_id=str(row['id']), user_id=row['user_id'],
+                event_type='coding_publication_reconciliation_required', phase='publication_reconciliation',
+                message='Read-only publication reconciliation is required; no automatic repeated writes or success claim')
     except CodingWorkerError as exc:
         retry = exc.retryable and row["attempt_count"] < row["max_attempts"]
         status = (
@@ -848,6 +980,16 @@ async def process_one_coding_run(pool) -> bool:
                 )
     except Exception as exc:
         async with coding_commit(pool, row, approval_required=False) as conn:
+            has_publication = row['status'] == 'executing' and await conn.fetchval(
+                'SELECT EXISTS(SELECT 1 FROM coding_publication_receipts WHERE run_id=$1)', row['id'])
+            if has_publication:
+                await conn.execute('''UPDATE coding_runs SET status='reconciling',current_phase='publication_reconciliation',
+                  error_category='publication_reconciliation',error_message='Retained publication evidence requires read-only reconciliation',
+                  lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1''', row['id'])
+                await append_coding_event(conn, run_id=str(row['id']), user_id=row['user_id'],
+                    event_type='coding_publication_reconciliation_required', phase='publication_reconciliation',
+                    message='Local publication bookkeeping failed; retained evidence must be reconciled before any further writes')
+                return True
             await conn.execute(
                 """UPDATE coding_runs SET status='failed',current_phase='failed',
                    error_category='internal',error_message=$1,completed_at=now(),

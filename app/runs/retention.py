@@ -39,6 +39,14 @@ async def apply_retention(pool) -> dict[str, int]:
                 policy, table, affected, sql.split(" ", 1)[0].lower(),
             )
         # Schema-gated for rolling compatibility with pre-023 installations.
+        if await conn.fetchval("SELECT to_regclass('coding_publication_receipts')") is not None:
+            status = await conn.execute('''UPDATE coding_publication_receipts p SET encrypted_manifest=NULL,encrypted_result=NULL
+              FROM coding_runs r WHERE r.id=p.run_id AND (p.encrypted_manifest IS NOT NULL OR p.encrypted_result IS NOT NULL)
+                AND (p.expires_at<=clock_timestamp() OR r.deleted_at IS NOT NULL)''')
+            removed = int(status.rsplit(' ', 1)[-1])
+            report['expired_coding_publication_payloads'] = removed
+            await conn.execute('''INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+              VALUES('expired_coding_publication_payloads','coding_publication_receipts',$1,'update')''', removed)
         if await conn.fetchval("SELECT to_regclass('agent_tool_receipts')") is not None:
             status = await conn.execute('''UPDATE agent_tool_receipts t SET encrypted_payload=NULL
               FROM agent_runs r WHERE r.id=t.run_id AND t.encrypted_payload IS NOT NULL

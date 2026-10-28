@@ -2626,7 +2626,12 @@ changes become production evidence.
   protected infrastructure or forge governed candidate manifests. SQL caches
   participate in the protected transaction with non-fatal savepoints. This is a
   prerequisite, not an implemented coding Temporal bridge or exactly-once
-  publication. Phase journals, trusted CI identity, planner checkpoints and live
+  publication. A subsequent 28 October schema-035 checkpoint adds encrypted frozen
+  publication receipts, exact GET-only GitHub tree/draft read-back, late-outcome
+  preservation and owner-requested reconciliation without renewing approval.
+  Unknown partial effects still prohibit repeated writes; real GitHub crash proof
+  and the frontend reconciliation action remain open. See
+  `docs/CODING_PUBLICATION_RECOVERY.md`. Phase journals, trusted CI identity, planner checkpoints and live
   keyless compile/deploy evidence remain open. See `docs/CODING_EXECUTION_FENCES.md`;
   this story stays unchecked.
 - [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
@@ -3608,3 +3613,30 @@ cloud activation occurred. See `docs/CODING_EXECUTION_FENCES.md`. Coding Tempora
 phase journals/adapters, durable publication reconciliation, trusted CI identity,
 planner checkpoints, live sandbox/generated-app/deployment proof and the entire
 remaining original/60–68 scope stay open. The goal remains active, not complete.
+
+### 28 October — source-bound hosted coding publication receipts
+
+Migration 035 now freezes private validated publication files before dispatch,
+retains late acknowledgements without overriding cancellation, and reuses frozen
+evidence after an expired lease rather than rerunning the planner/CLI/publication.
+GET-only recovery compares the complete base/head Git tree delta and exact open
+draft PR identity; uncertain remote effects enter `reconciling` and cannot silently
+repeat writes. A failed dispatch transaction that demonstrably leaves `prepared`
+may use the existing bounded retry. An authenticated owner-scoped reconciliation
+API accepts only an already-dispatched source under the same unexpired approval;
+it does not renew approval, revive cancelled runs or transfer Temporal ownership.
+Private expiry/erasure, raw reporting denial and safe lifecycle events are included.
+
+Evidence: 2,428 coding/unit tests passed without skips in 118.59s at the broader
+checkpoint; the final pre-dispatch retry correction then passed all 40 focused
+publication cases in 3.51s (overlapping tests, not additive unique coverage).
+Schema 035 passed upgrade/downgrade-002/upgrade and full-schema empty retention.
+Targeted lint, medium-severity/medium-confidence security and whitespace checks
+passed; existing SDK/fork and archive annotation warnings are retained. All
+provider/process effects in these publication tests are synthetic; no real GitHub
+publication, production migration, VM restart, model spend or deployment occurred.
+See `docs/CODING_PUBLICATION_RECOVERY.md`, the architecture reconciliation and the
+expanded teaching dictionary. Real publication/crash proof, a frontend recovery
+action, coding Temporal phase journals, trusted CI attestation, funded activation,
+application/Chat proof and all remaining original/Sprints 60–68 requirements remain
+open. This is a concrete implementation checkpoint, not goal completion.

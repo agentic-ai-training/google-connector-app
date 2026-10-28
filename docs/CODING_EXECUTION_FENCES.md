@@ -100,10 +100,11 @@ cloud restart or paid allocation.
   continue to reject Temporal-owned runs; do not emulate a PostgreSQL lease to
   call the old phase functions. The functions' SQL predicates need an explicit
   journal-bound adapter before that migration.
-- Exactly-once GitHub publication or recovery of an in-flight/ack-lost external
-  write. A fence stops **new** calls; it cannot undo a request already accepted by
-  GitHub. Publication write-ahead evidence and source-bound reconciliation still
-  need implementation before claiming full coding crash recovery.
+- Exactly-once GitHub publication. The subsequent schema-035 checkpoint adds
+  private frozen publication receipts and source-bound GET-only recovery of exact
+  existing draft PRs; uncertain partial writes still block repetition. This does
+  not undo an accepted RPC or prove full coding crash recovery. See
+  [publication recovery and its limits](CODING_PUBLICATION_RECOVERY.md).
 - A trusted CI identity/required-check attestation redesign. This change fences
   the existing CI reader; it does not make its legacy check interpretation a
   complete deployment/promotion gate.

@@ -4999,3 +4999,63 @@ bound retained bytes and discard private stderr. Complexity is O(output bytes)
 until the fixed cap, with bounded memory; killing a process is not evidence that
 an earlier network side effect did not occur. See
 [the actual hosted coding implementation and open limits](CODING_EXECUTION_FENCES.md).
+
+### Deep dictionary addition: publication intent and recovery
+
+**Write-ahead intent versus acknowledgement versus verification.** These are three
+different facts. Commit the exact private intended files *before* any external
+mutation. Retain the external response even if cancellation won meanwhile. Then
+independently read back the exact artifact before business completion. A saved
+response is not approval and a timeout is not proof of no effect.
+
+**Monotone state machine.** A publication receipt progresses through
+`prepared → dispatched → returned`. The relation is a directed acyclic graph:
+there is no transition from returned back to prepared. A database trigger prevents
+an old owner from replacing the immutable binding or outcome. This constrains
+retries more strongly than a loop around an HTTP POST. A prepared intent proves
+only that *this protocol* has not dispatched it; a dispatched intent without a
+response is uncertain and cannot be repeated just because a GET returns 404.
+
+**Exact-delta verification with hash maps.** Represent each Git leaf entry as
+`path → (mode, type, Git object SHA)`. Copy the base map, apply only the frozen
+approved file changes and compare it to the complete head map. Equality rejects
+extra files, unintended deletions, altered modes and wrong contents. Building and
+comparing maps costs expected O(N + K) time and O(N + K) memory for N base files
+and K approved mutations; Python dictionaries do not make fetching N remote
+entries free. Reject a truncated tree rather than claiming equality of incomplete
+maps. Git object SHA-1 is an object-addressing format, not the SHA-256 integrity
+digest used for the private publication manifest.
+
+```python
+def expected_tree(base_entries, approved_entries):
+    # Teaching model: real code validates paths, modes, objects and bounded input.
+    expected = dict(base_entries)
+    expected.update(approved_entries)
+    return expected
+
+
+def exact_delta_matches(base_entries, approved_entries, actual_entries):
+    return expected_tree(base_entries, approved_entries) == actual_entries
+```
+
+**Evidence lifetime versus permission lifetime.** A frozen manifest may survive
+for up to 24 hours while its original write approval expires earlier. Recoverable
+bytes do not extend permission. Read-back requests require current tenant, source
+and approval; expired or erased payloads cannot be regenerated from a hash. A new
+lease can recover the same approved source, but changing the source requires a
+new decision rather than altering the old receipt.
+
+```mermaid
+flowchart LR
+    I[Freeze private intent] --> D[Record dispatch]
+    D --> A[Retain acknowledgement]
+    A --> V[Verify exact external state]
+    D -->|Lost response| V
+    V -->|Exact + current authority| C[Atomic business commit]
+    V -->|Absent or inconsistent| R[Reconcile; no repeated write]
+```
+
+The real implementation and unproven production boundaries are documented in
+[coding publication recovery](CODING_PUBLICATION_RECOVERY.md). It is not a
+distributed transaction across PostgreSQL and GitHub and does not claim that all
+partial publications can be completed automatically.

@@ -670,3 +670,15 @@ SQL observation caches commit with the business facts under a savepoint. Actual
 SQL/child tests and a native non-Git doctor invocation strengthen local evidence;
 they do not prove generated-code isolation, coding Temporal execution or lossless
 GitHub publication. Those remain open. See [coding phase fences](CODING_EXECUTION_FENCES.md).
+
+28 October, schema 035: the PostgreSQL coding executor now freezes private validated
+publication files before GitHub mutation, retains late acknowledgements without
+overwriting cancellation, and performs exact GET-only tree/draft-PR reconciliation
+before SQL completion. Frozen evidence permits recovery without another model,
+validation or publication attempt. Uncertain effects enter `reconciling`; an
+owner-scoped API requests read-back only under the original unexpired approval.
+Expiry/erasure and raw reporting denial are integrated. This is local SQL and
+synthetic-provider verification, not real publication or exactly-once execution.
+The coding Temporal bridge, trusted CI attestation, frontend reconciliation action,
+live crash/canary/application proof and funded activation remain open. See
+[publication state and limitations](CODING_PUBLICATION_RECOVERY.md).
