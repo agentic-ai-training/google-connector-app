@@ -311,6 +311,33 @@ async def cancel_coding_run(
     return public_run(row) if row else None
 
 
+async def request_ci_readback(pool, *, run_id: str, user_id: str, action_hash: str) -> dict:
+    """Recheck blocked CI evidence only; cannot publish, renew approval or resume writes."""
+    from app.coding.ci_trust import latest_policy, CITrustError
+    from app.coding.publication_receipts import source_hash
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow('SELECT * FROM coding_runs WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE',
+            run_id, user_id)
+        if (not row or row['status'] != 'blocked' or row['current_phase'] != 'ci_evidence_required'
+                or row['lease_owner'] is not None or row.get('orchestration_owner', 'postgres') != 'postgres'
+                or row['plan_hash'] != action_hash or not row['candidate_commit'] or not row['pull_request_number']):
+            raise CodingRunConflict('Coding run is not eligible for read-only CI recheck')
+        receipt = await conn.fetchrow('''SELECT * FROM coding_publication_receipts
+          WHERE run_id=$1 AND user_id=$2 AND state='returned' AND encrypted_manifest IS NOT NULL
+            AND expires_at>clock_timestamp()''', run_id, user_id)
+        if not receipt or receipt['source_hash'] != source_hash(row):
+            raise CodingRunConflict('Current private publication evidence is required for CI read-back')
+        try:
+            await latest_policy(conn, row['repository'])
+        except CITrustError as exc:
+            raise CodingRunConflict(str(exc)) from exc
+        updated = await conn.fetchrow('''UPDATE coding_runs SET status='published',current_phase='ci_readback_requested',
+          error_category=NULL,error_message=NULL,available_at=now(),updated_at=now() WHERE id=$1 RETURNING *''', run_id)
+        await append_coding_event(conn, run_id=run_id, user_id=user_id, event_type='coding_ci_readback_requested',
+            phase='ci_readback_requested', message='Owner requested only CI read-back of the existing immutable publication')
+    return public_run(updated)
+
+
 def decrypted_request(row) -> str:
     return decrypt_private_payload(row["encrypted_request"]).decode()
 

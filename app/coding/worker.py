@@ -36,6 +36,7 @@ from app.improvements.publisher import github_api_headers
 from app.coding.execution_fence import BorrowedConnection, CodingExecutionFenced, coding_commit, require_coding_authority
 from app.coding.owned_process import OwnedProcessError, run_owned
 from app.coding import publication_receipts
+from app.coding.ci_trust import CITrustError, latest_policy, require_same_policy, verify_run
 
 
 MAX_ARCHIVE_BYTES = 134_217_728
@@ -816,7 +817,10 @@ async def _execute(pool, row) -> None:
 async def _monitor_ci(pool, row) -> None:
     await require_coding_authority(pool, row)
     settings = get_settings()
-    started_at = row["started_at"]
+    async with pool.acquire() as conn:
+        started_at = await conn.fetchval("SELECT min(created_at) FROM coding_artifacts WHERE run_id=$1 AND artifact_type='pull_request'", row['id'])
+    if started_at is None:
+        raise CITrustError('recorded_publication_start')
     if (
         started_at
         and datetime.now(timezone.utc) - started_at
@@ -830,28 +834,23 @@ async def _monitor_ci(pool, row) -> None:
     commit = str(row["candidate_commit"] or "")
     if not commit:
         raise CodingWorkerError("integrity", "Published coding run has no candidate commit")
-    repository = row["repository"]
-    async with httpx.AsyncClient(timeout=30) as client:
-        client.headers.update(await github_api_headers(client, repository))
+    repository = row['repository']
+    async with pool.acquire() as conn:
+        policy = await latest_policy(conn, repository)
+    saved = await publication_receipts.load(pool, row)
+    if saved is None or saved[0] != 'returned':
+        raise CITrustError('verified_publication_receipt')
+    files = _publication_files(saved[1])
+    async def guard():
         await require_coding_authority(pool, row)
-        response = await client.get(
-            f"https://api.github.com/repos/{repository}/commits/{commit}/check-runs",
-            params={"per_page": 100},
-        )
-        response.raise_for_status()
-    checks = list(response.json().get("check_runs") or [])
-    terminal_success = {"success", "neutral", "skipped"}
-    failures = [
-        check for check in checks
-        if check.get("status") == "completed"
-        and check.get("conclusion") not in terminal_success
-    ]
-    pending = [check for check in checks if check.get("status") != "completed"]
-    if failures:
-        names = ", ".join(str(check.get("name") or "check") for check in failures[:10])
-        raise CodingWorkerError("ci_validation", f"Trusted CI failed: {names}")
-    if not checks or pending:
+    evidence = await verify_run(policy, commit=commit, pull_number=row['pull_request_number'],
+        base_ref=row['base_ref'], branch=row['branch_name'],
+        file_hashes={path: hashlib.sha256(content).hexdigest() for path, content in files.items()}, guard=guard)
+    if evidence['status'] == 'failed':
+        raise CodingWorkerError('ci_validation', 'Required trusted CI jobs or steps did not succeed')
+    if evidence['status'] == 'pending':
         async with coding_commit(pool, row) as conn:
+            await require_same_policy(conn, policy)
             await conn.execute(
                 """UPDATE coding_runs SET status='ci_running',current_phase='ci_running',
                    publication_status='ci_running',available_at=now()+interval '30 seconds',
@@ -863,22 +862,13 @@ async def _monitor_ci(pool, row) -> None:
                 conn, run_id=str(row["id"]), user_id=row["user_id"],
                 event_type="coding_ci_waiting", phase="ci_running",
                 message="Waiting for trusted GitHub checks",
-                payload={"checks": len(checks), "pending": len(pending)},
+                payload={'policy_id': str(policy['id'])},
             )
         return
-    check_url = next(
-        (str(check.get("details_url")) for check in checks if check.get("details_url")),
-        row["pull_request_url"],
-    )
-    evidence = {
-        "commit": commit,
-        "checks": [
-            {"name": check.get("name"), "conclusion": check.get("conclusion")}
-            for check in checks
-        ],
-    }
+    check_url = evidence['url']
     raw = json.dumps(evidence, sort_keys=True).encode()
     async with coding_commit(pool, row) as conn:
+        await require_same_policy(conn, policy)
         await conn.execute(
             """UPDATE coding_runs SET status='completed',current_phase='ci_passed',
                publication_status='ci_passed',ci_check_url=$1,completed_at=now(),
@@ -899,7 +889,7 @@ async def _monitor_ci(pool, row) -> None:
             conn, run_id=str(row["id"]), user_id=row["user_id"],
             event_type="coding_ci_passed", phase="ci_passed",
             message="All trusted GitHub checks passed",
-            payload={"check_url": check_url, "checks": len(checks)},
+            payload={'check_url': check_url, 'policy_id': str(policy['id']), 'jobs': len(evidence['jobs'])},
         )
         await _cache_observation(
             conn, row,
@@ -942,6 +932,16 @@ async def process_one_coding_run(pool) -> bool:
                         message='Further coding actions are blocked; earlier effects may require reconciliation')
             except CodingExecutionFenced:
                 pass  # Cancellation/replacement won before the metadata commit.
+    except CITrustError as exc:
+        async with coding_commit(pool, row, approval_required=False) as conn:
+            retry = row['status'] == 'ci_running' and exc.category in {'available_github_evidence', 'available_complete_github_evidence'}
+            await conn.execute('''UPDATE coding_runs SET status=$1,current_phase='ci_evidence_required',
+              error_category='ci_trust',error_message=$2,lease_owner=NULL,lease_expires_at=NULL,
+              available_at=now()+interval '60 seconds',updated_at=now() WHERE id=$3''',
+              'ci_running' if retry else 'blocked', str(exc), row['id'])
+            await append_coding_event(conn, run_id=str(row['id']), user_id=row['user_id'],
+                event_type='coding_ci_evidence_required', phase='ci_evidence_required', message=str(exc),
+                payload={'read_only_retry': retry})
     except publication_receipts.PublicationReconciliationRequired:
         async with coding_commit(pool, row, approval_required=False) as conn:
             await conn.execute('''UPDATE coding_runs SET status='reconciling',current_phase='publication_reconciliation',

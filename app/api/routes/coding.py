@@ -13,6 +13,7 @@ from app.coding.repository import (
     list_coding_events,
     list_coding_runs,
     request_publication_reconciliation,
+    request_ci_readback,
 )
 from app.coding.schemas import CodingPublicationReconcile, CodingRunApproval, CodingRunCancel, CodingRunCreate
 from app.config.settings import get_settings
@@ -125,6 +126,21 @@ async def reconcile_publication(run_id: UUID, body: CodingPublicationReconcile, 
     try:
         result = await request_publication_reconciliation(pool, run_id=str(run_id),
             user_id=request.state.user_id, action_hash=body.action_hash)
+    except CodingRunConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {'run': result}
+
+
+@router.post('/{run_id}/recheck-ci')
+async def recheck_ci(run_id: UUID, body: CodingPublicationReconcile, request: Request):
+    _authorize(request)
+    pool = await get_pool()
+    run = await coding_run_detail(pool, str(run_id), request.state.user_id)
+    if not run:
+        raise HTTPException(404, 'Coding run not found')
+    _authorize(request, run['repository'])
+    try:
+        result = await request_ci_readback(pool, run_id=str(run_id), user_id=request.state.user_id, action_hash=body.action_hash)
     except CodingRunConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     return {'run': result}

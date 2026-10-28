@@ -28,7 +28,7 @@ def _github_app_private_key(value: str) -> str:
     return value.replace("\\n", "\n")
 
 
-async def _github_api_headers(client: httpx.AsyncClient, repository: str) -> dict[str, str]:
+async def _github_api_headers(client: httpx.AsyncClient, repository: str, *, permissions=None, require_app=False) -> dict[str, str]:
     """Mint a short-lived installation token, with a legacy-token compatibility path."""
     if repository.count("/") != 1:
         raise RuntimeError("GITHUB_PROPOSAL_REPOSITORY must be owner/repository")
@@ -57,13 +57,20 @@ async def _github_api_headers(client: httpx.AsyncClient, repository: str) -> dic
                 "Authorization": f"Bearer {app_jwt}",
                 "X-GitHub-Api-Version": "2026-03-10",
             },
-            json={"repositories": [repository.split("/", 1)[1]]},
+            json={"repositories": [repository.split("/", 1)[1]], **({'permissions': permissions} if permissions else {})},
         )
         response.raise_for_status()
+        if permissions:
+            granted = response.json().get('permissions', {})
+            if (any(granted.get(key) != value for key, value in permissions.items())
+                    or any(value != 'read' or key not in {*permissions, 'metadata'} for key, value in granted.items())):
+                raise RuntimeError('GitHub did not return the requested read-only installation scope')
         token = str(response.json().get("token") or "")
         if not token:
             raise RuntimeError("GitHub App did not return an installation token")
     else:
+        if require_app:
+            raise RuntimeError('Read-only CI verification requires scoped GitHub App installation access')
         token = settings.github_proposal_token.strip()
         if not token:
             raise RuntimeError(
@@ -82,6 +89,12 @@ async def github_api_headers(
 ) -> dict[str, str]:
     """Public least-privilege GitHub App header factory for coding workflows."""
     return await _github_api_headers(client, repository)
+
+
+async def github_ci_headers(client: httpx.AsyncClient, repository: str) -> dict[str, str]:
+    """CI cannot reuse a write-capable legacy token or publication installation scope."""
+    return await _github_api_headers(client, repository, require_app=True,
+        permissions={'actions': 'read', 'contents': 'read', 'pull_requests': 'read'})
 
 
 def proposal_markdown(proposal: dict) -> str:

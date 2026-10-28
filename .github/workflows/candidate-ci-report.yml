@@ -1,0 +1,34 @@
+name: Report governed candidate CI
+on:
+  workflow_run:
+    workflows: [Governed candidate validation]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # github.sha for workflow_run is the trusted default-branch commit, NOT the
+      # triggering candidate SHA. Never checkout candidate code or load artifacts.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - run: pip install 'httpx==0.28.1'
+      - name: Report bounded GitHub metadata without executing candidate content
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
+          CANDIDATE_CI_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_CI_ATTESTATION_TOKEN }}
+        run: python -I scripts/report_candidate_ci.py

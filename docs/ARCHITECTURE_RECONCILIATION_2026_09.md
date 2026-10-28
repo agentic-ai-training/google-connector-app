@@ -682,3 +682,14 @@ synthetic-provider verification, not real publication or exactly-once execution.
 The coding Temporal bridge, trusted CI attestation, frontend reconciliation action,
 live crash/canary/application proof and funded activation remain open. See
 [publication state and limitations](CODING_PUBLICATION_RECOVERY.md).
+
+28 October, schema 036: hosted coding completion and governed candidate CI callbacks
+now require a human-reviewed workflow policy and independently observed exact
+Actions run/attempt/job/step, current PR and frozen-file evidence. Skipped/neutral
+or unrelated checks cannot satisfy required gates. Policy publication/revocation
+serializes with final SQL acceptance; source/cancellation races cannot retarget CI
+success. Candidate test jobs are separated from a trusted-default-branch reporter
+that executes no candidate content or artifact. CI uses an explicitly read-only
+App token, not the publication token or a write-capable PAT fallback. No policy is
+seeded/activated. These are local SQL/synthetic-GitHub proofs, not real CI or a
+complete deployment/promotion attestation chain; see [CI trust and open limits](CODING_CI_TRUST.md).

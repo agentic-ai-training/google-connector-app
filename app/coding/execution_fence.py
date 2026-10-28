@@ -25,7 +25,8 @@ class BorrowedConnection:
 
 SOURCE_FIELDS = ('id','user_id','executor_version','repository','base_ref','base_commit','request_hash',
     'encrypted_request','plan_hash','encrypted_plan','approval_action_hash','planner_model','model_policy_version',
-    'tool_policy_version','okf_bundle_version','source_egress_consented_at','attempt_count')
+    'tool_policy_version','okf_bundle_version','source_egress_consented_at','attempt_count',
+    'candidate_commit','branch_name','pull_request_number','pull_request_url')
 
 
 async def check(conn, expected, *, approval_required=True):

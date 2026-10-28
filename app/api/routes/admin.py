@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import re
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -52,7 +53,71 @@ from app.okf.candidates import stage_okf_candidate_bundle
 from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
 )
+from app.coding.ci_trust import CITrustError, latest_policy, require_same_policy, validate_jobs, verify_run, verify_workflow_definition
 router=APIRouter(prefix="/admin")
+
+
+class CodingCITrustPolicyIn(BaseModel):
+    repository: str = Field(pattern=r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+    workflow_id: int = Field(gt=0)
+    workflow_path: str = Field(pattern=r'^\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$')
+    trusted_commit: str = Field(pattern=r'^[0-9a-f]{40}$')
+    workflow_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    required_jobs: dict[str, list[str]]
+    ttl_hours: int = Field(default=24, ge=1, le=720)
+    confirmation: str = Field(pattern=r'^APPROVE_CI_TRUST_POLICY$')
+
+
+class CodingCITrustRevocationIn(BaseModel):
+    repository: str = Field(pattern=r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+    policy_id: UUID
+    confirmation: str = Field(pattern=r'^REVOKE_CI_TRUST_POLICY$')
+
+
+@router.post('/coding-ci-policies/revoke')
+async def revoke_coding_ci_policy(body: CodingCITrustRevocationIn, request: Request):
+    if not getattr(request.state, 'is_admin', False) or request.state.user_id in {'trusted-ci', 'trusted-candidate-builder'}:
+        raise HTTPException(403, 'Human administrator approval is required')
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('coding-ci-policy:'||$1,0))", body.repository)
+        current = await conn.fetchrow('''SELECT * FROM coding_ci_policies WHERE repository=$1
+          ORDER BY created_at DESC,id DESC LIMIT 1''', body.repository)
+        if not current or current['id'] != body.policy_id:
+            raise HTTPException(409, 'The CI policy changed; review the current policy before revoking it')
+        revoked = await conn.fetchrow('''INSERT INTO coding_ci_policies(repository,workflow_id,workflow_path,trusted_commit,
+          workflow_sha256,required_jobs,approved_by,enabled,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,FALSE,
+          clock_timestamp()+interval '24 hours'-interval '1 second') RETURNING id''', body.repository,
+          current['workflow_id'], current['workflow_path'], current['trusted_commit'], current['workflow_sha256'],
+          current['required_jobs'], request.state.user_id)
+    return {'policy_id': str(revoked['id']), 'enabled': False, 'revoked_policy_id': str(body.policy_id)}
+
+
+@router.post('/coding-ci-policies')
+async def publish_coding_ci_policy(body: CodingCITrustPolicyIn, request: Request):
+    if not getattr(request.state, 'is_admin', False) or request.state.user_id in {'trusted-ci', 'trusted-candidate-builder'}:
+        raise HTTPException(403, 'Human administrator approval is required')
+    settings = get_settings()
+    allowed = {item.strip() for item in settings.coding_allowed_repositories.split(',') if item.strip()}
+    allowed.add(settings.github_proposal_repository)
+    if body.repository not in allowed:
+        raise HTTPException(403, 'CI policy repository is not configured')
+    try:
+        validate_jobs(body.required_jobs)
+        await verify_workflow_definition(body.repository, body.workflow_id, body.workflow_path,
+            body.trusted_commit, body.workflow_sha256)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        policy = await conn.fetchrow('''INSERT INTO coding_ci_policies(repository,workflow_id,workflow_path,
+          trusted_commit,workflow_sha256,required_jobs,approved_by,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,clock_timestamp()+($8*interval '1 hour')-interval '1 second') RETURNING *''',
+          body.repository, body.workflow_id, body.workflow_path, body.trusted_commit, body.workflow_sha256,
+          json.dumps(body.required_jobs), request.state.user_id, body.ttl_hours)
+    return {'policy': dict(policy)}
+
+
 class ExperimentIn(BaseModel):
     name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
     notes:str|None=None; selection_policy:str="ab"
@@ -616,12 +681,14 @@ async def remediate_candidate_validation_failure(
     """Create one bounded remediation attempt from trusted, sanitized CI evidence."""
     settings = get_settings()
     pool = await get_pool()
+    ci_snapshot = await _candidate_ci_preflight(pool, build_id, body, expected_status='failed')
     diagnostics = [
         _sanitize_ci_diagnostic(value)
         for value in body.diagnostics
         if str(value).strip()
     ][:30]
     async with pool.acquire() as conn, conn.transaction():
+        await _lock_candidate_ci_source(conn, ci_snapshot)
         source = await conn.fetchrow(
             """SELECT b.*,p.proposal_key
                  FROM candidate_builds b
@@ -631,6 +698,7 @@ async def remediate_candidate_validation_failure(
         )
         if not source:
             raise HTTPException(404, "Candidate build not found")
+        await _assert_candidate_ci_snapshot(conn, source, ci_snapshot)
         if source["status"] not in {"drafted", "validating"}:
             raise HTTPException(
                 409, "Only a frozen candidate awaiting CI may be remediated",
@@ -663,7 +731,7 @@ async def remediate_candidate_validation_failure(
             "repository": body.repository,
             "workflow": body.workflow,
             "run_id": body.run_id,
-            "failed_jobs": body.failed_jobs,
+            "failed_jobs": ci_snapshot['failed_jobs'],
             "diagnostic_codes": body.diagnostic_codes,
             "diagnostics": diagnostics,
             "log_digest": body.log_digest,
@@ -706,7 +774,7 @@ async def remediate_candidate_validation_failure(
             "source_build_id": build_id,
             "remediation_build_id": str(new_id),
             "diagnostic_codes": body.diagnostic_codes,
-            "failed_jobs": body.failed_jobs,
+            "failed_jobs": ci_snapshot['failed_jobs'],
             "contains_private_evidence": False,
         })
         await conn.execute(
@@ -732,6 +800,82 @@ async def remediate_candidate_validation_failure(
     }
 
 
+async def _candidate_ci_preflight(pool, build_id, body, *, expected_status):
+    """GitHub reads happen before SQL locks; posted passing flags never prove CI."""
+    async with pool.acquire() as conn:
+        build = await conn.fetchrow('''SELECT b.*,p.candidate_manifest,p.status AS proposal_status,
+          p.candidate_version AS proposal_candidate_version,p.content_hash AS proposal_content_hash
+          FROM candidate_builds b JOIN improvement_proposals p ON p.id=b.proposal_id WHERE b.id=$1''', build_id)
+        if not build or build['status'] not in {'drafted', 'validating'} or build['candidate_commit'] != body.commit_sha:
+            raise HTTPException(409, 'CI needs an existing frozen candidate bound to this published commit')
+        if build['proposal_status'] in {'rejected', 'changes_requested'}:
+            raise HTTPException(409, 'Candidate proposal no longer authorizes CI acceptance')
+        coding_run = await conn.fetchrow('SELECT * FROM coding_runs WHERE id=$1', build['coding_run_id']) if build['coding_run_id'] else None
+        if build['coding_run_id'] and (not coding_run or coding_run['deleted_at'] is not None
+                or coding_run['status'] not in {'published', 'ci_running'}
+                or coding_run['orchestration_owner'] != 'postgres' or coding_run['candidate_commit'] != body.commit_sha
+                or coding_run['base_commit'] != build['base_commit']):
+            raise HTTPException(409, 'Linked coding publication is unavailable, cancelled or source-inconsistent')
+        manifest = _json_object(build['candidate_manifest'])
+        draft = manifest.get('draft_pr') or {}
+        branch = coding_run['branch_name'] if coding_run else draft.get('branch')
+        number = coding_run['pull_request_number'] if coding_run else draft.get('number')
+        base_ref = coding_run['base_ref'] if coding_run else 'main'
+        if not branch or type(number) is not int:
+            raise HTTPException(409, 'Published PR identity is required before CI acceptance')
+        expected_repository = coding_run['repository'] if coding_run else get_settings().github_proposal_repository
+        if body.repository != expected_repository:
+            raise HTTPException(409, 'CI repository does not match the published candidate')
+        try:
+            policy = await latest_policy(conn, body.repository)
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        files = {row['path']: row['result_hash'] for row in await conn.fetch(
+            'SELECT path,result_hash FROM candidate_build_files WHERE build_id=$1', build_id)}
+    try:
+        observed = await verify_run(policy, commit=body.commit_sha, pull_number=number, base_ref=base_ref,
+            branch=branch, run_id=body.run_id, file_hashes=files)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if observed['status'] != expected_status or (expected_status == 'passed' and observed['tree'] != body.tree_sha):
+        raise HTTPException(409, 'Observed GitHub validation does not match the submitted result')
+    if expected_status == 'failed':
+        failed = sorted(name for name, job in observed['jobs'].items() if not job['passed'])
+        if not failed:
+            raise HTTPException(409, 'No reviewed required gate failed; do not generate a code patch for unrelated workflow failure')
+    return {'build': dict(build), 'coding_run': dict(coding_run) if coding_run else None,
+        'files': files, 'policy': policy, 'observed': observed,
+        'failed_jobs': sorted(name for name, job in observed['jobs'].items() if not job['passed'])}
+
+
+async def _lock_candidate_ci_source(conn, snapshot):
+    from app.coding.execution_fence import SOURCE_FIELDS
+    expected = snapshot['coding_run']
+    if expected is not None:
+        current = await conn.fetchrow('SELECT * FROM coding_runs WHERE id=$1 FOR UPDATE', expected['id'])
+        if (not current or current['deleted_at'] is not None or current['orchestration_owner'] != 'postgres'
+                or current['status'] not in {'published', 'ci_running'}
+                or any(current.get(key) != expected.get(key) for key in SOURCE_FIELDS if key != 'attempt_count')):
+            raise HTTPException(409, 'Coding source changed or is no longer eligible for CI completion')
+    try:
+        await require_same_policy(conn, snapshot['policy'])
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+async def _assert_candidate_ci_snapshot(conn, current, snapshot):
+    expected = snapshot['build']
+    if any(current[key] != expected[key] for key in ['base_commit', 'candidate_commit', 'coding_run_id', 'proposal_id']):
+        raise HTTPException(409, 'Candidate source changed during CI read-back')
+    files = {row['path']: row['result_hash'] for row in await conn.fetch(
+        'SELECT path,result_hash FROM candidate_build_files WHERE build_id=$1 FOR UPDATE', current['id'])}
+    proposal = await conn.fetchrow('SELECT status,candidate_version,content_hash FROM improvement_proposals WHERE id=$1 FOR UPDATE', current['proposal_id'])
+    if (files != snapshot['files'] or proposal['status'] in {'rejected', 'changes_requested'}
+            or proposal['candidate_version'] != expected['proposal_candidate_version']
+            or proposal['content_hash'] != expected['proposal_content_hash']):
+        raise HTTPException(409, 'Candidate files or proposal authority changed during CI read-back')
+
+
 @router.post("/candidate-builds/{build_id}/attestation")
 async def attest_candidate_build(build_id: str, body: CandidateValidationAttestation):
     settings = get_settings()
@@ -740,7 +884,9 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
     if not body.passed:
         raise HTTPException(422, "A passing trusted CI result is required")
     pool = await get_pool()
+    ci_snapshot = await _candidate_ci_preflight(pool, build_id, body, expected_status='passed')
     async with pool.acquire() as conn, conn.transaction():
+        await _lock_candidate_ci_source(conn, ci_snapshot)
         build = await conn.fetchrow(
             """SELECT b.*,p.candidate_kind,p.candidate_version,p.exact_diff,
                       p.rollback_plan,p.validation_report,p.privacy_report,p.security_report
@@ -749,6 +895,7 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
         )
         if not build or build["status"] != "drafted":
             raise HTTPException(409, "Candidate build is not awaiting trusted CI")
+        await _assert_candidate_ci_snapshot(conn, build, ci_snapshot)
         files = [dict(row) for row in await conn.fetch(
             """SELECT path,change_type,content,result_hash FROM candidate_build_files
                WHERE build_id=$1 ORDER BY path""", build_id,
@@ -761,7 +908,8 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
             "suite_version": body.suite_version, "commit_sha": body.commit_sha,
             "tree_sha": body.tree_sha, "workflow": body.workflow,
             "run_id": body.run_id, "log_digest": body.log_digest,
-            "trusted_identity": f"github-actions:{body.repository}:{body.workflow}",
+            "trusted_identity": f"github-actions:{body.repository}:{ci_snapshot['observed']['workflow_path']}",
+            "github_observed": ci_snapshot['observed'],
         }
         digest_files = [
             {"path": item["path"], "change_type": item["change_type"],

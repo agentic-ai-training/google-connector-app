@@ -111,7 +111,9 @@ full-schema retention. Targeted Flake8, medium-severity/medium-confidence Bandit
 and whitespace checks passed; pre-existing archive `nosec` parser warnings remain.
 
 Exactly-once remote transactions are **not claimed**. Uncertain partial publication
-may require manual reconciliation. Trusted CI identity/required-check attestation,
+may require manual reconciliation. The subsequent [schema-036 CI checkpoint](CODING_CI_TRUST.md)
+adds local reviewed-workflow/required-step verification and isolated reporting;
+live trusted-CI and downstream deployment attestation remain open, along with
 coding Temporal phase journals, planner checkpoints, frontend recovery controls,
 real sandbox/generated-app/Chat delivery and funded production activation remain
 unfinished. Hosting budgets and stopped-resource authority are unchanged.

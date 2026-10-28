@@ -105,9 +105,11 @@ cloud restart or paid allocation.
   existing draft PRs; uncertain partial writes still block repetition. This does
   not undo an accepted RPC or prove full coding crash recovery. See
   [publication recovery and its limits](CODING_PUBLICATION_RECOVERY.md).
-- A trusted CI identity/required-check attestation redesign. This change fences
-  the existing CI reader; it does not make its legacy check interpretation a
-  complete deployment/promotion gate.
+- A complete end-to-end trusted CI/deployment/promotion proof. Schema 036 now
+  replaces arbitrary check conclusions with human-reviewed workflow policies,
+  exact-attempt required job/step read-back, scoped read-only App access and a
+  separate trusted reporter. Live proof, supply-chain hardening and downstream
+  trust consumption remain open; see [CI trust](CODING_CI_TRUST.md).
 - Persisted cross-run planner checkpoints/budgets, coding compensation, immutable
   installed-CLI attestation, arbitrary cross-platform process isolation, remote
   container cancellation/cleanup and hard-crash/SIGKILL recovery.

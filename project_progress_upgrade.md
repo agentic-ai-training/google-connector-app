@@ -2634,6 +2634,15 @@ changes become production evidence.
   `docs/CODING_PUBLICATION_RECOVERY.md`. Phase journals, trusted CI identity, planner checkpoints and live
   keyless compile/deploy evidence remain open. See `docs/CODING_EXECUTION_FENCES.md`;
   this story stays unchecked.
+- Local 28-October schema-036 follow-up: exact workflow/run/attempt/required-job/
+  step/frozen-file read-back replaces arbitrary GitHub checks in hosted CI and
+  posted passing flags in candidate callbacks. Human-reviewed immutable policy
+  publication/revocation, transaction advisory fencing, source/publication locks,
+  read-only App credentials and trusted-default-branch inert reporting are local.
+  No production trust policy is seeded. Live CI/supply-chain proof, frontend trust
+  controls, downstream deployment/promotion trust consumption and the complete
+  candidate lifecycle stay open. See `docs/CODING_CI_TRUST.md`; this progress note
+  does not complete the enclosing Sprint 63 requirements.
 - [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
   cannot fabricate test success, override tool policy or grant deployment access.
 - [ ] Bound corrective rounds by progress, tokens, time and distinct failure fingerprints;
@@ -3640,3 +3649,31 @@ expanded teaching dictionary. Real publication/crash proof, a frontend recovery
 action, coding Temporal phase journals, trusted CI attestation, funded activation,
 application/Chat proof and all remaining original/Sprints 60–68 requirements remain
 open. This is a concrete implementation checkpoint, not goal completion.
+
+### 28 October — reviewed CI identity, exact attempts and separated reporting
+
+Schema 036 adds immutable, human-reviewed, expiring CI policies and immediate
+append-only revocation. Hosted coding and governed candidate callbacks now verify
+actual GitHub workflow/run/attempt, required successful jobs/steps, current PR and
+frozen-file hashes. Candidate completion rechecks source/proposal/file identity;
+SQL advisory fencing prevents an in-flight success from committing under a policy
+that was replaced or revoked. CI obtains a separate explicitly read-only GitHub
+App token and never falls back to a write-capable PAT. Test jobs no longer carry
+callback secrets; a trusted-default-branch reporter handles only bounded inert
+data and does not execute candidate content or download its artifacts. The
+obsolete hard-coded migration-head check is replaced by disposable migration proof.
+An owner-scoped API permits CI read-back only after trust configuration is repaired,
+without reopening execution/publication or renewing approval.
+
+Final coding/unit worktree verification: 2,487 passed without skips in 85.34s,
+with thirteen existing SDK/fork warnings. The 115 focused cases passed previously
+and overlap this broader suite. Schema 036 passed upgrade/downgrade-002/upgrade
+and empty full-schema retention. Targeted lint, medium-severity/medium-confidence
+security and whitespace checks passed; existing archive annotation warnings remain.
+GitHub/token/reporter effects are synthetic in these tests. No production trust
+policy, CI dispatch, migration, account modification, VM restart, paid deployment
+or model spending was performed. See `docs/CODING_CI_TRUST.md` for exact API and
+proof boundaries. Live CI and supply-chain proof, frontend trust/recovery controls,
+current-trust consumption at downstream deployment/promotion gates, coding Temporal
+integration, the full fresh-candidate canary lifecycle and the remaining original
+and Sprints 60–68 requirements remain open. The original goal remains active.

@@ -23,7 +23,8 @@ def raw(value):
 
 def source_hash(row):
     # A recovered lease has a new attempt/owner, not a different approved source.
-    fields = {key: row.get(key) for key in SOURCE_FIELDS if key != 'attempt_count'}
+    output_fields = {'attempt_count', 'candidate_commit', 'branch_name', 'pull_request_number', 'pull_request_url'}
+    fields = {key: row.get(key) for key in SOURCE_FIELDS if key not in output_fields}
     return hashlib.sha256(raw(fields)).hexdigest()
 
 

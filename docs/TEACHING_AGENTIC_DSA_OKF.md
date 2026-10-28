@@ -5059,3 +5059,55 @@ The real implementation and unproven production boundaries are documented in
 [coding publication recovery](CODING_PUBLICATION_RECOVERY.md). It is not a
 distributed transaction across PostgreSQL and GitHub and does not claim that all
 partial publications can be completed automatically.
+
+### Deep dictionary addition: CI trust and exact-attempt evidence
+
+**Authentication versus attestation.** A callback secret proves possession of
+that secret, not that tests ran. A string such as `passed: true` is a claim. Bind
+independently observed evidence to repository, workflow definition digest,
+candidate commit/tree, run, attempt, required jobs/steps and frozen file hashes.
+Even then, passing a test is not proof that the test suite is sufficient.
+
+**Set coverage versus nonempty success.** Let R be required job names and O be
+observed required names. Accept only R = O, with one identity per name and every
+required step actually successful. One unrelated successful job cannot satisfy
+this contract. Reject duplicate names instead of allowing a dictionary overwrite
+to hide a failed job. With J jobs and S total steps, building/checking sets and
+maps takes expected O(J + S) time; network transfers still have explicit bounds.
+
+```python
+def required_gate_passes(required_steps, observed_steps):
+    names = [step['name'] for step in observed_steps]
+    if len(names) != len(set(names)):  # teaching version: reject duplicate evidence
+        return False
+    by_name = {step['name']: step for step in observed_steps}
+    return all(name in by_name and by_name[name]['status'] == 'completed'
+               and by_name[name]['conclusion'] == 'success'
+               for name in required_steps)
+```
+
+**Attempts are generations, not interchangeable samples.** A rerun creates a
+new attempt of a workflow run. Looking at a cached earlier success or merging jobs
+from multiple attempts can manufacture a result that never existed. Read the
+specific attempt, bind every job's source identity, and check that the run/attempt
+and newest-run inventory did not change before accepting the observation.
+
+**Advisory transaction fence.** A row lock protects an existing run, but cannot
+prevent a new trust-policy row being inserted. A per-repository advisory lock
+serializes policy publication/revocation against final CI acceptance. Acquire it
+only for the short SQL transaction, not while waiting on GitHub. The insert
+trigger and acceptance code must use the same key; it is coordination, not an
+authorization mechanism. The actual test observes PostgreSQL's advisory lock wait
+instead of assuming concurrency from an arbitrary sleep.
+
+**Trusted reporter versus untrusted candidate.** Running generated test code
+without production/provider/callback credentials is a different trust domain from
+publishing its result. The reporter reads bounded inert metadata on a trusted
+default-branch checkout; it must not run candidate code or extract executable
+artifacts while holding credentials. A separate read-only GitHub client and a
+callback-only client prevent cross-service header reuse. A read-only API token is
+still a secret; least privilege is not permission to expose it to model code.
+
+The actual implementation, human activation APIs, evidence scope and remaining
+promotion/supply-chain work are in [CI trust](CODING_CI_TRUST.md). Policy identity
+does not replace human-published OKF or grant code/deployment authority.
