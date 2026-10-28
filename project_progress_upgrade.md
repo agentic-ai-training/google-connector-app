@@ -2617,6 +2617,18 @@ changes become production evidence.
 
 - [ ] Localize source/tests, generate typed Groq patch operations, stage into isolated
   workspaces and run real keyless compile/unit/integration/security checks.
+  On 27 October, the existing hosted PostgreSQL coding phases gained live
+  tenant/lease/version/source and current frozen-plan approval checks before
+  provider/process/publication boundaries and atomic run/step/artifact/event
+  commits. The CLI is now an owned cancellable POSIX process group with bounded
+  streams, private cwd/HOME and strict planning-key pairing. Private evidence
+  reads reject symlinks/hardlinks/FIFOs/escapes and hosted write paths cannot alias
+  protected infrastructure or forge governed candidate manifests. SQL caches
+  participate in the protected transaction with non-fatal savepoints. This is a
+  prerequisite, not an implemented coding Temporal bridge or exactly-once
+  publication. Phase journals, trusted CI identity, planner checkpoints and live
+  keyless compile/deploy evidence remain open. See `docs/CODING_EXECUTION_FENCES.md`;
+  this story stays unchecked.
 - [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
   cannot fabricate test success, override tool policy or grant deployment access.
 - [ ] Bound corrective rounds by progress, tokens, time and distinct failure fingerprints;
@@ -3577,3 +3589,22 @@ occurred. See `docs/TEMPORAL_WRITE_PREFIX_GENERATIONS.md`. Unknown-write lookup,
 general write retries, compensation, coding workflows, real provider/crash/HA/
 load/restore/rollout evidence and all other original/60–68 scope remain open.
 The original goal stays active, not complete or narrowed to this checkpoint.
+
+Progress 2026-10-28, coding-worker prerequisites: the existing PostgreSQL coding
+phases now check live tenant/lease/version/input/approval authority at repository,
+process and publication boundaries and before atomic SQL outcomes. Async owned
+POSIX process groups replace uncancellable threaded subprocess calls; bounded
+streams, clean HOME/cwd, fixed command/key pairing, repeated/spawn-time
+cancellation cleanup and confined evidence reads are covered. Hosted path aliases
+cannot bypass the infrastructure/governed-manifest restrictions. Observation
+caches now use savepoints inside the protected business transaction, with actual
+tenant-erasure/race proof. Final coding/unit run: 2,389 passed without skips in
+110.91 seconds, including 44 new cases; thirteen existing SDK/fork warnings remain.
+Targeted lint, medium-confidence security and whitespace checks passed; existing
+archive-annotation scanner warnings remain documented. The actual native CLI's
+non-Git doctor invocation passed through the new wrapper and explicitly did NOT
+claim verified isolation. No real model/GitHub call, production change or paid
+cloud activation occurred. See `docs/CODING_EXECUTION_FENCES.md`. Coding Temporal
+phase journals/adapters, durable publication reconciliation, trusted CI identity,
+planner checkpoints, live sandbox/generated-app/deployment proof and the entire
+remaining original/60–68 scope stay open. The goal remains active, not complete.

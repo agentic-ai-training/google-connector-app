@@ -4938,3 +4938,64 @@ permit for the same next generation; do not change an expired row or increment a
 fictional attempt to evade a unique constraint. Lookup selects the newest grant,
 and a delayed old delivery is superseded. Renewals consume the same lifetime
 grant budget, so repeated expiration cannot create an unbounded loop.
+
+### Deep dictionary addition: coding-process and transaction boundaries
+
+**Task versus thread versus process.** Cancelling an `asyncio.Task` interrupts its
+coroutine, not work already running in `to_thread`, a child process or a remote
+provider. The hosted coding worker now awaits an owned asynchronous process
+group. TERM/KILL and joining cleanup are explicit. This is a lifecycle boundary,
+not proof that arbitrary generated code is isolated from the operating system.
+
+**Process group versus sandbox.** A POSIX group identifies the newly launched
+program and ordinary descendants so the controller can stop its own work rather
+than arbitrary user PIDs. A malicious program might escape a group; a remote
+container is not necessarily killed by local group cleanup. OS isolation,
+container/job expiry and durable crash reconciliation remain separate needs.
+
+**Repeated cancellation.** Cleanup itself awaits I/O. A second cancellation must
+not interrupt it halfway through escalation from TERM to KILL. A shielded join
+records caller cancellation, finishes owned cleanup and then preserves the
+cancellation outcome. If the whole process/event loop is killed, an in-memory
+task cannot guarantee cleanup; a durable supervisor must reconcile that case.
+
+**TOCTOU and directory handles.** Checking a path string and later opening it can
+race a symlink replacement. The private evidence reader opens the state directory
+and walks child components using directory descriptors with `O_NOFOLLOW`.
+`fstat` checks the opened file, not a name that could now refer elsewhere.
+Reject hardlinks and non-regular files, and cap bytes before parsing them.
+
+**Canonical representation.** Infrastructure policy must reject alternate spellings
+such as `./Dockerfile` or `app/../Dockerfile`, not merely compare the raw string
+with `Dockerfile`. Do not silently rewrite an approved plan: reject ambiguous
+paths before its hash becomes execution authority. The server's governed
+manifest is not a model-authored self-service file.
+
+**Source-bound lease.** Ownership is more than a worker name. Match tenant,
+version, repository/commit, input/plan bytes and hashes, policy provenance,
+attempt identity and current approval. Recheck before external work and again
+under the run-row lock before business completion. A cached earlier check is
+not current authority.
+
+**Savepoint versus independent commit.** Optional cache metadata should not be
+committed on a second connection after its parent run was cancelled or erased.
+Use a savepoint within the protected transaction: cache failure rolls back the
+optional sub-operation, while outer rollback removes both business and cache
+facts. A cache hit remains an observation, not live postcondition evidence.
+
+```mermaid
+flowchart LR
+    L[Lock and validate run] --> B[Business rows + artifacts + event]
+    B --> S[Optional cache savepoint]
+    S -->|Cache error| R[Rollback savepoint only]
+    S -->|Cache succeeds| C[Commit outer transaction]
+    R --> C
+    B -->|Outer error| X[Rollback all, including cache]
+```
+
+**Backpressure on output.** Reading process output without a cap can exhaust
+memory even when the process has a time limit. Drain stdout/stderr concurrently,
+bound retained bytes and discard private stderr. Complexity is O(output bytes)
+until the fixed cap, with bounded memory; killing a process is not evidence that
+an earlier network side effect did not occur. See
+[the actual hosted coding implementation and open limits](CODING_EXECUTION_FENCES.md).

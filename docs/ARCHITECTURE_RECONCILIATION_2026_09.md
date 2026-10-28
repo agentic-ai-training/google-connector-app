@@ -661,3 +661,12 @@ processing failures raise reconciliation decisions instead of inviting model
 repetition. Seven real loopback server scenarios and their fresh-process offline
 histories passed; write effects are synthetic and production remains inactive.
 See [new path and unproven limits](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).
+
+27 October: before adapting the hosted coding phases to Temporal, the existing
+PostgreSQL worker now uses live per-boundary owner/source/approval checks and
+run-locked SQL completion. The trusted CLI has bounded owned-process cleanup,
+private cwd/HOME, fixed command/key pairing and confined evidence reads. Optional
+SQL observation caches commit with the business facts under a savepoint. Actual
+SQL/child tests and a native non-Git doctor invocation strengthen local evidence;
+they do not prove generated-code isolation, coding Temporal execution or lossless
+GitHub publication. Those remain open. See [coding phase fences](CODING_EXECUTION_FENCES.md).

@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import re
-import subprocess  # nosec B404
+import stat
 import tempfile
 import time
 import zipfile
@@ -33,6 +33,8 @@ from app.coding.repository import (
 from app.config.settings import get_settings
 from app.db.oauth_credentials import decrypt_private_payload, encrypt_private_payload
 from app.improvements.publisher import github_api_headers
+from app.coding.execution_fence import BorrowedConnection, CodingExecutionFenced, coding_commit, require_coding_authority
+from app.coding.owned_process import OwnedProcessError, run_owned
 
 
 MAX_ARCHIVE_BYTES = 134_217_728
@@ -107,15 +109,17 @@ async def _heartbeat(pool, run_id: str, owner: str, stop: asyncio.Event):
                     """UPDATE coding_runs SET heartbeat_at=now(),
                        lease_expires_at=now()+($1 * interval '1 second')
                        WHERE id=$2 AND lease_owner=$3
-                         AND status IN ('planning','executing')""",
+                         AND status IN ('planning','executing','ci_running')""",
                     settings.coding_worker_lease_seconds, run_id, owner,
                 )
 
 
-async def _repository_snapshot(repository: str, ref: str, destination: Path) -> str:
+async def _repository_snapshot(repository: str, ref: str, destination: Path, *, guard) -> str:
     base_url = f"https://api.github.com/repos/{repository}"
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        await guard()
         client.headers.update(await github_api_headers(client, repository))
+        await guard()
         commit_response = await client.get(f"{base_url}/commits/{ref}")
         if commit_response.status_code in {403, 404}:
             raise CodingWorkerError(
@@ -123,6 +127,7 @@ async def _repository_snapshot(repository: str, ref: str, destination: Path) -> 
             )
         commit_response.raise_for_status()
         commit = commit_response.json()["sha"]
+        await guard()
         archive_response = await client.get(f"{base_url}/zipball/{commit}")
         archive_response.raise_for_status()
     archive = archive_response.content
@@ -158,11 +163,15 @@ def _safe_extract_zip(archive: bytes, destination: Path) -> None:
         bundle.extractall(destination)  # nosec B202 - every member was bounded above
 
 
-def _run_local(arguments: list[str], *, coding_key: str | None = None) -> dict:
+async def _run_local(arguments: list[str], *, coding_key: str | None = None, guard=None) -> dict:
     settings = get_settings()
-    binary = Path(settings.coding_local_runner_binary)
+    binary = Path(settings.coding_local_runner_binary).resolve()
     if not binary.is_file():
         raise CodingWorkerError("runtime_unavailable", "gca-local is not installed")
+    if (not arguments or arguments[0] not in {'doctor','plan-request','execute-plan'}
+            or (coding_key and arguments[0] != 'plan-request')
+            or (arguments[0] == 'plan-request' and not coding_key)):
+        raise CodingWorkerError('runtime_policy', 'The hosted CLI command/key pairing is not allowed')
     clean_home = tempfile.mkdtemp(prefix="hosted-coding-home-")
     environment = {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
@@ -177,28 +186,71 @@ def _run_local(arguments: list[str], *, coding_key: str | None = None) -> dict:
     ):
         value = getattr(settings, setting, "")
         if value:
-            environment[variable] = value
+            environment[variable] = str(Path(value).resolve())
     if coding_key:
         environment["CODING_GROQ_API_KEY"] = coding_key
     try:
-        completed = subprocess.run(  # nosec B603
-            [str(binary), *arguments], capture_output=True, text=True,
-            timeout=960, check=False, env=environment,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise CodingWorkerError("runtime_timeout", "Coding sandbox exceeded 16 minutes") from exc
+        code, output = await run_owned([str(binary), *arguments], cwd=clean_home,
+            env=environment, guard=guard, output_limit=MAX_PLAN_BYTES+MAX_MANIFEST_BYTES)
+    except OwnedProcessError as exc:
+        raise CodingWorkerError('runtime_' + exc.category, 'Coding CLI exceeded its bounded process contract') from None
     finally:
         import shutil
         shutil.rmtree(clean_home, ignore_errors=True)
     try:
-        payload = json.loads(completed.stdout)
-    except (TypeError, json.JSONDecodeError) as exc:
+        payload = json.loads(output)
+    except (TypeError, UnicodeError, json.JSONDecodeError) as exc:
         raise CodingWorkerError("runtime_protocol", "gca-local returned invalid JSON") from exc
-    if completed.returncode != 0 or payload.get("ok") is not True:
+    if not isinstance(payload, dict):
+        raise CodingWorkerError('runtime_protocol', 'gca-local returned a non-object response')
+    if code != 0 or payload.get("ok") is not True:
         message = str(payload.get("error") or "gca-local rejected the operation")[:2000]
         retryable = "Groq returned HTTP 429" in message or "request failed" in message.lower()
-        raise CodingWorkerError("provider" if retryable else "runtime", message, retryable=retryable)
+        raise CodingWorkerError("provider" if retryable else "runtime",
+            'Coding CLI rejected the operation; private output was not exposed', retryable=retryable)
     return payload
+
+
+def _bounded_private_file(value, root, limit):
+    path = Path(value)
+    try:
+        relative = path.relative_to(root.absolute())
+    except ValueError:
+        try:
+            relative = path.relative_to(root.resolve())
+        except ValueError:
+            raise CodingWorkerError('runtime_protocol', 'CLI evidence path is outside its private state directory') from None
+    if not relative.parts or any(part in {'.','..'} for part in relative.parts):
+        raise CodingWorkerError('runtime_protocol', 'CLI evidence path is invalid')
+    directory = os.open(root.resolve(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in relative.parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        descriptor = os.open(relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    finally:
+        os.close(directory)
+    with os.fdopen(descriptor, 'rb') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+            raise CodingWorkerError('runtime_protocol', 'CLI evidence is not a bounded regular file')
+        value = handle.read(limit + 1)
+        if len(value) > limit:
+            raise CodingWorkerError('runtime_protocol', 'CLI evidence exceeds its byte limit')
+        return value
+
+
+async def _cache_observation(conn, row, *, scope_key, source_version, payload):
+    try:
+        from app.coding.cache_policy import put_cache_entry
+        # SQL-only cache population participates in the run lock/transaction.
+        # A failed cache write rolls back only this savepoint, not business truth.
+        async with conn.transaction():
+            await put_cache_entry(BorrowedConnection(conn), user_id=row['user_id'], entity_type='validation_evidence',
+                scope_key=scope_key, producer_version=row['tool_policy_version'], source_version=source_version, payload=payload)
+    except Exception as exc:
+        logger.warning('Coding observation cache skipped type=%s', type(exc).__name__)
 
 
 async def _record_step(
@@ -268,6 +320,7 @@ async def _mark_linked_build_failed(conn, row, category: str, message: str) -> N
 
 
 async def _plan(pool, row) -> None:
+    await require_coding_authority(pool, row)
     settings = get_settings()
     coding_key = settings.coding_groq_api_key.strip()
     if not coding_key:
@@ -279,25 +332,27 @@ async def _plan(pool, row) -> None:
         workspace.mkdir()
         state.mkdir()
         started = time.monotonic()
-        commit = await _repository_snapshot(row["repository"], row["base_ref"], workspace)
+        async def guard():
+            await require_coding_authority(pool, row)
+        commit = await _repository_snapshot(row["repository"], row["base_ref"], workspace, guard=guard)
+        await guard()
         request_path = root / "request.txt"
         request_path.write_text(decrypted_request(row), encoding="utf-8")
         request_path.chmod(0o600)
-        payload = await asyncio.to_thread(
-            _run_local,
+        payload = await _run_local(
             [
                 "plan-request", "--workspace", str(workspace),
                 "--request-file", str(request_path), "--allow-cloud-source", "true",
                 "--model", row["planner_model"], "--state-dir", str(state),
             ],
-            coding_key=coding_key,
+            coding_key=coding_key, guard=guard,
         )
         plan_path = Path(payload["plan_path"])
-        plan_bytes = plan_path.read_bytes()
+        plan_bytes = _bounded_private_file(plan_path, state, MAX_PLAN_BYTES)
         if len(plan_bytes) > MAX_PLAN_BYTES:
             raise CodingWorkerError("plan_limit", "Frozen plan exceeds one MiB")
         manifest_path = Path(payload["preview"]["approval_manifest"])
-        manifest_bytes = manifest_path.read_bytes()
+        manifest_bytes = _bounded_private_file(manifest_path, state, MAX_MANIFEST_BYTES)
         if len(manifest_bytes) > MAX_MANIFEST_BYTES:
             raise CodingWorkerError("manifest_limit", "Approval manifest exceeds eight MiB")
         plan_hash = hashlib.sha256(plan_bytes).hexdigest()
@@ -307,7 +362,7 @@ async def _plan(pool, row) -> None:
         plan = json.loads(plan_bytes)
         _validate_hosted_plan(plan)
         manifest = json.loads(manifest_bytes)
-        async with pool.acquire() as conn, conn.transaction():
+        async with coding_commit(pool, row) as conn:
             await _record_step(
                 conn, row, phase="planning", status="completed", sequence_no=0,
                 tool_name="gca-local plan-request",
@@ -365,8 +420,14 @@ def _validate_hosted_plan(plan: dict) -> None:
         if not isinstance(action, dict):
             raise CodingWorkerError("plan_policy", "Hosted plan action is invalid")
         path = str(action.get("path") or "")
-        if action.get("tool") in {"apply_exact_patch", "create_file"} and (
+        writes = action.get('tool') in {'apply_exact_patch','create_file'}
+        parsed = PurePosixPath(path)
+        if writes and (not path or parsed.is_absolute() or '..' in parsed.parts or '\\' in path or '\x00' in path
+                or parsed.as_posix() != path):
+            raise CodingWorkerError('plan_policy', 'Hosted write paths must be canonical relative paths')
+        if writes and (
             path.startswith(".github/")
+            or path.startswith('.improvement-proposals/')
             or path in {"Dockerfile", "Dockerfile.candidate"}
             or path.startswith("migrations/")
         ):
@@ -377,14 +438,17 @@ def _validate_hosted_plan(plan: dict) -> None:
 
 async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_id: str,
                          plan_hash: str, workspace: Path, paths: list[str],
-                         candidate_build_id: str | None = None) -> dict:
+                         candidate_build_id: str | None = None, *, guard) -> dict:
     base_url = f"https://api.github.com/repos/{repository}"
     branch = f"coding/{run_id[:8]}-{plan_hash[:8]}"
     async with httpx.AsyncClient(timeout=60) as client:
+        await guard()
         client.headers.update(await github_api_headers(client, repository))
+        await guard()
         commit_response = await client.get(f"{base_url}/git/commits/{base_commit}")
         commit_response.raise_for_status()
         base_tree = commit_response.json()["tree"]["sha"]
+        await guard()
         tree_response = await client.get(
             f"{base_url}/git/trees/{base_tree}", params={"recursive": "1"}
         )
@@ -393,6 +457,7 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
         entries = []
         for path in paths:
             content = (workspace / path).read_bytes()
+            await guard()
             blob = await client.post(
                 f"{base_url}/git/blobs",
                 json={"content": base64.b64encode(content).decode(), "encoding": "base64"},
@@ -402,10 +467,12 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
                 "path": path, "mode": modes.get(path, "100644"),
                 "type": "blob", "sha": blob.json()["sha"],
             })
+        await guard()
         new_tree = await client.post(
             f"{base_url}/git/trees", json={"base_tree": base_tree, "tree": entries}
         )
         new_tree.raise_for_status()
+        await guard()
         commit = await client.post(
             f"{base_url}/git/commits",
             json={
@@ -414,6 +481,7 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
             },
         )
         commit.raise_for_status()
+        await guard()
         ref = await client.post(
             f"{base_url}/git/refs",
             json={"ref": f"refs/heads/{branch}", "sha": commit.json()["sha"]},
@@ -421,6 +489,7 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
         if ref.status_code == 422:
             raise CodingWorkerError("publication_conflict", "Coding branch already exists")
         ref.raise_for_status()
+        await guard()
         pull = await client.post(
             f"{base_url}/pulls",
             json={
@@ -445,6 +514,7 @@ async def _publish_draft(repository: str, base_ref: str, base_commit: str, run_i
 
 
 async def _execute(pool, row) -> None:
+    await require_coding_authority(pool, row)
     if not row["encrypted_plan"] or not row["plan_hash"]:
         raise CodingWorkerError("integrity", "Approved run has no frozen plan")
     plan_bytes = decrypt_private_payload(row["encrypted_plan"])
@@ -456,19 +526,21 @@ async def _execute(pool, row) -> None:
         root = Path(temporary)
         workspace = root / "workspace"
         workspace.mkdir()
-        commit = await _repository_snapshot(row["repository"], row["base_commit"], workspace)
+        async def guard():
+            await require_coding_authority(pool, row)
+        commit = await _repository_snapshot(row["repository"], row["base_commit"], workspace, guard=guard)
+        await guard()
         if commit != row["base_commit"]:
             raise CodingWorkerError("integrity", "Base commit changed during execution")
         plan_path = root / "plan.json"
         plan_path.write_bytes(plan_bytes)
         plan_path.chmod(0o600)
         started = time.monotonic()
-        payload = await asyncio.to_thread(
-            _run_local,
+        payload = await _run_local(
             [
                 "execute-plan", "--workspace", str(workspace),
                 "--plan", str(plan_path), "--approve", row["approval_action_hash"],
-            ],
+            ], guard=guard,
         )
         changed_paths = [
             item["path"] for item in payload.get("changes", []) if item.get("changed") is True
@@ -504,8 +576,9 @@ async def _execute(pool, row) -> None:
             row["repository"], row["base_ref"], row["base_commit"], str(row["id"]),
             row["plan_hash"], workspace, publish_paths,
             str(linked_build_id) if linked_build_id else None,
+            guard=guard,
         )
-        async with pool.acquire() as conn, conn.transaction():
+        async with coding_commit(pool, row) as conn:
             await _record_step(
                 conn, row, phase="executing", status="completed", sequence_no=1,
                 tool_name="gca-local execute-plan",
@@ -604,12 +677,9 @@ async def _execute(pool, row) -> None:
                 message="Approved validated changes were published as a draft PR",
                 payload={"url": publication["url"], "changed_files": len(changed_paths)},
             )
-        try:
-            from app.coding.cache_policy import put_cache_entry
-            await put_cache_entry(
-                pool, user_id=row["user_id"], entity_type="validation_evidence",
+            await _cache_observation(
+                conn, row,
                 scope_key=f"{row['repository']}:{publication['commit']}",
-                producer_version=row["tool_policy_version"],
                 source_version=row["plan_hash"],
                 payload={
                     "candidate_commit": publication["commit"],
@@ -617,12 +687,10 @@ async def _execute(pool, row) -> None:
                     "sandbox_validation": "passed",
                 },
             )
-        except Exception as exc:
-            # Cache population is optional and can never change execution truth.
-            logger.warning("coding validation cache skipped type=%s", type(exc).__name__)
 
 
 async def _monitor_ci(pool, row) -> None:
+    await require_coding_authority(pool, row)
     settings = get_settings()
     started_at = row["started_at"]
     if (
@@ -641,6 +709,7 @@ async def _monitor_ci(pool, row) -> None:
     repository = row["repository"]
     async with httpx.AsyncClient(timeout=30) as client:
         client.headers.update(await github_api_headers(client, repository))
+        await require_coding_authority(pool, row)
         response = await client.get(
             f"https://api.github.com/repos/{repository}/commits/{commit}/check-runs",
             params={"per_page": 100},
@@ -658,7 +727,7 @@ async def _monitor_ci(pool, row) -> None:
         names = ", ".join(str(check.get("name") or "check") for check in failures[:10])
         raise CodingWorkerError("ci_validation", f"Trusted CI failed: {names}")
     if not checks or pending:
-        async with pool.acquire() as conn, conn.transaction():
+        async with coding_commit(pool, row) as conn:
             await conn.execute(
                 """UPDATE coding_runs SET status='ci_running',current_phase='ci_running',
                    publication_status='ci_running',available_at=now()+interval '30 seconds',
@@ -685,7 +754,7 @@ async def _monitor_ci(pool, row) -> None:
         ],
     }
     raw = json.dumps(evidence, sort_keys=True).encode()
-    async with pool.acquire() as conn, conn.transaction():
+    async with coding_commit(pool, row) as conn:
         await conn.execute(
             """UPDATE coding_runs SET status='completed',current_phase='ci_passed',
                publication_status='ci_passed',ci_check_url=$1,completed_at=now(),
@@ -708,16 +777,12 @@ async def _monitor_ci(pool, row) -> None:
             message="All trusted GitHub checks passed",
             payload={"check_url": check_url, "checks": len(checks)},
         )
-    try:
-        from app.coding.cache_policy import put_cache_entry
-        await put_cache_entry(
-            pool, user_id=row["user_id"], entity_type="validation_evidence",
+        await _cache_observation(
+            conn, row,
             scope_key=f"{repository}:{commit}:trusted-ci",
-            producer_version=row["tool_policy_version"], source_version=commit,
+            source_version=commit,
             payload=evidence,
         )
-    except Exception as exc:
-        logger.warning("coding CI cache skipped type=%s", type(exc).__name__)
 
 
 async def process_one_coding_run(pool) -> bool:
@@ -737,13 +802,29 @@ async def process_one_coding_run(pool) -> bool:
             await _execute(pool, row)
         else:
             await _monitor_ci(pool, row)
+    except CodingExecutionFenced as exc:
+        # Another owner/cancellation/source change won. Never overwrite its
+        # status or emit a contradictory candidate success/failure event.
+        logger.info('Coding phase stopped after a live-authority fence')
+        if exc.reason == 'current_plan_approval_required':
+            try:
+                async with coding_commit(pool, row, approval_required=False) as conn:
+                    await conn.execute('''UPDATE coding_runs SET status='blocked',current_phase='approval_required',
+                      approval_status=CASE WHEN approval_expires_at<=clock_timestamp() THEN 'expired' ELSE approval_status END,
+                      error_category='approval_required',error_message='Current frozen-plan approval is required; reconcile any prior effects',
+                      lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1''', row['id'])
+                    await append_coding_event(conn,run_id=str(row['id']),user_id=row['user_id'],
+                        event_type='coding_approval_expired',phase='approval_required',
+                        message='Further coding actions are blocked; earlier effects may require reconciliation')
+            except CodingExecutionFenced:
+                pass  # Cancellation/replacement won before the metadata commit.
     except CodingWorkerError as exc:
         retry = exc.retryable and row["attempt_count"] < row["max_attempts"]
         status = (
             "approved" if retry and row["status"] == "executing"
             else "queued" if retry else "failed"
         )
-        async with pool.acquire() as conn, conn.transaction():
+        async with coding_commit(pool, row, approval_required=False) as conn:
             safe_message = sanitized_excerpt(str(exc), 2000)
             await conn.execute(
                 """UPDATE coding_runs SET status=$1,current_phase=$2,error_category=$3,
@@ -766,7 +847,7 @@ async def process_one_coding_run(pool) -> bool:
                     conn, row, exc.category, safe_message,
                 )
     except Exception as exc:
-        async with pool.acquire() as conn, conn.transaction():
+        async with coding_commit(pool, row, approval_required=False) as conn:
             await conn.execute(
                 """UPDATE coding_runs SET status='failed',current_phase='failed',
                    error_category='internal',error_message=$1,completed_at=now(),
