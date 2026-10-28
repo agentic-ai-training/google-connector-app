@@ -47,6 +47,13 @@ flowchart TD
   cleanup before temporary directories disappear, and withstands repeated parent
   cancellation. Cancellation during process creation also joins the owned spawn
   before cleanup. Unsupported process-group platforms fail before spawning.
+  The subsequent native-Linux CI exposed unclosed pipe transports after a bounded
+  reader failed. The implementation now owns a public `SubprocessTransport` with
+  bounded protocol callbacks: stderr and overflow are discarded without a paused
+  reader, and cleanup closes and joins the transport, not just the process PID.
+  Output buffers never grow beyond the configured bound. Real-child tests assert
+  pipe closure on success, stdout/stderr flood, timeout, cancellation and the
+  spawn-cancellation race; unraisable subprocess exceptions fail validation.
 - The hosted wrapper admits only fixed CLI verbs. A dedicated coding key may go
   only to `plan-request`; `execute-plan` and `doctor` reject a supplied model key.
   The environment is constructed afresh, private HOME and cwd agree, and the

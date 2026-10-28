@@ -2,6 +2,41 @@
 
 Local checkpoint, 28 October 2026; schema **036**. No production policy is seeded,
 no GitHub workflow is dispatched and no canary/promotion authority is granted.
+That statement describes the original local checkpoint. The subsequent real PR
+checks and their discovered failures are recorded below; neither run constitutes
+production trust-policy enrollment or a candidate lifecycle proof.
+
+## First real PR checks: false-green diagnosis and correction
+
+PR #139 at `126f1cd477b60b1c7ef39850027c8ce86c4dd66a` produced main
+[CI run 40715706533](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40715706533)
+and [validation run 40715706489](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40715706489).
+Web, mobile and Rust jobs passed in both. The main backend failed: 18 failed,
+2,507 passed, seven skipped. Candidate validation incorrectly reported success
+despite 18 failed, 2,462 passed and 52 skipped tests. Its brace group piped through
+`tee` lacked `pipefail`: Bash exited the group at pytest, but successful `tee`
+masked that exit. The later evaluations and Docker builds never ran.
+**That green result is not valid release evidence.**
+
+Backend/web/mobile validation gates now explicitly use Bash and `set -euo
+pipefail`. Inert shell-execution tests inject a failure at every command position
+and prove later commands never execute, the failure survives `tee`, and logs are
+retained. Candidate backend enables the same integration suite as main CI.
+Unraisable subprocess exceptions are fatal in both pytest invocations.
+
+The 18 failures came from a test fixture using Linux's world-writable `/tmp` for
+archives that correctly require protected ancestry. The fixture now uses an
+isolated private directory beneath the operator's home, as existing custody tests
+already do; the production guard is unchanged. A new negative test proves writable
+ancestors remain rejected. Oversized diagnostic test IDs now have short stable
+names, so verbose logs remain inspectable instead of embedding thousands of
+parameter characters. A separate real Linux warning revealed pipe transports left
+open after output-limit/cancellation cleanup; the owned-process lifecycle now
+joins a public subprocess transport's closure as well as process exit. See
+[execution fences](CODING_EXECUTION_FENCES.md).
+
+Corrected native CI must pass at its own exact source SHA. These observations do
+not authorize merge, deployment, production policy enrollment or canary traffic.
 
 ## What changed
 

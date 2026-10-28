@@ -16,6 +16,15 @@ worker usage must be added together. Budgets/alerts are not hard resource caps.
 
 ## Ordered activation gates
 
+The historical baseline has **five configured services**: API, worker, candidate,
+Alloy and Ollama. See the [recorded inventory](RAILWAY_PRODUCTION_ACCESS_2026_10_13.md).
+Neon, Vercel and Grafana Cloud are external. The new workspace's five-service
+limit is consistent with that layout; a Trial label is not proof that the layout
+cannot fit. Inventory is also not proof of concurrent healthy operation: the
+recorded latest API/worker/candidate deployments failed and Alloy/Ollama pointers
+were null. Measure the current release rather than silently removing services or
+assuming historical configuration proves present capacity.
+
 1. Validate [private context exclusions](DEPLOYMENT_CONTEXT_BOUNDARY.md), reviewed
    source and content-secret scan before any upload. The local synthetic Git test
    is passed; on 28 October the real Docker Desktop scratch export also passed
@@ -27,9 +36,12 @@ worker usage must be added together. Budgets/alerts are not hard resource caps.
    maximum duration/cost and automatic stop/cleanup. No production keys/private
    source or model requests belong in that probe. Do not create further accounts
    or bypass verification/trial eligibility.
-3. Measure the actual image, API and worker separately against 1-GB container and
-   disk limits. Keep durable workers distinct; do not silently embed them in the
-   HTTP process merely to fit a trial. A green health endpoint is not load proof.
+3. Measure the actual API, worker, candidate, Alloy and Ollama images/working sets
+   separately against container, image, disk and volume limits. Record model
+   storage/cold-start requirements as well as memory for Ollama. Keep durable
+   workers distinct; do not silently embed them in the HTTP process merely to fit
+   a trial. A green health endpoint is not load proof. Sum measured usage across
+   all services when estimating the funded term.
 4. Before a production start, approve an immutable release, Neon backup/restore,
    compatibility/migration sequence, bounded funding term and rollback. The current
    Dockerfile default runs **`alembic upgrade head` on startup**; starting a service
@@ -42,8 +54,8 @@ worker usage must be added together. Budgets/alerts are not hard resource caps.
    stop trial services at the approved term or budget threshold.
 
 Core production PostgreSQL stays Neon; local PostgreSQL stays local; frontend stays
-Vercel. This trial does not authorize placing Kafka, Temporal, Redis, Langfuse or
-Ollama on the same small allowance, nor allocating new paid infrastructure. Each
+Vercel. This trial does not authorize placing additional Kafka, Temporal, Redis or
+Langfuse services on the same small allowance, nor allocating new paid infrastructure. Each
 needs its own measured placement/failure-domain and cost approval. The existing
 Delhi VM remains stopped with expired hosting authority; GCP Vertex and reserve
 budgets are untouched. No migration or live activation has occurred here.

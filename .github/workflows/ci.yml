@@ -53,7 +53,7 @@ jobs:
       - name: Compile Python sources before tests
         run: python -m compileall -q app scripts
       - run: alembic upgrade head
-      - run: pytest tests/ -v
+      - run: pytest tests/ -v -W error::pytest.PytestUnraisableExceptionWarning
         env:
           RUN_INTEGRATION_TESTS: '1'
           ALLOW_DEV_AUTH: 'true'

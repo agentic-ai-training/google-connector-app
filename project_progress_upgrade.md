@@ -3691,3 +3691,41 @@ context, image pull, RUN step, migration, model request or cloud write occurred.
 This closes only the local synthetic engine boundary; it is not an AMD64 image,
 Railway upload/startup/load or production deployment proof. See
 `docs/DEPLOYMENT_CONTEXT_BOUNDARY.md`. The original goal remains active.
+
+### 28 October — actual PR CI failure, fail-fast gates and pipe ownership
+
+Account-scoped publication through ACHT17406 updated existing PR #139 to
+`126f1cd477b60b1c7ef39850027c8ce86c4dd66a`, preserving both older GitHub logins,
+public organization/repository ownership and main. No merge/deployment occurred.
+Main CI 40715706533 failed backend (18 failed, 2,507 passed, seven skipped);
+candidate validation 40715706489 falsely reported green despite 18 failed,
+2,462 passed and 52 skipped. Raw job logs prove Bash stopped its piped brace group
+at pytest, while successful `tee` masked that failure; later checks/images never
+ran. That result must not be used as release/CI acceptance evidence.
+
+Candidate backend/web/mobile now explicitly enable Bash `set -euo pipefail`.
+Fault-injection executes each gate's shell structure with inert replacements,
+proving every failing command stops later commands and remains failed through
+`tee`; a negative control reproduces the old false green. Candidate backend now
+enables main's API integration suite. Both workflows make unraisable subprocess
+exceptions fatal. The 18 custody failures were Linux fixtures incorrectly placed
+under shared `/tmp`: tests now use private home ancestry, while a new negative
+test proves writable ancestors remain rejected by the unchanged production guard.
+Short diagnostic case IDs avoid huge parameter strings truncating verbose logs.
+The builder Dockerfile now installs the same `pkg-config libssl-dev` prerequisites
+as the other Rust stages; its previous missing dependencies were identified from
+the actual native-TLS Cargo dependency, not a claim of a successful image build.
+
+Owned coding CLI execution now uses public asyncio subprocess transports with
+bounded protocol buffers and explicit joined pipe closure, including output
+flood, timeout, cancellation and spawn cancellation. This addresses the real Linux
+unclosed-transport warnings rather than suppressing them. Focused real-child
+tests passed; coding/unit worktree suite passed 2,528 tests in 111.02s, followed
+by the additional negative-control/recipe checks. A separate hermetic run applied
+schema 036 and passed all 45 API integration tests in an invocation-owned local
+database, then removed only that database; no saved provider/production settings
+were loaded. The full worktree suite includes the user's uncommitted Vertex tests
+and is not by itself proof of the exact release tree. Corrected native Linux CI,
+current image/memory/capacity evidence, production CI policy enrollment, release
+admission at downstream gates, funded activation and the full original scope
+remain open. See `docs/CODING_CI_TRUST.md`. The original goal remains active.

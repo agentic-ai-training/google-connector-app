@@ -90,16 +90,18 @@ async def test_cancellation_waits_for_owned_child_cleanup(tmp_path):
 @pytest.mark.asyncio
 async def test_cancel_during_spawn_does_not_abandon_created_child(tmp_path,monkeypatch):
     from app.coding import owned_process
-    original=asyncio.create_subprocess_exec
+    original=owned_process._spawn_owned
     entered,release=asyncio.Event(),asyncio.Event()
     children=[]
+    handles=[]
     async def delayed_spawn(*args,**kwargs):
-        process=await original(*args,**kwargs)
-        children.append(process.pid)
+        transport,protocol=await original(*args,**kwargs)
+        children.append(transport.get_pid())
+        handles.append((transport,protocol))
         entered.set()
         await release.wait()
-        return process
-    monkeypatch.setattr(owned_process.asyncio,'create_subprocess_exec',delayed_spawn)
+        return transport,protocol
+    monkeypatch.setattr(owned_process,'_spawn_owned',delayed_spawn)
     task=asyncio.create_task(run_owned([sys.executable,'-c','import time; time.sleep(30)'],
         cwd=tmp_path,env=environment(tmp_path),timeout=5))
     await asyncio.wait_for(entered.wait(),timeout=3)
@@ -110,6 +112,55 @@ async def test_cancel_during_spawn_does_not_abandon_created_child(tmp_path,monke
     assert len(children)==1
     with pytest.raises(ProcessLookupError):
         os.kill(children[0],0)
+    assert handles[0][0].is_closing() and handles[0][1].closed.done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['success', 'stdout', 'stderr', 'timeout', 'cancel'])
+async def test_every_exit_joins_pipe_transport_before_return(tmp_path,monkeypatch,mode):
+    from app.coding import owned_process
+    original=owned_process._spawn_owned
+    handles=[]
+    async def record_spawn(*args,**kwargs):
+        handle=await original(*args,**kwargs)
+        handles.append(handle)
+        return handle
+    monkeypatch.setattr(owned_process,'_spawn_owned',record_spawn)
+    source={'success':"print('ok')", 'stdout':"import sys; sys.stdout.write('x'*300000)",
+            'stderr':"import sys; sys.stderr.write('x'*300000)",
+            'timeout':"import time; time.sleep(30)", 'cancel':"import time; time.sleep(30)"}[mode]
+    task=asyncio.create_task(run_owned([sys.executable,'-c',source],cwd=tmp_path,
+        env=environment(tmp_path),timeout=.1 if mode=='timeout' else 5,output_limit=1024))
+    if mode=='cancel':
+        async with asyncio.timeout(3):
+            while not handles:
+                await asyncio.sleep(.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    elif mode=='success':
+        assert await task==(0,b'ok\n')
+    else:
+        with pytest.raises(OwnedProcessError) as error:
+            await task
+        assert error.value.category==('timeout' if mode=='timeout' else 'output_limit')
+    transport,protocol=handles[0]
+    assert transport.is_closing() and protocol.closed.done() and protocol.exited.done()
+    assert len(protocol.output)<=1024
+    for fd in (1,2):
+        assert transport.get_pipe_transport(fd).is_closing()
+
+
+@pytest.mark.asyncio
+async def test_protocol_discards_overflow_and_never_retains_stderr():
+    from app.coding.owned_process import _OwnedProtocol
+    protocol=_OwnedProtocol(4)
+    protocol.pipe_data_received(2,b'safe')
+    assert protocol.output==b''
+    protocol.pipe_data_received(1,b'abcd')
+    protocol.pipe_data_received(1,b'e')
+    protocol.pipe_data_received(1,b'f')
+    assert protocol.failure.result()=='output_limit' and protocol.output==b''
 
 
 @pytest.mark.asyncio

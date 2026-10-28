@@ -14,32 +14,73 @@ class OwnedProcessError(RuntimeError):
         super().__init__('Coding CLI ' + category)
 
 
-async def _drain(reader, limit, *, capture):
-    parts, count = [], 0
-    while True:
-        part = await reader.read(65536)
-        if not part:
-            return b''.join(parts)
-        count += len(part)
-        if count > limit:
-            raise OwnedProcessError('output_limit')
-        if capture:
-            parts.append(part)
+class _OwnedProtocol(asyncio.SubprocessProtocol):
+    """Bound output without abandoning paused StreamReader pipe transports.
+
+    Keep the public SubprocessTransport so cleanup can close every pipe even
+    during spawn cancellation or an output flood. No private Process internals.
+    """
+    def __init__(self, limit):
+        loop = asyncio.get_running_loop()
+        self.exited, self.closed, self.failure = (loop.create_future() for _ in range(3))
+        self.limits = {1: limit, 2: min(limit, 1_048_576)}
+        self.counts = {1: 0, 2: 0}
+        self.output = bytearray()
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def pipe_data_received(self, fd, data):
+        self.counts[fd] += len(data)
+        if self.counts[fd] > self.limits[fd]:
+            self.output.clear()
+            if not self.failure.done():
+                self.failure.set_result('output_limit')
+        elif fd == 1 and not self.failure.done():
+            self.output.extend(data)
+        # Stderr and overflow bytes are immediately discarded, never echoed.
+
+    def pipe_connection_lost(self, fd, exc):
+        if exc is not None and not self.failure.done():
+            self.failure.set_result('pipe_failure')
+
+    def process_exited(self):
+        if not self.exited.done():
+            self.exited.set_result(self.transport.get_returncode())
+
+    def connection_lost(self, exc):
+        if exc is not None and not self.failure.done():
+            self.failure.set_result('pipe_failure')
+        if not self.closed.done():
+            self.closed.set_result(None)
 
 
-async def stop_group(process):
+async def _spawn_owned(argv, cwd, env, limit):
+    return await asyncio.get_running_loop().subprocess_exec(
+        lambda: _OwnedProtocol(limit), *argv, cwd=cwd, env=env, start_new_session=True,
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+
+async def stop_group(transport, protocol):
     # The group belongs to this newly started process, not an arbitrary PID from
     # a model. Clean grandchildren even if their original leader already exited.
-    with suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
     try:
-        await asyncio.wait_for(process.wait(), timeout=2)
-    except asyncio.TimeoutError:
-        pass
-    with suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
-    with suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(process.wait(), timeout=2)
+        with suppress(ProcessLookupError):
+            os.killpg(transport.get_pid(), signal.SIGTERM)
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(protocol.exited), timeout=2)
+    finally:
+        try:
+            with suppress(ProcessLookupError):
+                os.killpg(transport.get_pid(), signal.SIGKILL)
+        finally:
+            transport.close()
+            # Reaping a PID alone does not prove that stdout/stderr descriptors
+            # have closed. Join the public transport's complete lifecycle too.
+            try:
+                await asyncio.wait_for(asyncio.shield(protocol.closed), timeout=2)
+            except asyncio.TimeoutError:
+                raise OwnedProcessError('cleanup_incomplete') from None
 
 
 async def _join_shielded(future):
@@ -63,49 +104,44 @@ async def run_owned(argv, *, cwd, env, timeout=960, output_limit=2_097_152, guar
         raise OwnedProcessError('invalid_bounds')
     if guard:
         await guard()
-    spawn = asyncio.create_task(asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, start_new_session=True,
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE))
+    spawn = asyncio.create_task(_spawn_owned(argv, cwd, env, output_limit))
     try:
-        process = await asyncio.shield(spawn)
+        transport, protocol = await asyncio.shield(spawn)
     except asyncio.CancelledError:
         # Cancellation can arrive during OS process creation, before the caller
         # has a handle. Do not abandon a child that may already have started.
         with suppress(Exception):
-            process, _ = await _join_shielded(spawn)
-            await _join_shielded(asyncio.create_task(stop_group(process)))
+            (transport, protocol), _ = await _join_shielded(spawn)
+            await _join_shielded(asyncio.create_task(stop_group(transport, protocol)))
         raise
     async def monitor():
         while True:
             await asyncio.sleep(0.25)
             if guard:
                 await guard()
-    stdout = asyncio.create_task(_drain(process.stdout, output_limit, capture=True))
-    # Never retain/echo stderr: it can contain private source or provider errors.
-    stderr = asyncio.create_task(_drain(process.stderr, min(output_limit, 1_048_576), capture=False))
-    waiter = asyncio.create_task(process.wait())
     monitor_task = asyncio.create_task(monitor())
-    io_task = asyncio.gather(stdout, stderr, waiter)
     try:
         async with asyncio.timeout(timeout):
-            done, _ = await asyncio.wait([io_task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait([protocol.closed, protocol.failure, monitor_task],
+                                        return_when=asyncio.FIRST_COMPLETED)
+            if protocol.failure in done:
+                raise OwnedProcessError(protocol.failure.result())
             if monitor_task in done:
                 await monitor_task
-            output, _, code = await io_task
             if guard:
                 await guard()
-            return code, output
+            return transport.get_returncode(), bytes(protocol.output)
     except TimeoutError:
         raise OwnedProcessError('timeout') from None
     finally:
         # Wait for cleanup even when the caller was cancelled. It must not remove
         # the temporary HOME/workspace before its child has been stopped.
-        cleanup = asyncio.create_task(stop_group(process))
-        _, interrupted = await _join_shielded(cleanup)
-        monitor_task.cancel()
-        io_task.cancel()
-        for task in (stdout, stderr, waiter):
-            task.cancel()
-        _, interrupted_again = await _join_shielded(asyncio.gather(monitor_task, io_task, stdout, stderr, waiter,
-            return_exceptions=True))
-        if interrupted or interrupted_again:
+        async def clean():
+            try:
+                await stop_group(transport, protocol)
+            finally:
+                monitor_task.cancel()
+                await asyncio.gather(monitor_task, return_exceptions=True)
+        _, interrupted = await _join_shielded(asyncio.create_task(clean()))
+        if interrupted:
             raise asyncio.CancelledError()

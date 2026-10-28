@@ -104,7 +104,8 @@ def test_bad_result_inventory_blocks_execution_before_another_case(host, monkeyp
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize('text', ['x' * 8000, '\u2603' * 8000, '\U0001f642' * 8000, '\x00' * 8000])
+@pytest.mark.parametrize('text', ['x' * 8000, '\u2603' * 8000, '\U0001f642' * 8000, '\x00' * 8000],
+                         ids=['ascii', 'snowman', 'emoji', 'nul'])
 def test_unicode_and_control_output_is_bounded_by_serialized_bytes_and_keeps_tail(text):
     value = proof.diagnostic_tail(text + 'cause', 128)
     assert len(custody.canonical(value)) <= 128 and value.endswith('cause')

@@ -2,6 +2,8 @@
 import hashlib
 import json
 import os
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +19,16 @@ READ_REGISTRY = restore.registry_record
 
 
 @pytest.fixture
-def target(tmp_path, monkeypatch):
+def protected_directory():
+    # /tmp is intentionally rejected on Linux. Exercise real protected ancestry,
+    # just like the staging tests; do not bypass the production custody guard.
+    with tempfile.TemporaryDirectory(prefix='.gca-legacy-test-', dir=Path.home()) as name:
+        yield Path(name)
+
+
+@pytest.fixture
+def target(protected_directory, monkeypatch):
+    tmp_path = protected_directory
     # The positive lifecycle is historical, not a grant to load after host STOP.
     monkeypatch.setattr(restore.time, 'time', lambda: 1791889200.0)
     state = tmp_path / 'journal'
@@ -85,6 +96,18 @@ def target(tmp_path, monkeypatch):
         value.journal = journal
         value.gateway = {'isolation': isolation, 'loader': loader, 'custody': custody}
         yield value
+
+
+def test_shared_or_group_writable_parent_remains_rejected(protected_directory):
+    from app.coding import toolchain_staging as custody
+    shared_parent = protected_directory / 'shared'
+    shared_parent.mkdir(mode=0o700)
+    private_child = shared_parent / 'private'
+    private_child.mkdir(mode=0o700)
+    shared_parent.chmod(0o777)
+    with pytest.raises(custody.ToolchainStagingError, match='operator protected'):
+        custody.protected(private_child, private=True)
+    assert shared_parent.stat().st_mode & 0o777 == 0o777
 
 
 def prepare(t):
