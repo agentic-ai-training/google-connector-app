@@ -3796,3 +3796,32 @@ security, whitespace and redacted commit secret scan passed. The read-only Railw
 refresh still reports an empty workspace with five services/project, 1-GB/container
 and 4-GB/image ceilings; no resource or credit was consumed. Native release CI and
 image/memory measurements remain required, not inferred from these local results.
+
+### 29 October — trusted controller source, inert candidate uploads
+
+Main native CI 40820194741 at `4a68a2f` passed all four jobs, including full
+backend/security/evaluation/Temporal/context checks and the production Rust build
+stage. Candidate run 40820194962 failed at retention inside its migration harness
+(`ModuleNotFoundError: app`), after its migrations and audit had passed. Switching
+that command to `python -m scripts.verify_cloud_migrations_local` preserves the
+repository import root; the actual module invocation locally passed the complete
+upgrade/downgrade-002/upgrade-036 and empty retention proof. It was not a schema
+or provider failure, and no failed candidate run is called green.
+
+The deployment workflow now separates a trusted main-SHA controller from inert
+candidate source, uses isolated Python, keeps dispatch inputs out of shell code,
+installs pinned vendor CLIs before credentials, and explicitly uploads only the
+candidate archive root. Source custody requires exact Git identity/origin, clean
+regular files, no untracked content/links and resource bounds. Vercel confirms the
+existing project before its write and uses the shared owned-process lifecycle;
+failures do not print credential-bearing argv or provider output. Eighty focused
+tests passed, including actual Git, poisoned-import isolation, inode checks,
+readback failure cases and real process cleanup. Actual `4a68a2f` source custody
+passed for 686 files/6,253,373 bytes without execution or upload. Targeted lint,
+security and whitespace checks passed.
+
+No deployment workflow, cloud write or new spending was started. This checkpoint
+does not close the server-bound single-use deployment/merge dispatch journal,
+manual-dispatch authorization binding, independent provider/attestation/provenance,
+active-canary revocation, funded rollout, image/capacity or full lifecycle proof.
+The original goal is active. See `docs/CANDIDATE_DEPLOYMENT_CONTROLLER.md`.

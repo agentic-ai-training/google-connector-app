@@ -11,7 +11,7 @@ surfaces = set(filter(None, os.environ.get("CANDIDATE_RUNTIME_SURFACES", "").spl
 
 def railway(*args):
     return subprocess.check_output(
-        ["npx", "-y", "@railway/cli@latest", *args, "--service", service, "--json"],
+        ["railway", *args, "--service", service, "--json"],
         text=True,
     )
 
@@ -26,7 +26,7 @@ elif "api" not in surfaces:
         identifier = item.get("id") or item.get("domain") or item.get("url")
         if identifier:
             subprocess.check_call([
-                "npx", "-y", "@railway/cli@latest", "domain", "delete",
+                "railway", "domain", "delete",
                 str(identifier), "--yes", "--service", service,
             ])
     domains = []

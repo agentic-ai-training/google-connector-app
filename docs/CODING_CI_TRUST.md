@@ -293,9 +293,10 @@ invocation-owned and removed after the run. This is local Python 3.14 proof, not
 native Linux Python 3.12 CI or a production deployment claim.
 
 This does **not** close the external-effect gap after SQL approval: durable
-deployment/merge dispatch intents, trusted-controller credential separation,
+deployment/merge dispatch intents, independent controller/provenance verification,
 independently observed deployment/post-merge proof and automatic revocation of
-active traffic remain required. Candidate deployment currently checks out a
-candidate revision while using deployment credentials; that workflow must be
-separated onto trusted controller source before live canary activation. No live
-canary or merge is authorized merely because these local tests pass.
+active traffic remain required. The subsequent controller checkpoint separates
+trusted main-source scripts from inert candidate upload data and pins vendor
+tools; see [the implemented boundary and remaining journal gaps](CANDIDATE_DEPLOYMENT_CONTROLLER.md).
+That local source split is not a live deployment or a complete attestation chain.
+No live canary or merge is authorized merely because these local tests pass.

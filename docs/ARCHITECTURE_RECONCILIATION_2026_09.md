@@ -711,3 +711,14 @@ publication governance is unchanged. The deployment/merge dispatch journal,
 trusted deployment-controller checkout/credential boundary, post-merge proof and
 active-canary revocation remain unfinished; no production activation is implied.
 See [current code admission](CODING_CI_TRUST.md).
+
+29 October, deployment-controller source split: the actual workflow now checks
+out trusted controller code at the main workflow SHA and candidate upload data
+in a separate sibling directory. Python uses isolated imports; Git custody checks
+reject changed, untracked, linked and oversized source without executing it.
+Pinned vendor CLIs are installed before credentials, and only trusted scripts
+handle scoped tokens. Vercel preflights its existing project and reuses owned
+bounded process cleanup; Railway upload explicitly excludes the controller root.
+This fixes the former candidate-script/credential co-location, not the outstanding
+single-use dispatch journal or independent provider/post-merge attestation. No live
+workflow/deploy was invoked. See [controller boundary](CANDIDATE_DEPLOYMENT_CONTROLLER.md).

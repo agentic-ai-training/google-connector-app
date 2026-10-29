@@ -5188,3 +5188,29 @@ needs a durable dispatch intent, independently observed outcome and reconciliati
 of lost acknowledgements. Fresh CI admission is one necessary layer, not an
 exactly-once external release mechanism. These remaining boundaries are explicit
 in [CI trust](CODING_CI_TRUST.md).
+
+### Deep dictionary addition: credentialed controller versus source data
+
+A candidate directory is a data namespace, not an execution namespace. Put the
+reviewed controller and candidate in separate sibling roots; execute fixed
+controller scripts with isolated imports and upload candidate data explicitly.
+Otherwise a candidate `json.py`, helper script, package hook or local tool name
+can become a **confused deputy**: untrusted content runs with a controller token.
+The real controller uses this split; it does not run candidate install/build
+commands locally. Trusted vendor tools still need independent supply-chain review.
+
+Directory isolation is not an OS sandbox. `resolve()` establishes where a path
+points; `lstat()` inspects the link inode itself. Following `stat()` alone can
+mistake a symlink target for an approved regular source file. A hardlink can share
+an inode with another name, so checking `st_nlink == 1` rejects that ambiguity.
+The source checker also compares the clean working tree to its immutable Git
+commit, rejects all untracked data and checks the exact repository origin.
+For F files with total path depth P and source bytes B, metadata/path validation
+is O(F + P), while Git content checking can require O(B); it is not just a constant
+time SHA comparison. Explicit file/count/byte/output/deadline limits remain needed.
+
+This establishes a local upload boundary, not a remotely verified deployment or
+approval grant. Tokens belong only in trusted controller steps, never source
+archives or model sandboxes. A timed-out upload may already have created remote
+effects; source custody cannot solve that distributed uncertainty. See the
+[actual controller and open dispatch requirements](CANDIDATE_DEPLOYMENT_CONTROLLER.md).

@@ -64,6 +64,7 @@ def test_success_requires_all_commands(tmp_path, job):
 def test_candidate_backend_does_not_silently_omit_integration_suite():
     assert gate('backend')['env']['RUN_INTEGRATION_TESTS'] == '1'
     assert '-W error::pytest.PytestUnraisableExceptionWarning' in gate('backend')['run']
+    assert 'python -m scripts.verify_cloud_migrations_local' in gate('backend')['run']
 
 
 def test_negative_control_reproduces_original_successful_tee_masking(tmp_path):

@@ -14,7 +14,7 @@ with open("candidate-domain.json", encoding="utf-8") as handle:
 healthy = None
 for _ in range(60):
     value = json.loads(subprocess.check_output([
-        "npx", "-y", "@railway/cli@latest", "status", "--json",
+        "railway", "status", "--json",
     ], text=True))
     deployment = None
     for environment in value.get("environments", {}).get("edges", []):
@@ -45,7 +45,7 @@ for _ in range(60):
             time.sleep(10)
             continue
         logs = subprocess.check_output([
-            "npx", "-y", "@railway/cli@latest", "logs", deployment["id"],
+            "railway", "logs", deployment["id"],
             "--service", service, "--lines", "200", "--json",
         ], text=True)
         ready = (
@@ -70,7 +70,8 @@ for _ in range(60):
         if not ready:
             time.sleep(10)
             continue
-        healthy = {"latestDeployment": deployment}
+        healthy = {"latestDeployment": {"id": deployment["id"], "status": status,
+            "meta": {"imageDigest": meta["imageDigest"]}}}
         break
     if status in {"FAILED", "CRASHED", "REMOVED"}:
         raise SystemExit(f"Candidate deployment failed: {status}")

@@ -56,7 +56,7 @@ jobs:
             python -m flake8 app scripts tests migrations
             bandit -q -r app scripts -ll
             pip-audit -r requirements.txt --progress-spinner off
-            python scripts/verify_cloud_migrations_local.py
+            python -m scripts.verify_cloud_migrations_local
             docker build -f Dockerfile.worker -t candidate-worker:test .
             docker build -f Dockerfile.candidate -t candidate-api:test .
             docker build -f Dockerfile.builder -t candidate-builder:test .
