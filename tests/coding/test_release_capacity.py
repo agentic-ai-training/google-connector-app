@@ -1,5 +1,6 @@
 """Capacity verifier contracts; Docker/cloud commands are inert except public child tests."""
 import json
+from decimal import Decimal
 import os
 from pathlib import Path
 import subprocess
@@ -80,7 +81,7 @@ def test_cleanup_only_removes_proven_owned_exact_resources(monkeypatch, owned):
     def inspect(kind, name, **kwargs):
         if name in seen: return None
         label = fixture.owner if owned else 'someone-else'
-        return {'Config':{'Labels':{capacity.LABEL:label}}} if kind == 'container' else {'Labels':{capacity.LABEL:label}}
+        return {'Id':'f'*64,'Config':{'Labels':{capacity.LABEL:label}}} if kind == 'container' else {'Id':'e'*64,'Labels':{capacity.LABEL:label}}
     def command(*args, **kwargs):
         removed.append(args)
         seen.add(args[-1])
@@ -89,7 +90,7 @@ def test_cleanup_only_removes_proven_owned_exact_resources(monkeypatch, owned):
     monkeypatch.setattr(capacity,'command',command)
     if owned:
         fixture.cleanup()
-        assert removed == [('docker','rm','--force',fixture.containers[0]),('docker','network','rm',fixture.network)]
+        assert removed == [('docker','rm','--force','f'*64),('docker','network','rm','e'*64)]
     else:
         with pytest.raises(capacity.CapacityError): fixture.cleanup()
         assert removed == []
@@ -139,3 +140,41 @@ def test_native_workflow_builds_and_measures_all_role_images_without_cloud_secre
     assert 'python -m scripts.verify_release_capacity --source-commit "$CANDIDATE_HEAD_SHA"' in text
     assert 'secrets.' not in str(job)
     assert any(item.get('with',{}).get('path') == 'release-capacity.json' for item in job['steps'])
+
+
+@pytest.mark.parametrize('completion', [100,100.0,'100.00',Decimal('100.00')])
+def test_real_json_numeric_serialization_is_not_mistaken_for_failed_completion(completion):
+    value = {'status':'completed','model_call_count':0,'functional_completion':completion,
+        'technical_completion':completion,'user_visible_completion':completion,
+        'steps':[{'status':'completed','output_data':{'output':'Synthetic capabilities'}}]}
+    # The actual route serializer uses json.dumps(default=str) for NUMERIC values.
+    capacity.verify_completed_run(json.loads(json.dumps(value,default=str)))
+
+
+@pytest.mark.parametrize('fault', ['partial','tokens','nan','bool','no-output','pending-step','empty-steps'])
+def test_run_verifier_still_rejects_false_success(fault):
+    value = {'status':'completed','model_call_count':0,'functional_completion':'100.00',
+        'technical_completion':'100.00','user_visible_completion':'100.00',
+        'steps':[{'status':'completed','output_data':{'output':'Synthetic'}}]}
+    if fault in {'partial','nan','bool'}: value['functional_completion'] = {'partial':'50.00','nan':'NaN','bool':True}[fault]
+    elif fault == 'tokens': value['model_call_count'] = 1
+    elif fault == 'no-output': value['steps'][0]['output_data'] = {}
+    elif fault == 'pending-step': value['steps'][0]['status'] = 'pending'
+    else: value['steps'] = []
+    with pytest.raises(capacity.CapacityError): capacity.verify_completed_run(value)
+
+
+@pytest.mark.parametrize('kind,message', [('network','Error response from daemon: {"message":"network owned-id not found"}'),
+    ('container','Error: No such container: owned-id'),('container','Error: No such object: owned-id')])
+def test_actual_resource_specific_docker_absence_formats(monkeypatch,kind,message):
+    monkeypatch.setattr(capacity,'command',lambda *args,**kwargs:subprocess.CompletedProcess(args,1,stdout=('[]\n'+message).encode(),stderr=b''))
+    assert capacity.inspect(kind,'owned-id',optional=True) is None
+
+
+@pytest.mark.parametrize('message', ['dial unix /var/run/docker.sock: no such file or directory',
+    'Error: No such container: another-id','Error response from daemon: network another-id not found',
+    'Cannot connect to Docker daemon', 'Error: No such object: owned-id-other',
+    'Error response from daemon: network owned-id-other not found'])
+def test_daemon_failure_or_other_resource_absence_cannot_prove_our_cleanup(monkeypatch,message):
+    monkeypatch.setattr(capacity,'command',lambda *args,**kwargs:subprocess.CompletedProcess(args,1,stdout=message.encode(),stderr=b''))
+    with pytest.raises(capacity.CapacityError): capacity.inspect('network','owned-id',optional=True)

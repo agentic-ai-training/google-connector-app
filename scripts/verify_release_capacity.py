@@ -6,6 +6,7 @@ database. Not an LLM/RAG/Google load test or proof of every Railway service.
 import argparse
 import asyncio
 import base64
+from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
 import json
@@ -62,7 +63,14 @@ def inspect(kind, identity, *, size=False, optional=False):
     args = ['docker', kind, 'inspect'] + (['--size'] if size else []) + [identity]
     result = command(*args, check=not optional)
     if result.returncode:
-        if optional and b'no such' in (result.stdout+result.stderr).lower():
+        # A missing daemon/socket is NOT proof a resource is absent. Recognize
+        # only canonical resource-specific messages naming this exact object.
+        message = (result.stdout+result.stderr).decode(errors='replace').lower()
+        identifier = identity.lower()
+        missing = (f'no such {kind}: {identifier}', f'no such object: {identifier}')
+        if kind == 'network':
+            missing += (f'network {identifier} not found',)
+        if optional and any(re.search(re.escape(value) + r"(?=$|[\s\"'])", message) for value in missing):
             return None
         raise CapacityError('resource_absence_or_identity_not_proven')
     values = decode(result)
@@ -104,6 +112,23 @@ def jwt_token(secret):
     message = encoded({'alg': 'HS256', 'typ': 'JWT'}) + b'.' + encoded({
         'sub': 'capacity@example.invalid', 'admin': False, 'exp': int(time.time()) + 600})
     return (message + b'.' + base64.urlsafe_b64encode(hmac.new(secret.encode(), message, hashlib.sha256).digest()).rstrip(b'=')).decode()
+
+
+def verify_completed_run(value):
+    """Validate the real API's JSON NUMERIC representation, not Python DB types."""
+    try:
+        complete = all(not isinstance(value.get(key), bool)
+            and Decimal(str(value[key])).is_finite() and Decimal(str(value[key])) == 100
+            for key in ('functional_completion','technical_completion','user_visible_completion'))
+    except (InvalidOperation, ValueError, KeyError, TypeError):
+        complete = False
+    steps = value.get('steps')
+    if (value.get('status') != 'completed' or type(value.get('model_call_count')) is not int
+            or value['model_call_count'] != 0 or not complete
+            or not isinstance(steps, list) or not steps
+            or any(not isinstance(step,dict) or step.get('status') != 'completed'
+                or not isinstance(step.get('output_data'),dict) or not step['output_data'].get('output') for step in steps)):
+        raise CapacityError('truthful_verified_deterministic_run_required')
 
 
 HTTP_PROBE = '''import json,sys,urllib.request
@@ -173,8 +198,11 @@ class Fixture:
                     continue
                 if (value.get('Config', {}).get('Labels') or {}).get(LABEL) != self.owner:
                     raise CapacityError('refuse_to_delete_unowned_container')
-                command('docker', 'rm', '--force', name, timeout=20)
-                if inspect('container', name, optional=True) is not None:
+                identity = value.get('Id', '')
+                if not re.fullmatch('[0-9a-f]{64}', identity):
+                    raise CapacityError('immutable_owned_container_id_required')
+                command('docker', 'rm', '--force', identity, timeout=20)
+                if inspect('container', identity, optional=True) is not None:
                     raise CapacityError('container_cleanup_not_proven')
             except CapacityError:
                 errors.append('container_cleanup_not_proven')
@@ -186,8 +214,11 @@ class Fixture:
                 if value is not None:
                     if (value.get('Labels') or {}).get(LABEL) != self.owner:
                         raise CapacityError('refuse_to_delete_unowned_network')
-                    command('docker', 'network', 'rm', self.network, timeout=15)
-                    if inspect('network', self.network, optional=True) is not None:
+                    identity = value.get('Id', '')
+                    if not re.fullmatch('[0-9a-f]{64}', identity):
+                        raise CapacityError('immutable_owned_network_id_required')
+                    command('docker', 'network', 'rm', identity, timeout=15)
+                    if inspect('network', identity, optional=True) is not None:
                         raise CapacityError('network_cleanup_not_proven')
             except CapacityError:
                 errors.append('network_cleanup_not_proven')
@@ -275,9 +306,7 @@ def prove(source):
                 raise CapacityError('synthetic_run_failed')
             return value if value.get('status') == 'completed' else None
         run = wait(completed, timeout=60, phase='synthetic_durable_run')
-        if (run.get('model_call_count') != 0 or run.get('functional_completion') != 100
-                or not run.get('steps') or any(step.get('status') != 'completed' for step in run['steps'])):
-            raise CapacityError('truthful_verified_deterministic_run_required')
+        verify_completed_run(run)
         candidate = fixture.run('candidate', IMAGES['candidate'], {**common,'EXECUTOR_ROLE':'candidate',
             'EMBEDDED_WORKER_ENABLED':'true'})
         def healthy_candidate():
@@ -293,7 +322,7 @@ def prove(source):
                 return False
             value = command('docker','exec',db,'psql','-U','capacity_user','-d','gca_capacity','-Atc',
                 "SELECT count(*) FROM pg_stat_activity WHERE application_name='gca-capacity-builder'")
-            return int(value.stdout.strip()) >= 1
+            return int(value.stdout.strip()) >= 2  # asyncpg's two-connection pool, not Alembic's transient connection.
         wait(builder_initialized, phase='builder_idle_initialization')
         time.sleep(5)
         report['runtime'] = {role: measure(name, fixture) for role, name in {

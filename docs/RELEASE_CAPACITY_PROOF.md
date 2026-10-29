@@ -7,6 +7,35 @@ lint/security/whitespace checks passed. This did not run real Docker images loca
 No local multi-image build, cloud service, deployment, migration, billing upgrade,
 new runner plan or hosting-term extension was started.
 
+## First native result and verifier correction
+
+At exact `1d31927`, main CI 40915805974 passed all four jobs. Candidate run
+40915806058 passed 2,727 tests (seven separately gated skips), audits/evaluations,
+migrations and all four actual image builds. The image architecture/source/size
+checks ran before its fixture, and the actual API/worker started without an
+observed OOM. **The capacity run nevertheless failed**, so there are no accepted
+memory measurements or complete capacity report from it.
+
+The new harness compared the API's serialized PostgreSQL NUMERIC `"100.00"` to a
+Python integer. The route intentionally uses `json.dumps(default=str)`, so its
+complete run was rejected by the harness. Verification now parses finite numeric
+values while still requiring exactly 100 technical/functional/user-visible
+completion, zero model calls, complete steps and nonempty step outputs. Partial,
+NaN, boolean and output-free false successes remain rejected.
+
+The harness then misclassified successful network deletion: Docker's missing-
+network response is `network <exact-name> not found`, not just `no such ...`.
+A read-only local probe confirmed that format without creating/deleting a
+resource. The correction recognizes resource-specific absence naming the exact
+object, including token boundaries; a missing daemon/socket or another object's
+absence is **not** cleanup proof. Builder initialization also now requires its
+two asyncpg pool connections, not Alembic's transient one. New regressions cover
+these real boundary cases. A fresh corrected native run remains necessary.
+Deletion also uses the inspected immutable Docker ID after ownership verification,
+not a reusable name; post-removal absence is checked against that same ID.
+The corrected focused suite passed 106 tests, plus targeted lint/security and
+whitespace checks; actual corrected native execution remains pending.
+
 ## What the job now does
 
 The same standard Ubuntu candidate-validation job builds the real `Dockerfile`,

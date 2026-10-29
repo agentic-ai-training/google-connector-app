@@ -3923,3 +3923,22 @@ not an actual native image or live Railway capacity result. The new workflow mus
 run at its own exact head. Ollama/Alloy, model/tool workloads, real networking/
 credits/placement, provider accounting, security/load/restore and the rest of the
 original goal remain unverified. See `docs/RELEASE_CAPACITY_PROOF.md`.
+
+First exact native result at `1d31927`: main CI 40915805974 passed all four jobs.
+Candidate run 40915806058 passed 2,727 tests/seven separately gated skips, audits,
+migrations and four native image builds, then failed the new capacity harness.
+API/worker startup had occurred without observed OOM, but measurement/whole-proof
+completion was not reached. The assertion incorrectly compared serialized
+NUMERIC `"100.00"` to an integer; cleanup also failed to recognize Docker's exact
+`network <name> not found` response after deletion. A read-only actual Docker
+probe confirmed that response. Corrections normalize only finite 100% values,
+preserve nonempty verified-step/zero-call requirements, and recognize only exact
+resource absence—not daemon/socket failure or another resource. Builder idle
+readiness requires two actual pool connections. Fresh corrected native evidence
+is required; the failed run is not relabelled as a pass.
+
+The corrected capacity/process/fail-fast suite passed **106 tests**; targeted
+lint/security/whitespace checks passed. Owned deletion now pins immutable Docker
+IDs after label verification and verifies absence of that same ID. No production
+runtime behavior or resource limit was weakened; only the new harness boundary
+was corrected. A source-changing CI run, not an unchanged retry, must prove it.
