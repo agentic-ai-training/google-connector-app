@@ -227,9 +227,67 @@ The human-reviewed definition/gates must still be evaluated for test sufficiency
 Mutable action/dependency pinning, an independent base-owned regression harness,
 OIDC/signed provenance, workflow supply-chain review, log diagnostics in a separate
 credential-free analyzer and live GitHub failure/recovery proof remain unfinished.
-Policy revocation blocks **new CI acceptance**; retroactive re-evaluation of already
-validated candidates and consuming current trust again at deployment/promotion
-gates are separate remaining integration work, not guaranteed by these APIs.
+The subsequent code-admission integration below also checks current trust before
+canary approval, activation and promotion approval. Deployment-controller trust,
+post-merge attestations and stopping already-active routing after revocation
+remain separate unfinished work; those are not guaranteed by these APIs.
 No observed CI result authorizes merge, canary traffic, promotion, paid hosting or
 private data egress. Coding Temporal integration and the full fresh candidate →
 isolated canary → measurement → promotion/rollback proof remain open.
+
+## Current code-candidate admission at human gates — 29 October
+
+`app/improvements/ci_admission.py` is called by actual canary-review,
+canary-activation and promotion-review endpoints. A nonempty `trusted_identity`
+label, an administrator's `passed:true` registration, or an old green report is
+not sufficient. For code candidates, the implementation requires:
+
+1. One validated server build for the immutable candidate commit, a matching
+   server-retained checkpoint report and passing attestation row.
+2. Matching candidate/proposal digests, exact file sets, change types, content
+   hashes and bytes. Files are bounded to 64, 1 MB each and 8 MiB in aggregate.
+3. A retained, unerased linked coding publication when applicable, and an actual
+   PR identity, not an invented branch or commit.
+4. Fresh read-only GitHub verification under the current human-reviewed policy:
+   latest run/attempt, actual required jobs/steps, current PR head/base, frozen
+   files and tree. Remote requests happen before SQL business locks.
+5. A short SQL-only admission transaction, in consistent lock order: linked
+   coding run → policy advisory fence → build/files → proposal/files. Source,
+   policy and report are checked again, with two-second lock/five-second statement
+   bounds and a maximum 60-second observation age. Contention returns an
+   actionable retry requirement rather than success or a model replan.
+
+```mermaid
+flowchart TD
+    H[Human requests approval or activation] --> S[Read authentic retained source and CI receipt]
+    S --> G[Recheck current GitHub run under current policy; no SQL locks]
+    G -->|Passed| L[Lock in shared order and recheck source/policy/freshness]
+    L --> E[Append sanitized current_ci_admission evidence]
+    E --> A[Commit existing human decision or activation atomically]
+    G -->|Failed or unavailable| B[409: no approval or activation]
+    L -->|Changed or contended| B
+```
+
+The evidence is appended to the existing `improvement_evidence` ledger and is
+available through `GET /admin/improvements/{proposal_key}`. It records stage,
+candidate digest/commit/build and observed policy/run/attempt. It contains no
+source bodies, provider credentials or private user requests. A later failed
+route validation rolls back both the evidence and the decision. This is an
+internal audit record, not an email/GitHub publication or a new approval grant.
+Rejections/change requests do **not** need fresh CI and never get blocked by an
+expired policy. Existing non-code registry/OKF governance is unchanged by this
+code-specific integration.
+
+Real PostgreSQL tests and actual route calls cover valid admission at all three
+stages, forged/missing receipts, changed content/hashes/heads/builds, newer policy,
+stale observations, failed current required gates and contended row locks.
+Synthetic GitHub transports assert read-only requests; merges/deployments are
+forbidden or synthetic in these tests. No production policy is enrolled.
+
+This does **not** close the external-effect gap after SQL approval: durable
+deployment/merge dispatch intents, trusted-controller credential separation,
+independently observed deployment/post-merge proof and automatic revocation of
+active traffic remain required. Candidate deployment currently checks out a
+candidate revision while using deployment credentials; that workflow must be
+separated onto trusted controller source before live canary activation. No live
+canary or merge is authorized merely because these local tests pass.

@@ -2640,9 +2640,15 @@ changes become production evidence.
   publication/revocation, transaction advisory fencing, source/publication locks,
   read-only App credentials and trusted-default-branch inert reporting are local.
   No production trust policy is seeded. Live CI/supply-chain proof, frontend trust
-  controls, downstream deployment/promotion trust consumption and the complete
+  controls, deployment-controller/post-merge trust consumption and the complete
   candidate lifecycle stay open. See `docs/CODING_CI_TRUST.md`; this progress note
   does not complete the enclosing Sprint 63 requirements.
+- 29-October code-gate follow-up: canary approval, activation and promotion review
+  now reverify current GitHub policy/run/attempt and authentic frozen build/files
+  before a shared-order SQL source/policy fence; admission evidence commits with
+  the human effect. Rejection/change requests remain available without CI. This
+  does not finish durable external dispatch, deployment-controller credential
+  separation, post-merge evidence or automatic active-routing revocation.
 - [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
   cannot fabricate test success, override tool policy or grant deployment access.
 - [ ] Bound corrective rounds by progress, tokens, time and distinct failure fingerprints;
@@ -3753,3 +3759,30 @@ reported vulnerabilities at verification time). No production dependency rollout
 is claimed. Updated CI evidence and teaching dictionary explain pipeline exit-code
 aggregation, transport closure and cache-hidden download errors. Subsequent native
 CI/images, production activation and the full original objective remain open.
+
+### 29 October — authentic current CI at code review/activation/promotion
+
+The real canary approval, activation and promotion approval endpoints now reverify
+current GitHub evidence, not just a stored trusted-identity string. One authentic
+validated build/checkpoint/attestation, matching frozen files/digest and retained
+coding source are required. GitHub reads precede SQL locks; shared-order policy/
+source locks, bounded waits and observation freshness prevent stale admission.
+Sanitized `current_ci_admission` evidence commits with the human effect. Failed,
+missing, forged, changed or contended evidence cannot approve, activate or merge.
+Rejections remain independent of current CI availability. Twenty-one focused
+real-PostgreSQL/actual-route tests passed with read-only synthetic GitHub and no
+real external writes. Non-code OKF/registry governance is unchanged.
+
+At published commit `5076686`, Linux main CI passed 2,566 backend tests and then
+the fresh seven-case Temporal server proof plus seven independent offline replays;
+candidate/main jobs correctly stopped at the now-visible Python dependency audit.
+Patched dependency pins and their compatible checkpoint/YARL/OTel constraints now
+resolve; the resolved 150-package requirements audit reports zero known
+vulnerabilities and local `pip check` passes. Existing optional local FastAPI/ASGI
+instrumentors were updated to the matching OTel version without adding them as
+new runtime requirements. No blanket vulnerability ignore or weaker audit gate
+was introduced. Whole-release regression/native CI, image/capacity proof, durable
+external deployment/merge dispatch, trusted deployment-controller credential
+separation, post-merge evidence and active-canary revocation remain open. The full
+original goal remains active; no production policy, merge, canary, hosting restart
+or paid allocation was performed.

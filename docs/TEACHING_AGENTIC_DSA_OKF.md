@@ -5162,3 +5162,29 @@ had masked that path. A cache hit is not fresh-install proof. Test both entry
 points and verify uncached native CI; a version string alone is also not a
 cryptographic supply-chain attestation. See [CI trust](CODING_CI_TRUST.md) for
 the actual run IDs and remaining evidence boundaries.
+
+### Deep dictionary addition: admission snapshots versus external transactions
+
+A **source-bound admission snapshot** is a bounded observation, not permanent
+authority. It binds exact candidate bytes, source/version, current CI policy and
+latest run/attempt. Reading remote facts while holding database locks can stall
+all reviewers; reading them first without rechecking can admit a changed source.
+The implemented bridge is: observe remotely → acquire short SQL locks in one
+order → recheck source/policy/freshness → record proof and human decision together.
+The real code gates use this sequence in `app/improvements/ci_admission.py`.
+
+Lock order is a directed graph. If one path takes proposal → policy while another
+takes policy → proposal, their waits can form a cycle. Using coding run → policy
+→ build → proposal across both CI acceptance and review removes that particular
+cycle. Acyclic ordering does not remove every possible database deadlock or
+network race; bounded lock waits and safe retry are still required. No external
+model or deployment is called inside the admission transaction.
+
+An **atomic audit record** commits or rolls back with the local human effect.
+The `current_ci_admission` entry stores hashes and workflow facts, not source
+bodies; it does not itself grant approval. PostgreSQL commit cannot atomically
+commit a later GitHub merge or Railway deployment. That second boundary still
+needs a durable dispatch intent, independently observed outcome and reconciliation
+of lost acknowledgements. Fresh CI admission is one necessary layer, not an
+exactly-once external release mechanism. These remaining boundaries are explicit
+in [CI trust](CODING_CI_TRUST.md).

@@ -2315,7 +2315,8 @@ def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
             headers=headers,
             json={"decision": "approved", "proposal_hash": candidate_hash},
         )
-        assert approved.status_code == 200
+        assert approved.status_code == 409
+        assert "Current trusted CI admission" in approved.json()["detail"]
         blocked_activation = client.post(
             f"/admin/improvements/{proposal_key}/activate-canary",
             headers=headers,
@@ -2353,10 +2354,11 @@ def test_diagnosis_only_proposal_cannot_be_approved_for_canary():
             headers=headers,
             json={"decision": "approved", "proposal_hash": candidate_hash},
         )
-        assert activated.status_code == 200
+        assert activated.status_code == 409
         refreshed = client.get("/admin/improvements", headers=headers).json()["proposals"]
         stored = next(item for item in refreshed if item["proposal_key"] == proposal_key)
-        assert stored["candidate_state"] == "deployed_canary"
+        assert stored["candidate_state"] == "validated_implementation"
+        assert stored["status"] == "awaiting_review"
         client.portal.call(cleanup)
 
 

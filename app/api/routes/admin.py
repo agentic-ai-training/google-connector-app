@@ -54,7 +54,32 @@ from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
 )
 from app.coding.ci_trust import CITrustError, latest_policy, require_same_policy, validate_jobs, verify_run, verify_workflow_definition
+from app.improvements import ci_admission
 router=APIRouter(prefix="/admin")
+
+
+async def _prepare_code_admission(pool, key, digest, *, expected_status='awaiting_review'):
+    try:
+        return await ci_admission.prepare(pool, key, digest, get_settings().github_proposal_repository,
+            expected_status=expected_status)
+    except CITrustError as exc:
+        raise HTTPException(409, 'Current trusted CI admission required: ' + str(exc)) from exc
+
+
+async def _lock_code_admission(conn, snapshot):
+    try:
+        proposal = await ci_admission.lock(conn, snapshot)
+    except CITrustError as exc:
+        raise HTTPException(409, 'Current trusted CI admission required: ' + str(exc)) from exc
+    stage = {'awaiting_review': 'canary_review', 'approved_for_canary': 'canary_activation',
+             'awaiting_promotion': 'promotion_review'}[proposal['status']]
+    await conn.execute('''INSERT INTO improvement_evidence(proposal_id,evidence_type,sanitized_payload)
+      VALUES($1,'current_ci_admission',$2::jsonb)''', proposal['id'], json.dumps({
+        'stage': stage, 'candidate_version': proposal['candidate_version'],
+        'candidate_digest': proposal['content_hash'], 'build_id': str(snapshot['build']['id']),
+        'github_observed': snapshot['observed'], 'ci_does_not_grant_approval': True,
+    }))
+    return proposal
 
 
 class CodingCITrustPolicyIn(BaseModel):
@@ -1695,9 +1720,10 @@ async def decide_candidate_okf(
 @router.post("/improvements/{proposal_key}/canary-decision")
 async def decide_canary(proposal_key: str, body: ImprovementDecision, request: Request):
     pool = await get_pool()
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash) if body.decision == 'approved' else None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            proposal = await conn.fetchrow(
+            proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
                 proposal_key,
             )
@@ -1848,8 +1874,9 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
     if body.decision != "approved":
         raise HTTPException(422, "Canary activation requires an approved decision")
     pool = await get_pool()
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash, expected_status='approved_for_canary')
     async with pool.acquire() as conn, conn.transaction():
-        proposal = await conn.fetchrow(
+        proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
             "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
             proposal_key,
         )
@@ -1902,9 +1929,11 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
 async def decide_promotion(proposal_key: str, body: ImprovementDecision,
                            request: Request):
     pool = await get_pool()
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash,
+        expected_status='awaiting_promotion') if body.decision == 'approved' else None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            proposal = await conn.fetchrow(
+            proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
                 proposal_key,
             )

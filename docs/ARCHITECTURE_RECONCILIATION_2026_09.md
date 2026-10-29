@@ -693,3 +693,21 @@ that executes no candidate content or artifact. CI uses an explicitly read-only
 App token, not the publication token or a write-capable PAT fallback. No policy is
 seeded/activated. These are local SQL/synthetic-GitHub proofs, not real CI or a
 complete deployment/promotion attestation chain; see [CI trust and open limits](CODING_CI_TRUST.md).
+
+29 October, real native CI and human-gate follow-up: public PR #139 now exercises
+the reviewed source on Linux. Fail-fast pipelines and joined subprocess transport
+closure repaired the first false-green/test-fixture failures. The fresh Linux
+Temporal server and seven offline histories pass after using the exact upstream
+CLI tag; subsequent dependency-audit failures correctly block release. This is
+real CI evidence, not a claim that the still-failing complete workflow passed.
+
+The actual code-candidate canary review, activation and promotion review now call
+fresh current-policy GitHub verification before taking business locks. Authentic
+server build/checkpoint/attestation and exact file sets bind the source; a shared
+SQL lock order rechecks policy, erasure, source and freshness before human effects
+commit. Sanitized admission evidence and the decision commit together. Legacy
+administrator-supplied labels no longer authorize code candidates. Registry/OKF
+publication governance is unchanged. The deployment/merge dispatch journal,
+trusted deployment-controller checkout/credential boundary, post-merge proof and
+active-canary revocation remain unfinished; no production activation is implied.
+See [current code admission](CODING_CI_TRUST.md).
