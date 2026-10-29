@@ -284,6 +284,14 @@ stale observations, failed current required gates and contended row locks.
 Synthetic GitHub transports assert read-only requests; merges/deployments are
 forbidden or synthetic in these tests. No production policy is enrolled.
 
+The exact committed code checkout `fe57211`, using the patched requirements graph,
+passed 2,587 tests with seven separately exercised Temporal-server skips in 96.11s.
+Its 14 SDK/TestClient/fork deprecation warnings remain visible; unraisable process
+exceptions are fatal and none occurred. The resolved 150-package requirements
+audit reports zero known vulnerabilities and `pip check` passes. PostgreSQL was
+invocation-owned and removed after the run. This is local Python 3.14 proof, not
+native Linux Python 3.12 CI or a production deployment claim.
+
 This does **not** close the external-effect gap after SQL approval: durable
 deployment/merge dispatch intents, trusted-controller credential separation,
 independently observed deployment/post-merge proof and automatic revocation of

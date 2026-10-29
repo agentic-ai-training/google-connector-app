@@ -3786,3 +3786,13 @@ external deployment/merge dispatch, trusted deployment-controller credential
 separation, post-merge evidence and active-canary revocation remain open. The full
 original goal remains active; no production policy, merge, canary, hosting restart
 or paid allocation was performed.
+
+Final local proof for committed code `fe57211`: the exact isolated checkout with
+the patched dependency graph passed **2,587 tests**, seven intentionally separate
+Temporal-server skips, in 96.11s. Fourteen existing SDK/TestClient/fork deprecation
+warnings remain; no unraisable subprocess exception occurred. Schema 036 applied
+to an invocation-owned database, which was removed afterward. Targeted lint,
+security, whitespace and redacted commit secret scan passed. The read-only Railway
+refresh still reports an empty workspace with five services/project, 1-GB/container
+and 4-GB/image ceilings; no resource or credit was consumed. Native release CI and
+image/memory measurements remain required, not inferred from these local results.

@@ -77,3 +77,18 @@ networking, capacity, compliant ownership and a safe release/rollback plan remai
 activation gates; a trial label alone does not satisfy those gates.
 No GraphQL mutation, project/service creation, migration, variable copy, deploy,
 account creation, payment, model call or cloud spend was performed in this preflight.
+
+## Read-only refresh — 29 October
+
+The separately saved token again returned HTTP 200 without GraphQL errors for the
+exact workspace and project inventory. The workspace remains empty (zero projects).
+Metadata still permits two projects, five services/project, 1,000,000,000 memory
+bytes/container, two vCPUs, 1-GB container disk, 4,000,000,000-byte images and
+500-MB volumes. API plan metadata remains `HOBBY`; that is not a new observation
+of paid billing or remaining trial credit. Preserve the operator's separate trial
+evidence and all old credentials. No account/personal-profile retry was needed.
+
+The historical five-service layout remains the baseline to measure, not grounds
+for silently dropping services and not proof that they fit today. Current native
+release image and working-set/network measurements are still pending. This
+refresh performed no mutation, upload, restart, variable transfer or spending.
