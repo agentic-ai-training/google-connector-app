@@ -131,6 +131,14 @@ The combined focused run passed 141 tests (19.27s), including actual SQL/admin
 routes, bounded contention and concurrent dispatch. Targeted lint/security passed.
 All GitHub/vendor calls in those tests were synthetic; no live claim was granted.
 
+The subsequent exact clean checkout of code `ef71fb3` passed 2,659 tests, seven
+separately gated Temporal-server skips and 14 existing deprecation warnings in
+163.10s. No unraisable subprocess exception occurred. Only synthetic credentials
+and disposable loopback databases were provided. A second actual migration proof
+attempted downgrade with a retained journal: it refused, preserving schema 037,
+the intent and its history. A redacted commit secret scan passed. New native CI,
+production migration and independent cloud-provider readback remain unproven.
+
 ## Still required before live-safe autonomous release
 
 - Reviewed workflow/action/vendor supply chains and immutable binary/provenance

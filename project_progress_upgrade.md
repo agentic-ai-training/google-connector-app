@@ -3856,3 +3856,12 @@ merge, production migration or hosting extension was performed.
 The combined focused run passed **141 tests** in 19.27s with unraisable subprocess
 warnings treated as failures. Targeted Flake8, Bandit and whitespace checks passed.
 Full exact-tree regression and native CI for this journal are still pending.
+
+Subsequent exact-tree proof: committed code `ef71fb347db3ecf96030c0109feb233ee2ce0287`
+passed **2,659 tests**, seven separately gated Temporal-server skips and 14 existing
+deprecation warnings in 163.10s. Unraisable subprocess warnings were fatal and none
+occurred. The clean checkout used synthetic credentials and only invocation-owned
+local databases; cleanup completed. The actual attempted downgrade of a separate
+occupied schema-037 journal correctly failed while preserving schema version,
+intent and transition history. Redacted commit secret scan found no leaks.
+Native CI for the new source and all previously listed live-proof tasks remain open.
