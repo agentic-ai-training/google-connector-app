@@ -54,7 +54,7 @@ from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
 )
 from app.coding.ci_trust import CITrustError, latest_policy, require_same_policy, validate_jobs, verify_run, verify_workflow_definition
-from app.improvements import ci_admission, deployment_intents
+from app.improvements import ci_admission, deployment_intents, provider_readback
 router=APIRouter(prefix="/admin")
 
 
@@ -1333,6 +1333,11 @@ async def attest_candidate_deployment(
     admission = await _prepare_code_admission(pool, proposal_key, digest, expected_status='approved_for_canary')
     if admission is None:
         raise HTTPException(409, 'Deployment claims apply only to code candidates')
+    try:
+        provider_observation = await provider_readback.verify_for_intent(pool, body.intent_id,
+            body.model_dump(mode='json', exclude={'intent_nonce'}), proposal=admission['proposal'])
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
     async with pool.acquire() as conn, conn.transaction():
         try:
             proposal = await ci_admission.lock(conn, admission)
@@ -1388,6 +1393,7 @@ async def attest_candidate_deployment(
                 409, "Non-frontend candidates must not attest a frontend preview",
             )
         try:
+            provider_evidence = provider_observation.require_fresh()
             await deployment_intents.finish(conn, body.intent_id, proposal=proposal, source=admission,
                 run_id=body.run_id, nonce=body.intent_nonce, project=body.project_id,
                 service=body.service_name, surfaces=body.runtime_surfaces)
@@ -1396,6 +1402,7 @@ async def attest_candidate_deployment(
         evidence = {
             **body.model_dump(mode='json', exclude={'intent_nonce'}),
             "trusted_identity": f"github-actions:{settings.github_proposal_repository}:{deployment_intents.WORKFLOW_PATH}",
+            'provider_observed': provider_evidence,
         }
         await conn.execute(
             """UPDATE improvement_proposals SET deployment_evidence=$1::jsonb,
@@ -1695,6 +1702,7 @@ class CandidateDeploymentClaim(BaseModel):
     project_id: str = Field(min_length=1, max_length=200)
     service_name: str = Field(min_length=1, max_length=200)
     runtime_surfaces: list[str] = Field(min_length=1, max_length=4)
+    provider_target: dict[str, str]
 
 
 @router.post('/improvements/{proposal_key}/deployment-claim')
@@ -1710,7 +1718,7 @@ async def claim_candidate_deployment(proposal_key: str, body: CandidateDeploymen
         return await deployment_intents.claim(pool, body.intent_id, run_id=body.run_id,
             attempt=body.run_attempt, candidate_version=body.candidate_version,
             controller_commit=body.controller_commit, project=body.project_id,
-            service=body.service_name, surfaces=body.runtime_surfaces)
+            service=body.service_name, surfaces=body.runtime_surfaces, provider_target=body.provider_target)
     except CITrustError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -1965,6 +1973,12 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
         raise HTTPException(422, "Canary activation requires an approved decision")
     pool = await get_pool()
     admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash, expected_status='approved_for_canary')
+    provider_observation = None
+    if admission:
+        try:
+            provider_observation = await provider_readback.verify_registered(pool, admission['proposal'])
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
     async with pool.acquire() as conn, conn.transaction():
         proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
             "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
@@ -1974,6 +1988,15 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
             raise HTTPException(409, "Proposal is not approved for canary")
         if proposal["content_hash"] != body.proposal_hash:
             raise HTTPException(409, "Proposal changed; review the new version")
+        if provider_observation:
+            try:
+                observed = provider_observation.require_fresh()
+                await deployment_intents.require_attested(conn,
+                    _json_object(proposal['deployment_evidence']).get('intent_id'), proposal=proposal, source=admission)
+            except CITrustError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            await conn.execute('''INSERT INTO improvement_evidence(proposal_id,evidence_type,sanitized_payload)
+              VALUES($1,'current_provider_readback',$2::jsonb)''', proposal['id'], json.dumps(observed))
         evidence = proposal["deployment_evidence"] or {}
         if evidence.get("verified") is not True or evidence.get("candidate_version") != proposal["candidate_version"]:
             raise HTTPException(409, "Verified deployment evidence for the frozen candidate is required")

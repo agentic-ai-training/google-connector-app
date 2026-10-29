@@ -19,6 +19,7 @@ def configured(tmp_path, monkeypatch):
     values = {'CANDIDATE_INTENT_ID': str(uuid4()), 'CANDIDATE_ATTESTATION_URL': 'https://authority.example',
         'GITHUB_REF': 'refs/heads/main', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_RUN_ID': '901',
         'CANDIDATE_VERSION': 'b'*40, 'GITHUB_SHA': 'a'*40, 'RAILWAY_CANDIDATE_PROJECT_ID': 'isolated-project',
+        'RAILWAY_CANDIDATE_ENVIRONMENT_ID': 'synthetic-environment', 'RAILWAY_CANDIDATE_SERVICE_ID': 'synthetic-service-id',
         'RAILWAY_CANDIDATE_WORKER_SERVICE': 'isolated-worker', 'CANDIDATE_RUNTIME_SURFACES': 'worker',
         'PROPOSAL_KEY': 'synthetic-proposal', 'CANDIDATE_DEPLOY_ATTESTATION_TOKEN': 'SYNTHETIC_CALLBACK_ONLY'}
     for key, value in values.items():
@@ -35,7 +36,7 @@ def transport(monkeypatch, *, failure=None):
         if failure == 'timeout':
             raise httpx.ReadTimeout('SYNTHETIC_PRIVATE_RESPONSE')
         response = {key: payload[key] for key in ('intent_id', 'run_id', 'run_attempt', 'candidate_version',
-            'project_id', 'service_name', 'runtime_surfaces')}
+            'project_id', 'service_name', 'runtime_surfaces', 'provider_target')}
         response['nonce'] = 'SYNTHETIC_CLAIM_NONCE_'+'x'*32
         if failure == 'identity':
             response['project_id'] = 'production'

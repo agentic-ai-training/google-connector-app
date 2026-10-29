@@ -141,6 +141,14 @@ production migration and independent cloud-provider readback remain unproven.
 
 ## Still required before live-safe autonomous release
 
+**Subsequent local implementation:** independent server-side Railway/Vercel reads
+now precede claim attestation and are repeated before human traffic activation.
+Provider IDs are frozen with approval; a retained attested intent/current approval
+is rechecked under activation locks. See [exact contracts and remaining limitations](CANDIDATE_PROVIDER_READBACK.md).
+This supersedes the earlier callback-only checkpoint for the current local source,
+not any historical deployment. Parent `50c76dc` passed both native CI suites;
+the newer readback changes still require their own exact-source validation.
+
 - Reviewed workflow/action/vendor supply chains and immutable binary/provenance
   verification; pinned package versions alone are not attestation.
 - Native CI and release validation for the new schema-037 journal, followed by

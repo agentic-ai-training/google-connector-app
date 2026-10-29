@@ -10,8 +10,8 @@ import pytest
 
 from app.api.routes import admin
 from app.coding.ci_trust import CITrustError
-from app.improvements import ci_admission, deployment_intents as intents
-from app.runs.schemas import ImprovementDecision
+from app.improvements import ci_admission, deployment_intents as intents, provider_readback
+from app.runs.schemas import ImprovementDecision, CanaryActivationDecision
 from app.runs.schemas import CandidateDeploymentAttestation
 from tests.coding.test_candidate_ci_admission import source as shared_source, case, database, REAL_ASYNC_CLIENT  # noqa: F401
 from tests.coding.test_ci_trust import BASE, COMMIT, REPOSITORY, register
@@ -36,7 +36,8 @@ async def prepared(source):
 
 def claim_values(**kwargs):
     return {'run_id': 901, 'attempt': 1, 'candidate_version': COMMIT, 'controller_commit': BASE,
-        'project': 'isolated-project', 'service': 'isolated-worker', 'surfaces': ['worker'], **kwargs}
+        'project': 'isolated-project', 'service': 'isolated-worker', 'surfaces': ['worker'],
+        'provider_target': {'railway_environment_id': 'synthetic-environment', 'railway_service_id': 'synthetic-service-id'}, **kwargs}
 
 
 async def no_post(value):
@@ -306,6 +307,9 @@ async def test_actual_attestation_route_consumes_claim_without_storing_nonce(sou
     permit = await intents.claim(source.pool, row['id'], **claim_values())
     monkeypatch.setattr(admin, 'get_settings', lambda: SimpleNamespace(github_proposal_repository=REPOSITORY,
         railway_candidate_project_id='isolated-project', railway_candidate_worker_service='isolated-worker'))
+    async def provider(*args, **kwargs):
+        return provider_readback.Observation({'status': 'passed', 'synthetic_provider': True})
+    monkeypatch.setattr(provider_readback, 'verify_for_intent', provider)
     body = CandidateDeploymentAttestation(intent_id=row['id'], intent_nonce=permit['nonce'],
         candidate_version=COMMIT, deployment_id='synthetic-deployment', service_name='isolated-worker',
         project_id='isolated-project', workflow='arbitrary-callback-name-is-not-trust', run_id='901',
@@ -319,6 +323,12 @@ async def test_actual_attestation_route_consumes_claim_without_storing_nonce(sou
     with pytest.raises(HTTPException) as error:
         await admin.attest_candidate_deployment(source.key, body)
     assert error.value.status_code == 409
+    async def registered(*args, **kwargs):
+        return provider_readback.Observation({'status': 'passed', 'synthetic_provider': True})
+    monkeypatch.setattr(provider_readback, 'verify_registered', registered)
+    activated = await admin.activate_canary(source.key, CanaryActivationDecision(decision='approved',
+        proposal_hash=source.digest, traffic_percent=5), SimpleNamespace(state=SimpleNamespace(user_id='synthetic-human')))
+    assert activated['status'] == 'canary_active'
 
 
 async def test_no_pending_canary_blocks_dispatch_even_with_human_approval(source):
@@ -339,3 +349,21 @@ async def test_busy_journal_is_bounded_and_never_posts(source):
             await intents.dispatch(source.pool, row['id'], send)
     assert calls == []
     assert (await intents.status(source.pool, row['id']))['intent']['state'] == 'prepared'
+
+
+@pytest.mark.parametrize('fault', ['failure', 'stale'])
+async def test_provider_failure_or_staleness_cannot_activate_traffic(source, monkeypatch, fault):
+    row = await prepared(source)
+    async def provider(*args, **kwargs):
+        if fault == 'failure':
+            raise CITrustError('synthetic_provider_readback_mismatch')
+        return provider_readback.Observation({'status': 'passed'}, observed_monotonic=0)
+    monkeypatch.setattr(provider_readback, 'verify_registered', provider)
+    with pytest.raises(HTTPException) as error:
+        await admin.activate_canary(source.key, CanaryActivationDecision(decision='approved',
+            proposal_hash=source.digest, traffic_percent=5), SimpleNamespace(state=SimpleNamespace(user_id='synthetic-human')))
+    assert error.value.status_code == 409
+    assert (await intents.status(source.pool, row['id']))['intent']['state'] == 'prepared'
+    assert await source.pool.fetchval('SELECT status FROM improvement_proposals WHERE id=$1', source.proposal) == 'approved_for_canary'
+    assert not await source.pool.fetchval('SELECT routing_enabled FROM improvement_canaries WHERE proposal_id=$1', source.proposal)
+    assert await source.pool.fetchval("SELECT count(*) FROM improvement_evidence WHERE proposal_id=$1 AND evidence_type='current_provider_readback'", source.proposal) == 0

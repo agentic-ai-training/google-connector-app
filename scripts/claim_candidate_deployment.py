@@ -28,6 +28,12 @@ def main():
             'project_id': os.environ['RAILWAY_CANDIDATE_PROJECT_ID'],
             'service_name': os.environ['RAILWAY_CANDIDATE_WORKER_SERVICE'],
             'runtime_surfaces': sorted(os.environ['CANDIDATE_RUNTIME_SURFACES'].split(','))}
+        target_ids = {'railway_environment_id': os.environ['RAILWAY_CANDIDATE_ENVIRONMENT_ID'],
+            'railway_service_id': os.environ['RAILWAY_CANDIDATE_SERVICE_ID']}
+        if 'frontend' in payload['runtime_surfaces']:
+            target_ids.update({'vercel_team_id': os.environ['VERCEL_ORG_ID'],
+                'vercel_project_id': os.environ['VERCEL_PROJECT_ID']})
+        payload['provider_target'] = target_ids
         with httpx.Client(timeout=120, follow_redirects=False) as client:
             with client.stream('POST', base + '/admin/improvements/' + os.environ['PROPOSAL_KEY'] + '/deployment-claim',
                     json=payload, headers={'X-Candidate-Deploy-Token': os.environ['CANDIDATE_DEPLOY_ATTESTATION_TOKEN']}) as response:
@@ -43,6 +49,7 @@ def main():
                 or result.get('run_attempt') != 1 or result.get('candidate_version') != payload['candidate_version']
                 or result.get('project_id') != payload['project_id'] or result.get('service_name') != payload['service_name']
                 or result.get('runtime_surfaces') != payload['runtime_surfaces']
+                or result.get('provider_target') != target_ids
                 or not isinstance(result.get('nonce'), str) or not 40 <= len(result['nonce']) <= 100):
             raise RuntimeError('Deployment claim identity mismatch; reconcile before any provider write')
         with os.fdopen(fd, 'w', encoding='utf-8') as handle:

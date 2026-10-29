@@ -6,7 +6,7 @@ import time
 import httpx
 
 
-service = os.environ["RAILWAY_CANDIDATE_WORKER_SERVICE"]
+service = os.environ["RAILWAY_CANDIDATE_SERVICE_ID"]
 candidate_version = os.environ["CANDIDATE_VERSION"]
 surfaces = set(filter(None, os.environ.get("CANDIDATE_RUNTIME_SURFACES", "").split(",")))
 with open("candidate-domain.json", encoding="utf-8") as handle:
@@ -20,7 +20,8 @@ for _ in range(60):
     for environment in value.get("environments", {}).get("edges", []):
         for entry in environment.get("node", {}).get("serviceInstances", {}).get("edges", []):
             node = entry.get("node", {})
-            if node.get("serviceName") != service:
+            if (node.get("serviceId") != service
+                    or node.get('environmentId') != os.environ['RAILWAY_CANDIDATE_ENVIRONMENT_ID']):
                 continue
             active = [
                 item for item in node.get("activeDeployments", [])

@@ -15,6 +15,7 @@ import httpx
 
 from app.coding.ci_trust import CITrustError, GitHubCI, read_headers
 from app.improvements import ci_admission
+from app.improvements import provider_readback
 
 WORKFLOW = 'candidate-deploy.yml'
 WORKFLOW_PATH = '.github/workflows/' + WORKFLOW
@@ -56,11 +57,13 @@ async def prepare(conn, snapshot, approval_id, *, project, service):
       approval_id, proposal['id'], proposal['content_hash'])
     if not approval or not approval['decided_by'] or approval['decided_by'] in SERVICE_ACTORS:
         raise CITrustError('recorded_human_canary_approval')
+    surfaces = sorted(_object(proposal['candidate_manifest']).get('runtime_surfaces') or ['worker'])
+    provider_target = provider_readback.load_config().target(surfaces)
     frozen = {'proposal_key': proposal['proposal_key'], 'proposal_hash': proposal['content_hash'],
         'candidate_version': proposal['candidate_version'], 'build_id': str(snapshot['build']['id']),
         'repository': snapshot['policy']['repository'], 'policy_id': str(snapshot['policy']['id']),
         'controller_commit': controller, 'project_id': project, 'service_name': service,
-        'runtime_surfaces': sorted(_object(proposal['candidate_manifest']).get('runtime_surfaces') or ['worker'])}
+        'runtime_surfaces': surfaces, 'provider_target': provider_target}
     row = await conn.fetchrow('''INSERT INTO candidate_deployment_intents(proposal_id,approval_id,frozen,expires_at)
       VALUES($1,$2,$3::jsonb,clock_timestamp()+interval '1 hour'-interval '1 second') RETURNING *''',
       proposal['id'], approval_id, json.dumps(frozen))
@@ -157,11 +160,13 @@ async def observe_run(frozen, identity, run_id, attempt):
 
 
 async def claim(pool, identity, *, run_id, attempt, candidate_version, controller_commit,
-                project, service, surfaces):
+                project, service, surfaces, provider_target):
     row, frozen, source = await _snapshot(pool, identity)
     if (candidate_version != frozen['candidate_version'] or controller_commit != frozen['controller_commit']
             or project != frozen['project_id'] or service != frozen['service_name']
-            or sorted(surfaces) != frozen['runtime_surfaces']):
+            or sorted(surfaces) != frozen['runtime_surfaces']
+            or provider_target != frozen.get('provider_target')
+            or provider_readback.load_config().target(surfaces) != provider_target):
         raise CITrustError('exact_approved_deployment_target_and_source')
     await observe_run(frozen, identity, run_id, attempt)
     nonce = secrets.token_urlsafe(32)
@@ -177,7 +182,8 @@ async def claim(pool, identity, *, run_id, attempt, candidate_version, controlle
     # Only this response contains the nonce. Lost response is uncertain, NOT renewable.
     return {'intent_id': str(row['id']), 'run_id': run_id, 'run_attempt': 1,
         'nonce': nonce, 'candidate_version': frozen['candidate_version'],
-        'project_id': project, 'service_name': service, 'runtime_surfaces': frozen['runtime_surfaces']}
+        'project_id': project, 'service_name': service, 'runtime_surfaces': frozen['runtime_surfaces'],
+        'provider_target': frozen['provider_target']}
 
 
 async def finish(conn, identity, *, proposal, source, run_id, nonce, project, service, surfaces):
@@ -204,6 +210,28 @@ async def finish(conn, identity, *, proposal, source, run_id, nonce, project, se
       WHERE proposal_id=$1 AND candidate_version=$2 AND status='pending')''', proposal['id'], frozen['candidate_version']):
         raise CITrustError('pending_isolated_canary_for_deployment')
     await conn.execute("UPDATE candidate_deployment_intents SET state='attested' WHERE id=$1", row['id'])
+
+
+async def require_attested(conn, identity, *, proposal, source):
+    """Recheck retained human/source authority under activation's existing locks.
+
+    Dispatch expiry is not reused as an activation TTL. This explicit new human
+    traffic decision still requires current CI/policy and fresh provider evidence.
+    """
+    row = await _journal_lock(conn, UUID(str(identity)))
+    if not row or row['state'] != 'attested' or row['proposal_id'] != proposal['id']:
+        raise CITrustError('retained_attested_intent_before_traffic_activation')
+    frozen = _object(row['frozen'])
+    if (frozen['proposal_hash'] != proposal['content_hash'] or frozen['candidate_version'] != proposal['candidate_version']
+            or frozen['build_id'] != str(source['build']['id']) or frozen['policy_id'] != str(source['policy']['id'])
+            or frozen['controller_commit'] != source['observed'].get('base_commit')
+            or frozen.get('provider_target') != provider_readback.load_config().target(frozen['runtime_surfaces'])):
+        raise CITrustError('unchanged_attested_authority_before_traffic_activation')
+    latest = await conn.fetchrow('''SELECT id,decision,proposal_hash FROM improvement_approvals
+      WHERE proposal_id=$1 AND stage='canary' ORDER BY decided_at DESC,id DESC LIMIT 1''', proposal['id'])
+    if (not latest or latest['id'] != row['approval_id'] or latest['decision'] != 'approved'
+            or latest['proposal_hash'] != frozen['proposal_hash']):
+        raise CITrustError('current_human_canary_approval')
 
 
 async def status(pool, identity):

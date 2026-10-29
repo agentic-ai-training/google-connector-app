@@ -13,6 +13,7 @@ import pytest_asyncio
 from app.api.routes import admin
 from app.coding.ci_trust import CITrustError
 from app.improvements import ci_admission
+from app.improvements import provider_readback
 from app.runs.schemas import ImprovementDecision, CanaryActivationDecision
 from tests.coding.test_coding_execution_fence import case as shared_case, database  # noqa: F401
 from tests.coding.test_ci_trust import policy, register, github, REPOSITORY, COMMIT, BASE, TREE, BRANCH
@@ -25,6 +26,10 @@ REAL_ASYNC_CLIENT = httpx.AsyncClient
 @pytest_asyncio.fixture(loop_scope='module')
 async def source(case, monkeypatch):
     c = case
+    monkeypatch.setattr(provider_readback, 'load_config', lambda: provider_readback.ProviderConfig(
+        railway_token='SYNTHETIC_PROJECT_TOKEN', railway_environment='synthetic-environment',
+        railway_service='synthetic-service-id', vercel_token='SYNTHETIC_VERCEL_TOKEN',
+        vercel_team='team_synthetic', vercel_project='prj_synthetic'))
     value = policy()
     await register(c.pool, value)
     calls = github(monkeypatch, value)
@@ -141,6 +146,12 @@ async def test_real_admin_stages_require_fresh_ci_before_effects(source, monkeyp
         merges.append(proposal['id'])
         return {'number': 42, 'merged': True, 'commit_sha': 'd'*40}
     monkeypatch.setattr(admin, 'promote_candidate_pr', merge)
+    async def provider(*args, **kwargs):
+        return provider_readback.Observation({'status': 'passed', 'synthetic_provider': True})
+    monkeypatch.setattr(provider_readback, 'verify_registered', provider)
+    async def attested(*args, **kwargs):
+        return None  # This test isolates current CI gates; journal/provider tests are separate.
+    monkeypatch.setattr(admin.deployment_intents, 'require_attested', attested)
     body = ImprovementDecision(decision='approved', proposal_hash=source.digest)
     if stage == 'canary':
         result = await admin.decide_canary(source.key, body, request)

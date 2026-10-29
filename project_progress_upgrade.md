@@ -3865,3 +3865,33 @@ local databases; cleanup completed. The actual attempted downgrade of a separate
 occupied schema-037 journal correctly failed while preserving schema version,
 intent and transition history. Redacted commit secret scan found no leaks.
 Native CI for the new source and all previously listed live-proof tasks remain open.
+
+### 29 October — independent candidate-provider evidence (local)
+
+Parent `50c76dc` passed both native CI 40861535320 and candidate validation
+40861535426, all four jobs. Independent server-side provider verification is now
+wired into candidate attestation and repeated before human traffic activation.
+It binds immutable environment/service and optional frontend project/team IDs to
+the approved intent; direct scoped provider reads verify exact target, creation
+time, image, running/active instances, bounded readiness logs, domain ownership,
+Vercel preview metadata and credential-free version health. Callback flags alone
+cannot grant deployment verification or traffic. SQL rechecks retained attested
+intent/source/policy/current human approval after fresh observation. The pinned
+Railway CLI's actual query was inspected to confirm its service/environment ID
+fields. This adds no model calls or provider writes.
+
+See `docs/CANDIDATE_PROVIDER_READBACK.md` for explicit server/GitHub configuration,
+timeouts/bounds and strict domain/privacy contracts. No existing account token is
+silently reused as a server credential, and user-owned `.env.example`/settings/
+main-architecture changes remain untouched. Live credential/config enrollment,
+real provider/application lifecycle proof, provenance/security/capacity tests,
+continuous active-canary revocation, merge/promotion journaling and the remainder
+of the original goal are still open; local synthetic-provider tests are not live
+deployment evidence.
+
+The combined provider/journal/CI focused suite passed **181 tests** (19.79s),
+including synthetic no-secret HTTP and actual SQL/route failures that cannot
+activate traffic. Exact service/environment ID CLI selection has a regression;
+wrong-environment status with the same mutable service name is rejected. Targeted
+lint/security/whitespace checks passed. Full exact-tree/native evidence for this
+newer readback source is still pending.

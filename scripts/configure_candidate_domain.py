@@ -5,7 +5,7 @@ import os
 import subprocess
 
 
-service = os.environ["RAILWAY_CANDIDATE_WORKER_SERVICE"]
+service = os.environ["RAILWAY_CANDIDATE_SERVICE_ID"]
 surfaces = set(filter(None, os.environ.get("CANDIDATE_RUNTIME_SURFACES", "").split(",")))
 
 

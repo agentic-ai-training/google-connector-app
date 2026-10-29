@@ -34,6 +34,8 @@ jobs:
       PROPOSAL_KEY: ${{ inputs.proposal_key }}
       CANDIDATE_INTENT_ID: ${{ inputs.intent_id }}
       CANDIDATE_SOURCE_ROOT: ${{ github.workspace }}/candidate-source
+      RAILWAY_CANDIDATE_ENVIRONMENT_ID: ${{ secrets.RAILWAY_CANDIDATE_ENVIRONMENT_ID }}
+      RAILWAY_CANDIDATE_SERVICE_ID: ${{ secrets.RAILWAY_CANDIDATE_SERVICE_ID }}
     steps:
       - name: Checkout trusted controller, never candidate scripts
         uses: actions/checkout@v5
@@ -66,6 +68,8 @@ jobs:
           CANDIDATE_DEPLOY_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_DEPLOY_ATTESTATION_TOKEN }}
           RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: python -I scripts/claim_candidate_deployment.py
       - name: Link the isolated candidate Railway project
         env:
@@ -74,7 +78,7 @@ jobs:
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
         run: >-
           railway link --project "$RAILWAY_CANDIDATE_PROJECT_ID"
-          --environment production --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --json >/dev/null
+          --environment "$RAILWAY_CANDIDATE_ENVIRONMENT_ID" --service "$RAILWAY_CANDIDATE_SERVICE_ID" --json >/dev/null
       - name: Pin candidate runtime and upload its exact source without executing it locally
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
@@ -84,14 +88,14 @@ jobs:
         run: |
           set -euo pipefail
           region="${RAILWAY_CANDIDATE_REGION:-southeast-asia}"
-          printf '%s' "$CANDIDATE_VERSION" | railway variable set EXECUTOR_VERSION --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' "$CANDIDATE_VERSION" | railway variable set DEPLOYMENT_VERSION --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'candidate' | railway variable set EXECUTOR_ROLE --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'Dockerfile.candidate' | railway variable set RAILWAY_DOCKERFILE_PATH --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'true' | railway variable set EMBEDDED_WORKER_ENABLED --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'false' | railway variable set GOVERNED_IMPROVEMENTS_ENABLED --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          railway up "$CANDIDATE_SOURCE_ROOT" --path-as-root --project "$RAILWAY_CANDIDATE_PROJECT_ID" --environment production --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --detach --yes
-          railway scale --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" "${region}=1" --json >/dev/null
+          printf '%s' "$CANDIDATE_VERSION" | railway variable set EXECUTOR_VERSION --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' "$CANDIDATE_VERSION" | railway variable set DEPLOYMENT_VERSION --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'candidate' | railway variable set EXECUTOR_ROLE --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'Dockerfile.candidate' | railway variable set RAILWAY_DOCKERFILE_PATH --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'true' | railway variable set EMBEDDED_WORKER_ENABLED --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'false' | railway variable set GOVERNED_IMPROVEMENTS_ENABLED --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          railway up "$CANDIDATE_SOURCE_ROOT" --path-as-root --project "$RAILWAY_CANDIDATE_PROJECT_ID" --environment "$RAILWAY_CANDIDATE_ENVIRONMENT_ID" --service "$RAILWAY_CANDIDATE_SERVICE_ID" --detach --yes
+          railway scale --service "$RAILWAY_CANDIDATE_SERVICE_ID" "${region}=1" --json >/dev/null
       - name: Restrict candidate networking to its required surfaces
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}

@@ -1,5 +1,14 @@
 # September architecture reconciliation and implementation contract
 
+**29 October independent-readback follow-up (local):** candidate attestation now
+requires bounded direct Railway target/image/instance/readiness reads and optional
+exact Vercel preview/version-health reads, rather than trusting callback flags.
+The same provider reads repeat before canary traffic; source/policy/approval and
+the attested intent are fenced again in SQL. Provider IDs are frozen at approval;
+raw logs, metadata, credentials and claim nonces are not retained as evidence.
+No continuous revocation, cryptographic build provenance, live rollout or merge
+journal is implied. See [provider readback](CANDIDATE_PROVIDER_READBACK.md).
+
 **29 October local candidate-release follow-up:** source `b24491a` passed both
 native CI suites. Local schema 037 now binds human approval atomically to frozen
 deployment authority, records uncertain dispatch before a GitHub POST, and requires

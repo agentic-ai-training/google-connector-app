@@ -5282,3 +5282,37 @@ the system must reconcile actual effects and then perform separately authorized
 cleanup/compensation. Never relabel that state `cancelled` merely to obtain a
 green dashboard. The initial claim is not continuous revocation at every later
 provider call, and the current local journal is not yet full live lifecycle proof.
+
+### Deep dictionary addition: independent observation and SSRF boundaries
+
+**Assertion versus observation.** A reporter sending `verified=True` is making a
+claim. Checking its bearer token proves who reported, not whether Railway is
+running that image. An independent verifier reads the exact provider identifiers,
+scoped target, image and active instances itself. Application health and startup
+logs add version/readiness evidence but remain self-reported by application code;
+they do not replace behavioral tests or cryptographic build provenance. The local
+implementation repeats observations before traffic activation and fences SQL
+source/approval/intent state again afterward.
+
+**Time-of-check/time-of-use (TOCTOU).** A service may change between a provider read
+and SQL commit. Bounded observation age, immutable IDs, current CI and source/
+approval locks narrow that interval; they cannot atomically lock a remote cloud.
+Runtime revocation and continuing health/rollback are additional mechanisms, not
+consequences of a green preflight. Provider timestamps assume synchronized clocks;
+they are not a substitute for a distributed execution journal.
+
+**SSRF (server-side request forgery).** A callback can submit a URL to `127.0.0.1`,
+a private hostname or a redirect that leads there. Even a credential-free GET can
+read internal services. Here the verifier accepts only a provider-owned origin
+whose hostname independently belongs to the approved service/preview, forbids
+redirects and proxy inheritance, and sends no provider token to that application.
+Provider API credentials are scoped to their fixed API origin. “Uses HTTPS” alone
+does not establish ownership, isolation or authorization.
+
+For R bounded replica/log/domain records, validation work is O(R + response bytes),
+with retained output bounded separately. The provider read count is constant for
+the supported service surfaces, but latency is network-dependent, not O(1) wall
+time. Deadlines and response-byte bounds protect different resources. Store only
+necessary IDs, digests, counts and readiness decisions; never append arbitrary
+provider metadata or logs to a model prompt or permanent incident record. See
+[provider-readback contracts](CANDIDATE_PROVIDER_READBACK.md).
