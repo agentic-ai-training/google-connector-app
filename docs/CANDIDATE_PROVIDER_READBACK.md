@@ -113,6 +113,14 @@ lint, security and whitespace checks passed. Those provider responses were test
 doubles, not evidence of an actual cloud deployment. Full exact-tree/native
 regression for this newer implementation remains required.
 
+Subsequent exact-tree local proof at committed code `6b2517b`: **2,699 tests passed**,
+seven Temporal-server cases reserved for the separate native harness, 14 existing
+deprecation warnings, 141.93s. Unraisable subprocess exceptions were fatal and none
+occurred. The clean checkout received only synthetic credentials and disposable
+loopback databases; cleanup completed. A redacted commit secret scan passed.
+Native CI for the newer source is still required; no live provider deployment or
+health probe was exercised by these synthetic tests.
+
 Independent provider state, metadata, startup logs and a version health response
 are stronger than callback assertions, but not cryptographic build/source
 provenance or complete functional/security verification. Keep trusted source

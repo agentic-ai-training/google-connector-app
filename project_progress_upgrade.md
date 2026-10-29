@@ -3895,3 +3895,12 @@ activate traffic. Exact service/environment ID CLI selection has a regression;
 wrong-environment status with the same mutable service name is rejected. Targeted
 lint/security/whitespace checks passed. Full exact-tree/native evidence for this
 newer readback source is still pending.
+
+Subsequent exact-tree regression at code `6b2517b` passed **2,699 tests**, seven
+separately gated Temporal-server skips and 14 existing deprecation warnings in
+141.93s, with no unraisable subprocess exception. Only synthetic credentials and
+invocation-owned loopback databases were used; cleanup and the redacted secret
+scan passed. Native CI/live proof remain pending. The Mac currently has about
+6 GiB available, so a large local multi-image build was not started; image-size/
+architecture/memory proof will use the existing native Linux CI path rather than
+delete user data or risk exhausting local storage. No capacity-fit claim is made.
