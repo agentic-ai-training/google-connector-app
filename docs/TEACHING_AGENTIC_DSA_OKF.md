@@ -5214,3 +5214,71 @@ approval grant. Tokens belong only in trusted controller steps, never source
 archives or model sandboxes. A timed-out upload may already have created remote
 effects; source custody cannot solve that distributed uncertainty. See the
 [actual controller and open dispatch requirements](CANDIDATE_DEPLOYMENT_CONTROLLER.md).
+
+### Deep dictionary addition: one-use deployment authority and uncertain ACKs
+
+**Write-ahead authority** differs from a success log. A success log written after
+a POST disappears if the caller crashes between remote acceptance and local
+commit. The schema-037 controller journal instead commits an immutable intent
+with human approval, then transitions to `dispatch_unknown` before the external
+call. Only a received ACK can advance it to `dispatched`. Unknown does not mean
+failed; neither a timeout nor an empty eventually consistent run list proves that
+no workflow started. The recovery algorithm observes before considering any new
+authority. See [the implementation contract](CANDIDATE_DEPLOYMENT_CONTROLLER.md#schema-037-dispatch-and-claim-custody).
+
+```mermaid
+stateDiagram-v2
+    [*] --> prepared: human approval and intent commit together
+    prepared --> dispatch_unknown: commit before POST
+    dispatch_unknown --> dispatched: response acknowledged
+    dispatch_unknown --> claimed: exact workflow claims despite lost ACK
+    dispatched --> claimed: exact workflow claims once
+    prepared --> cancelled: human cancellation before claim
+    dispatch_unknown --> cancelled: fence future claims
+    dispatched --> cancelled: fence future claims
+    claimed --> attested: bound live nonce and current authority
+```
+
+**Compare-and-set (CAS)** makes one legal state transition the linearization
+point. Two callers may read `prepared`, but only one can lock the row and commit
+`dispatch_unknown`; the second sees changed state and cannot POST. This is
+at-most-one dispatch admission, **not** exactly-once cloud effects. The same
+principle makes a claim non-renewable. An SQL transaction cannot atomically commit
+an external Railway deployment or GitHub merge.
+
+```python
+from enum import Enum
+
+class State(Enum):
+    PREPARED = 'prepared'
+    UNKNOWN = 'dispatch_unknown'
+    DISPATCHED = 'dispatched'
+    CLAIMED = 'claimed'
+
+def admit_dispatch(current: State) -> State:
+    if current is not State.PREPARED:
+        raise RuntimeError('observe/reconcile; do not automatically retry')
+    return State.UNKNOWN
+```
+
+This function teaches the transition only: using it on a Python object is not
+cross-process synchronization. Production applies the transition under SQL locks,
+checks frozen source/current CI/policy/human approval, and commits before POST.
+The transition lookup is O(1); checking N bounded file hashes costs O(N + source
+bytes). Sort/compare of K surface names is O(K log K), with K bounded to four.
+An indexed journal ID lookup is not a full history scan; listing its H transitions
+is O(log J + H) for J journal/event index entries, excluding network/serialization.
+
+**One-use capability receipt** is a bearer value bound to an intent/run/target,
+not a reusable account token. The server retains a hash; the trusted controller
+receives the nonce once and writes it exclusively with mode 0600 and fsync.
+Losing the response cannot safely mint another nonce: the first caller might
+already possess it. Status/incident logs must omit it. Expiry prevents a future
+grant but does not undo a cloud write already accepted.
+
+**Cancellation versus compensation.** Cancelling an unclaimed intent fences a
+late claim. Once claimed, the workflow may already have changed a provider;
+the system must reconcile actual effects and then perform separately authorized
+cleanup/compensation. Never relabel that state `cancelled` merely to obtain a
+green dashboard. The initial claim is not continuous revocation at every later
+provider call, and the current local journal is not yet full live lifecycle proof.

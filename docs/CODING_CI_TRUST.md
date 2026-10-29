@@ -1,5 +1,13 @@
 # CI trust, exact-attempt evidence and isolated reporting
 
+**29 October follow-up:** exact `b24491a` passed main CI 40858373770 and candidate
+validation 40858373780, all four native jobs. Later local schema-037 work adds
+atomic human-approval/dispatch intents and an independently observed one-use
+Actions claim before provider credentials. See
+[controller journal and remaining live-proof boundaries](CANDIDATE_DEPLOYMENT_CONTROLLER.md#schema-037-dispatch-and-claim-custody).
+Those changes still need their own CI; neither a green parent nor the journal
+authorizes a live rollout, merge, hosting extension or paid model switch.
+
 Local checkpoint, 28 October 2026; schema **036**. No production policy is seeded,
 no GitHub workflow is dispatched and no canary/promotion authority is granted.
 That statement describes the original local checkpoint. The subsequent real PR

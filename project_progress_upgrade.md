@@ -3825,3 +3825,34 @@ does not close the server-bound single-use deployment/merge dispatch journal,
 manual-dispatch authorization binding, independent provider/attestation/provenance,
 active-canary revocation, funded rollout, image/capacity or full lifecycle proof.
 The original goal is active. See `docs/CANDIDATE_DEPLOYMENT_CONTROLLER.md`.
+
+### 29 October — atomic release intent and one-use controller claim (local)
+
+Exact parent `b24491a` passed both native main CI 40858373770 and candidate
+validation 40858373780, all four jobs, including the corrected migration harness.
+That green result is not assigned to later journal edits or a production release.
+
+Migration 037 and the real code-canary approval/dispatch/claim/attestation routes
+now implement a write-ahead intent bound to the human approval, immutable source,
+build, current CI policy, controller commit, target and surfaces. The SQL commit
+precedes the dispatch POST; lost ACK/cancellation preserves uncertainty and cannot
+automatically retry. The workflow must claim its exact independently observed
+main-branch run/attempt before provider credentials. Claims are single-use,
+time-bounded and saved in a private exclusive receipt; retained evidence excludes
+the nonce. Status/history, bounded read-only Actions reconciliation and explicit
+human cancellation of unclaimed intents are available through admin APIs. After
+claim, cancellation does not falsely assert remote rollback.
+
+The actual empty disposable migration round trip upgraded to 037, downgraded to
+002 and upgraded to 037, including full-schema retention integration. Focused
+real-PostgreSQL and inert-provider tests cover concurrency, source/approval/policy
+changes, lost responses, one-use claims, exact Actions identity, receipt privacy,
+reconciliation ambiguity and no false retry/cancellation. Source-bound CI for this
+new change, provider-independent attestation, post-claim revocation, merge and
+promotion journaling, real isolated deployment/canary lifecycle and the rest of the
+original Sprints 0–68 remain open. No cloud write, resource/credit consumption,
+merge, production migration or hosting extension was performed.
+
+The combined focused run passed **141 tests** in 19.27s with unraisable subprocess
+warnings treated as failures. Targeted Flake8, Bandit and whitespace checks passed.
+Full exact-tree regression and native CI for this journal are still pending.

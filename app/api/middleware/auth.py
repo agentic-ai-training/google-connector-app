@@ -256,7 +256,7 @@ async def auth_middleware(request: Request, call_next):
     if (request.method == "POST"
             and request.url.path.startswith("/admin/improvements/")
             and request.url.path.endswith((
-                "/deployment-attestation", "/production-attestation",
+                "/deployment-attestation", "/production-attestation", "/deployment-claim",
             ))):
         supplied = request.headers.get("x-candidate-deploy-token", "")
         expected = get_settings().candidate_deploy_attestation_token

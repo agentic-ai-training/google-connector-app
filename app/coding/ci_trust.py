@@ -226,7 +226,8 @@ async def _verify_run(policy, *, commit, pull_number, base_ref, branch, run_id=N
                 or again.get('total_count') != runs['total_count'] or again.get('workflow_runs') != listed):
             raise CITrustError('stable_latest_attempt')
         return {'status': state, 'policy_id': str(policy['id']), 'repository': repository,
-            'commit': commit, 'tree': head['tree']['sha'], 'workflow_id': policy['workflow_id'],
+            'commit': commit, 'base_commit': pull['base']['sha'],
+            'tree': head['tree']['sha'], 'workflow_id': policy['workflow_id'],
             'workflow_path': policy['workflow_path'], 'workflow_sha256': policy['workflow_sha256'],
             'run_id': str(run['id']), 'run_attempt': run['run_attempt'], 'jobs': observed,
             'url': f"https://github.com/{repository}/actions/runs/{run['id']}"}

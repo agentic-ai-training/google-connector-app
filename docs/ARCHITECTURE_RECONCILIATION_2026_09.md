@@ -1,5 +1,16 @@
 # September architecture reconciliation and implementation contract
 
+**29 October local candidate-release follow-up:** source `b24491a` passed both
+native CI suites. Local schema 037 now binds human approval atomically to frozen
+deployment authority, records uncertain dispatch before a GitHub POST, and requires
+an independently read exact Actions run plus fresh source/CI/policy checks for a
+one-use claim before provider credentials. Unknown ACKs cannot automatically
+re-dispatch; admin observation/cancellation is explicit. The nonce is private and
+excluded from retained evidence. This is not production migration, independent
+cloud-provider attestation, merge journaling or full candidate lifecycle proof.
+See [release controller](CANDIDATE_DEPLOYMENT_CONTROLLER.md). User-owned main
+architecture edits remain untouched; no hosting/funding boundary changed.
+
 **Current hosting status, 22 October:** the approved term has ended and the exact
 Delhi VM is independently confirmed TERMINATED. Historical hosting/health proofs
 below do not establish current availability. Local fixed scanner host dispatch,
