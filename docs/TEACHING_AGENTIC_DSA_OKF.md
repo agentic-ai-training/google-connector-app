@@ -5316,3 +5316,33 @@ time. Deadlines and response-byte bounds protect different resources. Store only
 necessary IDs, digests, counts and readiness decisions; never append arbitrary
 provider metadata or logs to a model prompt or permanent incident record. See
 [provider-readback contracts](CANDIDATE_PROVIDER_READBACK.md).
+
+### Deep dictionary addition: capacity experiments and measurement scope
+
+**A limit is not a measurement.** Docker's configured memory ceiling says what
+the kernel should enforce; it does not show how much the application needs. The
+new native capacity fixture inspects the configured ceiling and reads cgroup
+current/peak memory plus OOM counters after real startup and a durable synthetic
+request. Equal memory/swap limits prevent swap from concealing a RAM shortfall.
+An API process alive under the cap is not proof its task completed, so the test
+also requires exact successful steps and zero model calls for its informational
+case. This says nothing about a later large RAG/coding/model workload.
+
+**Experimental controls.** Keep source SHA, architecture, image IDs, resource
+limits, request and data boundary explicit. A smaller fixture passing cannot prove
+an unmeasured production workload fits. Report four backend-role images separately;
+do not infer Ollama or Alloy consumption, service-count placement, credit lifetime,
+or paid hosting authority from them. Document remaining confounders.
+
+**High-water mark versus steady state.** `memory.current` samples the present;
+`memory.peak` records a cgroup high-water mark, including startup and the probe
+itself. Neither predicts every future allocation. Testing a 20% smoke margin is a
+conservative acceptance rule, not a mathematical guarantee. Resource checks are
+O(R) for R measured roles and bounded response data; wall time is dominated by
+real startup and bounded polling, not by the constant-sized metric comparisons.
+
+**Owned cleanup.** Assign unpredictable names/labels before create calls, reconcile
+even a lost create ACK, verify exact ownership before removal, and verify absence
+afterward. A whole-engine prune is not owned cleanup. A CI fixture using only
+tmpfs synthetic data cannot validate restoring real Neon/GCP data. See the exact
+[capacity experiment and limitations](RELEASE_CAPACITY_PROOF.md).

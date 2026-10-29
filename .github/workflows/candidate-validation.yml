@@ -9,6 +9,7 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -39,6 +40,7 @@ jobs:
           DATABASE_URL: postgresql://agent_user:agent_pass_2024@localhost:5432/agent_db
           ASYNC_DATABASE_URL: postgresql+asyncpg://agent_user:agent_pass_2024@localhost:5432/agent_db
           COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           {
@@ -57,15 +59,23 @@ jobs:
             bandit -q -r app scripts -ll
             pip-audit -r requirements.txt --progress-spinner off
             python -m scripts.verify_cloud_migrations_local
-            docker build -f Dockerfile.worker -t candidate-worker:test .
-            docker build -f Dockerfile.candidate -t candidate-api:test .
-            docker build -f Dockerfile.builder -t candidate-builder:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile -t control-api:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.worker -t candidate-worker:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.candidate -t candidate-api:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.builder -t candidate-builder:test .
+            python -m scripts.verify_release_capacity --source-commit "$CANDIDATE_HEAD_SHA"
           } 2>&1 | tee candidate-tests.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: candidate-backend-log
           path: candidate-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-release-capacity
+          path: release-capacity.json
+          retention-days: 7
 
   web:
     runs-on: ubuntu-latest

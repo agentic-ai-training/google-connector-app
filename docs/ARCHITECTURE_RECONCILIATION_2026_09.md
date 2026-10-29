@@ -1,5 +1,13 @@
 # September architecture reconciliation and implementation contract
 
+**29 October capacity gate (native proof pending):** existing no-secret Linux CI
+now builds/source-labels the four real role images and includes an owned internal-
+network, disposable-database runtime fixture. It measures exact cgroup limits/peaks
+and actual durable informational completion without model/provider credentials,
+then verifies cleanup. This does not establish live Railway fit, all service
+placement, Ollama/Alloy or model/tool load. No funded hosting boundary changed.
+See [capacity proof contract](RELEASE_CAPACITY_PROOF.md).
+
 **29 October independent-readback follow-up (local):** candidate attestation now
 requires bounded direct Railway target/image/instance/readiness reads and optional
 exact Vercel preview/version-health reads, rather than trusting callback flags.

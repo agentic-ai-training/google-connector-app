@@ -3904,3 +3904,22 @@ scan passed. Native CI/live proof remain pending. The Mac currently has about
 6 GiB available, so a large local multi-image build was not started; image-size/
 architecture/memory proof will use the existing native Linux CI path rather than
 delete user data or risk exhausting local storage. No capacity-fit claim is made.
+
+### 29 October — native image/cgroup capacity gate (implementation, proof pending)
+
+The existing secret-free Linux candidate job now builds all four actual Python/
+Rust role images with exact PR-source labels and measures native AMD64 image size.
+A uniquely owned internal-network/tmpfs-PostgreSQL fixture starts actual API,
+worker, candidate and idle builder under the observed memory/CPU/PID limits. It
+checks cgroup peaks/OOM/swap and writable bytes, runs authenticated durable
+capability completion with no model calls, and verifies owned cleanup before
+writing a small seven-day capacity artifact. Existing image build/test/audit gates
+remain fail-fast; no larger runner or cloud resource is selected. Mac disk
+pressure is not worked around by deleting private/user data.
+
+Local contract/process/fail-fast tests passed **86 cases** (6.22s), including the
+unacknowledged-create absence regression; this is mechanism evidence,
+not an actual native image or live Railway capacity result. The new workflow must
+run at its own exact head. Ollama/Alloy, model/tool workloads, real networking/
+credits/placement, provider accounting, security/load/restore and the rest of the
+original goal remain unverified. See `docs/RELEASE_CAPACITY_PROOF.md`.
