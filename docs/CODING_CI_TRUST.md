@@ -38,6 +38,35 @@ joins a public subprocess transport's closure as well as process exit. See
 Corrected native CI must pass at its own exact source SHA. These observations do
 not authorize merge, deployment, production policy enrollment or canary traffic.
 
+At the next commit `7f794eb09f804aa1b5f956cb7455d090014e9e51`, both the protected
+exact-tree local run and candidate Linux backend passed **2,565 tests** (seven
+Temporal-server cases intentionally run by their separate harness). The corrected
+candidate workflow then correctly failed on four low-confidence Bandit SQL
+construction reports; the frontend gate correctly failed its dependency audit.
+Main CI's separate Temporal proof reached a genuine fresh-download 404 because
+both SDK entry points supplied `1.9.1` instead of the upstream tag `v1.9.1`.
+These were not retries of an unchanged source, nor evidence that the goal was
+complete. Runs: [main 40719104252](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40719104252),
+[candidate 40719103872](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40719103872).
+
+Follow-up corrections preserve the audit gates. Next.js and its ESLint config are
+pinned to 16.4.3, Sharp to 0.35.5, and compatible transitive fixes are locked;
+`npm audit` reports zero vulnerabilities for that lockfile at this observation.
+See the [Next.js advisory](https://github.com/advisories/GHSA-673q-mjm6-r5xr) and
+[Sharp advisory](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c). This is not
+proof the current production deployment was updated or that all vulnerabilities
+are discoverable. Both Temporal entry points now use the exact `v1.9.1` tag;
+a regression test covers both. Its uncached Linux server/replay proof still must
+run; SDK download checksum/supply-chain hardening remains separate work.
+
+The four B608 findings were individually reviewed: two inject only the closed
+schema-version ownership predicate (`TRUE` or `orchestration_owner='postgres'`),
+one uses three fixed migration-dependent resolution predicates, and one appends
+only the fixed `FOR UPDATE` suffix. Request/identity/executor values remain
+parameter-bound. Narrow B608 annotations document those exact false positives;
+no global rule/confidence/severity exclusion was added and no user SQL was allowed.
+Ownership, retry and resolution PostgreSQL regression tests remain required.
+
 ## What changed
 
 The former hosted worker accepted any nonempty collection of successful,

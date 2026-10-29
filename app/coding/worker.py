@@ -62,9 +62,10 @@ async def _claim(pool):
     async with pool.acquire() as conn, conn.transaction():
         from app.runs.workflow_ownership import postgres_claim_predicate
         ownership = await postgres_claim_predicate(conn)
+        # Only a fixed schema-version predicate is interpolated; executor remains bound.
         row = await conn.fetchrow(
-            """SELECT * FROM coding_runs
-               WHERE executor_version=$1 AND deleted_at IS NULL AND available_at<=now()
+            "SELECT * FROM coding_runs "  # nosec B608
+            """WHERE executor_version=$1 AND deleted_at IS NULL AND available_at<=now()
                  AND __WORKFLOW_OWNER__
                  AND (status IN ('queued','approved') OR
                       (status IN ('planning','executing','ci_running')

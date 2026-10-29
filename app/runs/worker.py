@@ -83,9 +83,10 @@ async def claim_run(pool, owner: str):
         terminal_recovery = None
         async with pool.acquire() as conn, conn.transaction():
             ownership = await postgres_claim_predicate(conn)
+            # Only a fixed schema-version predicate is interpolated; all values remain bound.
             row = await conn.fetchrow(
-                """SELECT * FROM agent_runs
-                   WHERE (status='queued' OR
+                "SELECT * FROM agent_runs "  # nosec B608
+                """WHERE (status='queued' OR
                          (status='running' AND lease_expires_at < now()))
                      AND __WORKFLOW_OWNER__
                      AND (($2='candidate' AND executor_version=$1

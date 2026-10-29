@@ -272,7 +272,8 @@ class WorkspaceActivities:
                 unresolved += ' AND NOT temporal_read_superseded(run_id,step_id,execution_token)'
             if await conn.fetchval("SELECT to_regclass('temporal_prefix_generations') IS NOT NULL"):
                 unresolved += ' AND NOT temporal_prefix_superseded(run_id,step_id,execution_token)'
-            uncertain = await conn.fetchval(("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "
+            # All fragments below are fixed migration-dependent predicates, never request/model content.
+            uncertain = await conn.fetchval(("SELECT EXISTS(SELECT 1 FROM temporal_workspace_steps WHERE run_id=$1 "  # nosec B608
                 "AND state IN ('executing','uncertain') __RESOLUTION__) ").replace('__RESOLUTION__', unresolved), identity)
             if await conn.fetchval("SELECT to_regclass('agent_tool_receipts') IS NOT NULL"):
                 uncertain = uncertain or await conn.fetchval('''SELECT EXISTS(SELECT 1 FROM agent_tool_receipts

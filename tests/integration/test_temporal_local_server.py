@@ -37,7 +37,7 @@ PRIVATE = 'SYNTHETIC_PRIVATE_SERVER_PROOF'
 async def server():
     environment = await asyncio.wait_for(WorkflowEnvironment.start_local(
         namespace='gca-local-proof', ip='127.0.0.1',ui=False,identity='gca-local-proof',
-        dev_server_download_version='1.9.1',dev_server_existing_path=os.getenv('GCA_TEMPORAL_CLI'),
+        dev_server_download_version='v1.9.1',dev_server_existing_path=os.getenv('GCA_TEMPORAL_CLI'),
         dev_server_log_level='error'), timeout=60)
     assert environment.client.service_client.config.target_host.startswith('127.0.0.1:')
     try:
@@ -360,7 +360,7 @@ async def test_real_sqlite_server_restart_retains_first_execution_and_resumes(da
     filename = str(tmp_path/'temporal.sqlite')
     async def start():
         value = await asyncio.wait_for(WorkflowEnvironment.start_local(namespace='gca-local-proof',ip='127.0.0.1',
-            ui=False,dev_server_existing_path=os.getenv('GCA_TEMPORAL_CLI'),dev_server_download_version='1.9.1',
+            ui=False,dev_server_existing_path=os.getenv('GCA_TEMPORAL_CLI'),dev_server_download_version='v1.9.1',
             dev_server_database_filename=filename,dev_server_log_level='error'),timeout=60)
         assert value.client.service_client.config.target_host.startswith('127.0.0.1:')
         return value

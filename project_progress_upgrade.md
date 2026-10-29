@@ -3729,3 +3729,27 @@ and is not by itself proof of the exact release tree. Corrected native Linux CI,
 current image/memory/capacity evidence, production CI policy enrollment, release
 admission at downstream gates, funded activation and the full original scope
 remain open. See `docs/CODING_CI_TRUST.md`. The original goal remains active.
+
+### 29 October — exact-tree proof and newly visible release blockers
+
+The committed `7f794eb` tree, without the user's unrelated uncommitted changes,
+passed 2,565 backend tests with seven opt-in Temporal-server skips in 123.38s.
+Its first temporary checkout under shared `/tmp` was correctly rejected by the
+packaging custody bootstrap; moving that owned checkout beneath private home
+ancestry corrected the harness, not the production guard. The invocation-owned
+local database was removed afterward; existing databases/settings were untouched.
+Candidate Linux backend independently passed the same 2,565 cases, with no
+unraisable subprocess warnings. Rust/mobile jobs passed in both new workflows.
+The fail-fast gate then truthfully exposed dependency-audit and reviewed static
+SQL-fragment findings, while main's separate real Temporal proof exposed a fresh
+CLI download 404. Those workflows are failed, not production release evidence.
+
+Both SDK local-server entry points now use the actual upstream `v1.9.1` release
+tag, with a regression covering both. The four fixed-fragment Bandit findings
+have individually reasoned B608 annotations, without lowering security thresholds
+or permitting any input-based SQL. Next/ESLint 16.4.3 and Sharp 0.35.5 plus compatible
+transitive lockfile updates remove the reported frontend audit findings (zero
+reported vulnerabilities at verification time). No production dependency rollout
+is claimed. Updated CI evidence and teaching dictionary explain pipeline exit-code
+aggregation, transport closure and cache-hidden download errors. Subsequent native
+CI/images, production activation and the full original objective remain open.

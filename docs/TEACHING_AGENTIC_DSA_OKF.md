@@ -5111,3 +5111,54 @@ still a secret; least privilege is not permission to expose it to model code.
 The actual implementation, human activation APIs, evidence scope and remaining
 promotion/supply-chain work are in [CI trust](CODING_CI_TRUST.md). Policy identity
 does not replace human-published OKF or grant code/deployment authority.
+
+### Deep dictionary addition: fail-fast pipelines and complete process cleanup
+
+**Pipeline status is an aggregation rule.** For shell commands `A | B`, default
+status is normally B's exit status, not an AND of both results. Thus a failing
+test process can be hidden by a successful log collector. `set -e` alone does not
+repair this aggregation. In a Bash validation script, use `set -euo pipefail`:
+`pipefail` propagates pipeline failure, `-e` stops subsequent work, and `-u` rejects
+unset variables. Commands deliberately used as conditions have different `-e`
+semantics, so test the actual shell structure rather than merely checking text.
+
+```mermaid
+flowchart LR
+    T[Tests fail] --> G[Brace group exits nonzero]
+    G --> L[tee successfully stores log]
+    L --> D{Pipeline aggregation}
+    D -->|Default: last command| F[False green]
+    D -->|pipefail| R[Gate fails; retain log; stop later work]
+```
+
+Treat a validation pipeline as ordered gates, not a vote. With n gates, success
+requires all n successes; test failures at each of n positions. Executing each
+prefix independently is O(n²) total mock-command invocations, acceptable for this
+small bounded suite. Production validation still executes gates once in O(n)
+steps (their individual costs dominate). `test_ci_fail_fast.py` preserves the real
+pipeline syntax but substitutes inert commands; it also reproduces the old false
+green as a negative control. This is different from changing a test to pass.
+
+**Process exit versus transport closure.** A reaped child PID does not prove its
+stdout/stderr pipes are closed. A buffered reader can stop consuming after an
+output limit, leave a paused pipe transport, and later trigger `Event loop is
+closed` during garbage collection. Grandchildren can retain pipe handles too.
+The owned runner uses public `asyncio.SubprocessProtocol` callbacks with a bounded
+stdout bytearray and immediately discarded stderr/overflow. Cleanup signals only
+the owned process group, closes its public transport and waits for
+`connection_lost` before returning or removing the private working directory.
+
+State is not merely `running → exited`; it includes `closing → closed`, and the
+successful resource-release postcondition is closed handles **and** exited child.
+Cancellation is a request to begin that lifecycle, not evidence that it finished.
+Repeated caller cancellation cannot interrupt the joined cleanup. Retained Python
+output is O(B), where B is the configured byte bound; receiving M bytes is O(M)
+work even when excess output is discarded. Time/resource limits remain necessary.
+Neither process groups nor these bounds constitute a sandbox for generated code.
+
+**Version identity includes the upstream tag grammar.** Temporal's download API
+resolves CLI tag `v1.9.1`; `1.9.1` returned 404 in the real Linux CI. A local cache
+had masked that path. A cache hit is not fresh-install proof. Test both entry
+points and verify uncached native CI; a version string alone is also not a
+cryptographic supply-chain attestation. See [CI trust](CODING_CI_TRUST.md) for
+the actual run IDs and remaining evidence boundaries.

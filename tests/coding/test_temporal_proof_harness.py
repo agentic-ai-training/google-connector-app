@@ -1,7 +1,9 @@
 """Guardrails around the local proof runner, separate from real-server evidence."""
 import hashlib
+import ast
 import json
 import asyncio
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,6 +12,16 @@ import pytest
 
 from scripts import replay_temporal_local_proof as replay
 from scripts.verify_temporal_server_local import isolated_environment,stop_owned_group
+
+
+def test_sdk_download_uses_exact_upstream_release_tag_not_unavailable_bare_version():
+    source = Path(__file__).resolve().parents[1] / 'integration/test_temporal_local_server.py'
+    calls = [node for node in ast.walk(ast.parse(source.read_text())) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == 'start_local']
+    assert len(calls) == 2
+    for call in calls:
+        version = next(keyword.value for keyword in call.keywords if keyword.arg == 'dev_server_download_version')
+        assert isinstance(version, ast.Constant) and version.value == 'v1.9.1'
 
 
 def test_runner_does_not_forward_developer_or_ci_authority(monkeypatch,tmp_path):

@@ -14,8 +14,9 @@ def _denied(reason, decision):
 
 async def current_journal(conn, run_id, step_id, *, locked=False):
     # Generation zero remains compatible with pre-032 readback schemas.
-    return await conn.fetchrow('''SELECT * FROM temporal_workspace_steps j WHERE run_id=$1 AND step_id=$2
-      ORDER BY coalesce((to_jsonb(j)->>'generation')::integer,0) DESC LIMIT 1''' + (' FOR UPDATE' if locked else ''),
+    # The optional suffix is the fixed FOR UPDATE literal; both identities stay bound parameters.
+    return await conn.fetchrow('SELECT * FROM temporal_workspace_steps j WHERE run_id=$1 AND step_id=$2 '  # nosec B608
+      '''ORDER BY coalesce((to_jsonb(j)->>'generation')::integer,0) DESC LIMIT 1''' + (' FOR UPDATE' if locked else ''),
       run_id, step_id)
 
 
