@@ -3960,3 +3960,23 @@ The updated capacity/process/fail-fast suite passed **116 tests**, with targeted
 lint/security/whitespace checks passing. Over-limit memory, extra swap, missing
 headroom, OOMs, wrong PID limits, invalid page size and incorrect rounding still
 fail. No real credential or provider write was used in this correction.
+
+### 30 October — native Python-role capacity experiment verified
+
+- [x] Exact `d937ba3` passed main CI 40998185737 and candidate validation
+  40998185739, all four jobs each. Candidate backend: 2,757 passed, seven
+  separately gated Temporal-server skips, one existing warning; actual images/
+  constrained runtime and owned cleanup then passed.
+- [x] Download and independently validate the exact inert JSON report; retain a
+  sanitized version-controlled copy in `docs/evidence/release-capacity-d937ba3.json`.
+  Full digest and exact measurements are in `docs/RELEASE_CAPACITY_PROOF.md`.
+
+Image sizes were 864,291,138 bytes for API/worker and 858,294,330 bytes for candidate/
+builder. Peak measured cgroup memory was API 137,342,976; worker 107,081,728;
+candidate 135,958,528; idle builder 54,542,336 bytes, with zero swap/OOMs and verified
+limits. Actual authenticated durable capability completion used no model calls.
+The proof is synthetic startup/request scope only. It does not close live Railway
+deployment/cost/placement, Ollama/Alloy, actual model/RAG/tool load, generated-app
+deployment, production backups/migrations, promotion journaling, security/load/
+restore, learning evidence or any other unfinished original requirement. No cloud
+service was started and no hosting or protected budget was changed.

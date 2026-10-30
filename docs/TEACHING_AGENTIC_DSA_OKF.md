@@ -5346,3 +5346,24 @@ even a lost create ACK, verify exact ownership before removal, and verify absenc
 afterward. A whole-engine prune is not owned cleanup. A CI fixture using only
 tmpfs synthetic data cannot validate restoring real Neon/GCP data. See the exact
 [capacity experiment and limitations](RELEASE_CAPACITY_PROOF.md).
+
+**Observed byte limits versus kernel pages.** A one-billion-byte configured limit
+was read back as 999,997,440 bytes in the actual Linux proof, with 4,096-byte pages.
+The memory counter uses whole pages. Preserve units and the controller's concrete
+rounding rule instead of accepting arbitrary near-enough values:
+
+```python
+requested_bytes = 1_000_000_000
+page_bytes = 4096
+observed_expected = (requested_bytes // page_bytes) * page_bytes
+assert observed_expected == 999_997_440
+assert observed_expected <= requested_bytes < observed_expected + page_bytes
+headroom_acceptance = observed_expected * 4 // 5
+```
+
+This is O(1) integer arithmetic and must not raise the configured ceiling or hide
+OOMs/swap. Validate the observed page size before using it. Different controllers
+can have different rounding rules; do not generalize one byte comparison to every
+kernel interface. Exact-source native CI at `d937ba3` then measured API peak
+137,342,976 bytes and completed the real synthetic durable request. That evidence
+does not predict a later unmeasured workload; see the [retained actual report](evidence/release-capacity-d937ba3.json).

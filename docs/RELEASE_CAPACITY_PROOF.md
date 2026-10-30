@@ -63,6 +63,43 @@ checks. It rejects extra memory/swap, incorrect rounding, invalid page size,
 insufficient headroom, OOMs and wrong PID limits; those acceptance rules were not
 relaxed to mask a real capacity shortfall.
 
+## Verified native result — 30 October 2026
+
+Exact code `d937ba3216ffcd9c38c337ed3e97b31cb9e3ad72` passed all four jobs in
+[main CI 40998185737](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40998185737)
+and [candidate validation 40998185739](https://github.com/agentic-ai-training/google-connector-app/actions/runs/40998185739).
+The candidate backend passed **2,757 tests**, seven separately gated Temporal-server
+skips and one existing warning before the actual image/runtime fixture succeeded.
+No failed earlier run has been relabelled as passed.
+
+The downloaded capacity artifact was parsed as inert JSON and independently
+checked against the exact source, image IDs/architecture/size, cgroup rules,
+zero-model durable completion and successful owned cleanup. A sanitized durable
+copy is [retained here](evidence/release-capacity-d937ba3.json); its SHA-256 is
+`37185756f0d0931baa7b5a6f45cc9b0315cdf5e51ba20ad6a4bda729516a075a`.
+This is the committed JSON's digest, not a cryptographic signature or artifact-ZIP
+digest. Source-bound CI observation and the stated test scope remain necessary.
+
+| Role | Image bytes (uncompressed) | Measured peak bytes | Writable-layer bytes |
+| --- | ---: | ---: | ---: |
+| API | 864,291,138 | 137,342,976 | 3,199,070 |
+| Worker | 864,291,138 | 107,081,728 | 2,425,071 |
+| Candidate | 858,294,330 | 135,958,528 | 2,974,117 |
+| Builder, idle initialization only | 858,294,330 | 54,542,336 | 1,210,073 |
+
+All four images are Linux/AMD64. Docker's requested ceiling remained one billion
+bytes; each observed `memory.max` was 999,997,440 bytes at 4,096-byte pages. Swap
+max and OOM/kill counters were zero, PID maximum 1,000, and the fixed CPU/port/
+mount/network constraints were inspected. The authenticated informational task
+completed through the actual API/worker with 100% verified completion and no model
+calls. API/candidate version health and builder's two DB pool connections passed.
+Only the fixture's owned containers/network were removed, with absence verified.
+
+This closes the **native synthetic image/startup/deterministic-request experiment**
+at that exact source. It does not establish real Railway deployment, sustained
+load, live model/tool/RAG operation, coding generation, Ollama/Alloy placement,
+credits or the whole original goal. The remaining-proof section below still applies.
+
 ## What the job now does
 
 The same standard Ubuntu candidate-validation job builds the real `Dockerfile`,

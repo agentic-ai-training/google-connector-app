@@ -1,5 +1,16 @@
 # September architecture reconciliation and implementation contract
 
+**30 October native capacity result:** exact `d937ba3` passed both complete CI
+suites and the actual secret-free Linux/AMD64 image/constrained-runtime fixture.
+API/worker images are 864,291,138 bytes; candidate/builder 858,294,330. Measured
+peaks were approximately 137/107/136/55 decimal MB respectively (builder idle
+only), with unchanged one-billion-byte requested ceilings and zero OOM/swap.
+The actual durable informational request and owned cleanup passed. The sanitized
+source-bound [report](evidence/release-capacity-d937ba3.json) is retained, with
+[exact scope/limitations](RELEASE_CAPACITY_PROOF.md). This supersedes earlier
+pending **synthetic Python-role capacity** statements only—not live Railway fit,
+Ollama/Alloy/model workloads, paid capacity, rollout or original-goal completion.
+
 **29 October capacity gate (native proof pending):** existing no-secret Linux CI
 now builds/source-labels the four real role images and includes an owned internal-
 network, disposable-database runtime fixture. It measures exact cgroup limits/peaks
