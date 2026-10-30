@@ -141,13 +141,13 @@ with urllib.request.urlopen(request,timeout=5) as response:
  if len(data)>262144: raise RuntimeError('bounded health/run response required')
  print(data.decode())
 '''
-CGROUP_PROBE = '''import json,pathlib
+CGROUP_PROBE = '''import json,pathlib,os
 p=pathlib.Path('/sys/fs/cgroup')
 def number(name):
  value=(p/name).read_text().strip()
  return int(value)
 events=dict(line.split() for line in (p/'memory.events').read_text().splitlines())
-print(json.dumps({'current_bytes':number('memory.current'),'peak_bytes':number('memory.peak'),
+print(json.dumps({'page_size':os.sysconf('SC_PAGE_SIZE'),'current_bytes':number('memory.current'),'peak_bytes':number('memory.peak'),
  'limit_bytes':number('memory.max'),'swap_max_bytes':number('memory.swap.max'),
  'pids_current':number('pids.current'),'pids_max':number('pids.max'),
  'oom':int(events.get('oom',0)),'oom_kill':int(events.get('oom_kill',0))}))
@@ -241,19 +241,32 @@ def wait(predicate, *, timeout=90, phase='readiness'):
 
 
 def request(container, path, *, method='GET', payload=None, token='', port=8000):
-    return decode(command('docker', 'exec', container, 'python', '-c', HTTP_PROBE,
+    return decode(command('docker', 'exec', container, 'python', '-I', '-c', HTTP_PROBE,
         f'http://127.0.0.1:{port}'+path, method, json.dumps(payload) if payload else '', token, timeout=10))
 
 
 def measure(container, fixture):
     writable = check_container(inspect('container', container, size=True), fixture.owner, fixture.network)
-    value = decode(command('docker', 'exec', container, 'python', '-c', CGROUP_PROBE))
-    if (value.get('limit_bytes') != MEMORY_LIMIT or value.get('swap_max_bytes') != 0
+    value = decode(command('docker', 'exec', container, 'python', '-I', '-c', CGROUP_PROBE))
+    validate_cgroup(value, role=container.removeprefix(fixture.network+'-'))
+    return {**value, 'configured_memory_bytes':MEMORY_LIMIT, 'writable_layer_bytes': writable}
+
+
+def validate_cgroup(value, *, role='synthetic'):
+    page = value.get('page_size')
+    if type(page) is not int or not 4096 <= page <= 65536 or page & (page-1):
+        raise CapacityError('valid_kernel_page_size_required')
+    # memory.max counts whole pages. Keep Docker's exact byte ceiling unchanged;
+    # accept only its kernel-rounded DOWN value, never extra memory or swap.
+    expected = MEMORY_LIMIT // page * page
+    if (value.get('limit_bytes') != expected or value.get('swap_max_bytes') != 0
             or value.get('pids_max') != 1000 or value.get('oom') != 0 or value.get('oom_kill') != 0
-            or not 0 < value.get('current_bytes', 0) <= value.get('peak_bytes', 0) <= 800_000_000
+            or not 0 < value.get('current_bytes', 0) <= value.get('peak_bytes', 0) <= expected*4//5
             or not 0 < value.get('pids_current', 0) < 1000):
+        print(json.dumps({'capacity_measurement_failed':role,'expected_page_aligned_limit':expected,
+            'cgroup':{key:value.get(key) for key in ('page_size','current_bytes','peak_bytes','limit_bytes',
+                'swap_max_bytes','pids_current','pids_max','oom','oom_kill') if type(value.get(key)) is int}}), flush=True)
         raise CapacityError('cgroup_v2_bounds_no_oom_and_twenty_percent_smoke_headroom_required')
-    return {**value, 'writable_layer_bytes': writable}
 
 
 def prove(source):

@@ -3942,3 +3942,21 @@ lint/security/whitespace checks passed. Owned deletion now pins immutable Docker
 IDs after label verification and verifies absence of that same ID. No production
 runtime behavior or resource limit was weakened; only the new harness boundary
 was corrected. A source-changing CI run, not an unchanged retry, must prove it.
+
+Second exact native result at `cad63a7`: main CI 40918113090 passed all four jobs.
+Candidate validation 40918113076 passed 2,747 tests/seven separate skips, completed
+the synthetic request and reached all five running fixture containers, but failed
+the combined cgroup guard; cleanup completed and no passed report was produced.
+A network-isolated, read-only local Linux probe independently returned page size
+4,096 and `memory.max=999997440` for the unchanged one-billion-byte Docker ceiling;
+its temporary container was verified absent. Kernel page accounting invalidates
+the verifier's exact byte-equality assumption. The correction accepts only the
+downward aligned limit, keeps zero swap/OOM/PID restrictions, and calculates the
+same 20% headroom from the true limit. Numeric failure diagnostics and isolated
+probe imports were added. Native values were not previously retained, so an
+additional genuine memory/headroom miss remains unexcluded until the next run.
+
+The updated capacity/process/fail-fast suite passed **116 tests**, with targeted
+lint/security/whitespace checks passing. Over-limit memory, extra swap, missing
+headroom, OOMs, wrong PID limits, invalid page size and incorrect rounding still
+fail. No real credential or provider write was used in this correction.

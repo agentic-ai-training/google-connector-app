@@ -178,3 +178,23 @@ def test_actual_resource_specific_docker_absence_formats(monkeypatch,kind,messag
 def test_daemon_failure_or_other_resource_absence_cannot_prove_our_cleanup(monkeypatch,message):
     monkeypatch.setattr(capacity,'command',lambda *args,**kwargs:subprocess.CompletedProcess(args,1,stdout=message.encode(),stderr=b''))
     with pytest.raises(capacity.CapacityError): capacity.inspect('network','owned-id',optional=True)
+
+
+@pytest.mark.parametrize('page', [4096,16384,65536])
+def test_real_kernel_page_alignment_does_not_raise_the_configured_byte_ceiling(page):
+    value = {'page_size':page,'current_bytes':100_000_000,'peak_bytes':200_000_000,
+        'limit_bytes':capacity.MEMORY_LIMIT//page*page,'swap_max_bytes':0,'pids_current':8,'pids_max':1000,
+        'oom':0,'oom_kill':0}
+    capacity.validate_cgroup(value)
+    assert value['limit_bytes'] <= capacity.MEMORY_LIMIT
+
+
+@pytest.mark.parametrize('fault', ['extra-memory','wrong-rounding','swap','headroom','oom','pids','page'])
+def test_alignment_correction_never_weakens_resource_or_headroom_guards(fault):
+    value = {'page_size':4096,'current_bytes':100_000_000,'peak_bytes':200_000_000,
+        'limit_bytes':999_997_440,'swap_max_bytes':0,'pids_current':8,'pids_max':1000,'oom':0,'oom_kill':0}
+    key,change = {'extra-memory':('limit_bytes',1_000_001_536),'wrong-rounding':('limit_bytes',999_993_344),
+        'swap':('swap_max_bytes',4096),'headroom':('peak_bytes',800_000_000),'oom':('oom',1),
+        'pids':('pids_max',2000),'page':('page_size',1234)}[fault]
+    value[key] = change
+    with pytest.raises(capacity.CapacityError): capacity.validate_cgroup(value)

@@ -36,6 +36,33 @@ not a reusable name; post-removal absence is checked against that same ID.
 The corrected focused suite passed 106 tests, plus targeted lint/security and
 whitespace checks; actual corrected native execution remains pending.
 
+## Second native result and page-accounting correction
+
+At `cad63a7`, main CI 40918113090 passed all four jobs. Candidate run 40918113076
+passed 2,747 tests/seven separately gated skips and reached all five running
+fixture containers, with no reported container OOM. The deterministic request and
+corrected cleanup completed. It failed the combined cgroup assertion before a
+successful capacity artifact; the failed run did not retain individual metric
+values, so a separate genuine headroom miss is not yet ruled out.
+
+An actual small Linux-VM probe, using an already cached public image, no network,
+read-only root and no database startup, established page size 4,096 and kernel
+`memory.max=999997440` for Docker's unchanged requested 1,000,000,000 bytes. Its
+temporary container's absence was verified. The kernel's
+[page-counter parser](https://github.com/torvalds/linux/blob/master/mm/page_counter.c)
+converts bytes to whole pages. Exact byte-equality in the harness was incorrect.
+It now requires the downward page-aligned limit for the observed valid page size;
+the Docker limit remains exactly one billion bytes, swap/OOM/PID rules remain,
+and the 20% margin is calculated from the actual aligned limit. No extra memory
+or weaker headroom is accepted. Future failures retain only whitelisted numeric
+measurements and role identifiers, not environment/log/body contents. Probe
+Python uses isolated imports; actual application code still runs normally.
+A fresh native run is required to establish all actual measurements and cleanup.
+The updated focused suite passed 116 tests plus targeted lint/security/whitespace
+checks. It rejects extra memory/swap, incorrect rounding, invalid page size,
+insufficient headroom, OOMs and wrong PID limits; those acceptance rules were not
+relaxed to mask a real capacity shortfall.
+
 ## What the job now does
 
 The same standard Ubuntu candidate-validation job builds the real `Dockerfile`,
