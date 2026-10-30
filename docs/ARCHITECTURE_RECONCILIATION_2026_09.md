@@ -1,5 +1,14 @@
 # September architecture reconciliation and implementation contract
 
+**30 October sidecar experiment prepared (native result pending):** Alloy retains
+v1.16.1 with a pinned multiarchitecture digest. A separate CPU-only Ollama capacity
+candidate verifies the official runtime archive and exact existing Nomic model
+blobs; it does not replace the current production/local model service. The manual,
+keyless native CI fixture tests actual filtered authenticated metric delivery and
+the current eight-by-6,000-character embedding batch under unchanged resource
+ceilings. Local contract tests are not a passed native result or rollout authority.
+See [experiment and evidence boundaries](RELEASE_CAPACITY_PROOF.md).
+
 **30 October native capacity result:** exact `d937ba3` passed both complete CI
 suites and the actual secret-free Linux/AMD64 image/constrained-runtime fixture.
 API/worker images are 864,291,138 bytes; candidate/builder 858,294,330. Measured

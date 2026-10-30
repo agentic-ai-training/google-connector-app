@@ -5,8 +5,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sidecar_capacity:
+        description: 'Run only the keyless Alloy/Ollama native capacity experiment'
+        required: false
+        default: false
+        type: boolean
 jobs:
   coding-runtime:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,6 +32,7 @@ jobs:
       - run: cargo test --locked
 
   backend:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,6 +126,7 @@ jobs:
           fi
 
   web:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -134,6 +143,7 @@ jobs:
       - run: npm run build
 
   flutter:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -148,3 +158,33 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug
+
+  sidecar-capacity:
+    if: github.event_name == 'workflow_dispatch' && inputs.sidecar_capacity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build exact public sidecar capacity candidates without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-alloy:test -f Dockerfile.alloy .
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-ollama:test -f Dockerfile.ollama-capacity .
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-sidecar-probe:test -f Dockerfile.sidecar-capacity-probe .
+      - name: Prove real filtered metrics and current embedding batch under exact limits
+        run: python -m scripts.verify_sidecar_capacity --source-commit "$GITHUB_SHA"
+      - name: Retain sanitized capacity measurements after owned cleanup
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-release-capacity
+          path: sidecar-capacity.json
+          if-no-files-found: error
+          retention-days: 7

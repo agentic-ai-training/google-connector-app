@@ -5367,3 +5367,41 @@ can have different rounding rules; do not generalize one byte comparison to ever
 kernel interface. Exact-source native CI at `d937ba3` then measured API peak
 137,342,976 bytes and completed the real synthetic durable request. That evidence
 does not predict a later unmeasured workload; see the [retained actual report](evidence/release-capacity-d937ba3.json).
+
+### Deep dictionary addition: public artifacts and representative sidecar probes
+
+**Content address versus mutable name.** A tag such as `latest` is a lookup name,
+not immutable evidence. The embedding capacity candidate pins the exact manifest
+SHA-256, then verifies the size/hash of every referenced blob before storing it.
+A digest proves byte identity relative to the approved digest, not that a model
+is semantically correct, benign, production-compatible or authorized for private
+data. Keep provenance, version, privacy and evaluation as separate gates.
+
+**Projection without model quantization.** The CPU-only image removes unneeded
+GPU runtime directories; it does not quantize/retrain the embedding weights,
+change `nomic-embed-text` or reinterpret 768-dimensional existing vectors. An
+inference-runtime version change still needs compatibility testing before rollout.
+Smaller image bytes do not imply lower model activation memory.
+
+**Safe streaming selection.** The artifact preparer streams an archive, selects
+only allowed CPU files, bounds counts/sizes and rejects unsafe paths and links.
+For B decompressed bytes and F entries, work is O(B + F); download and hashing
+are linear in artifact bytes. Streaming avoids holding the archive in Python
+memory but cannot make reading/decompressing it free. Retained disk includes
+selected files and verified model blobs, not all GPU payloads.
+
+**Representative envelope.** One 768-dimensional vector proves neither the
+application's eight-item batch nor production throughput. The new isolated probe
+therefore uses eight distinct 6,000-character inputs and disables API truncation.
+Measure peak memory/OOMs after it, keeping the same CPU/RAM ceiling and acceptance
+margin. Even this is one synthetic envelope, not exhaustive correctness or load
+proof. A measured failure calls for a resource-aware implementation correction,
+not quietly shrinking the request or raising the cap.
+
+**Positive and negative telemetry controls.** The synthetic scrape includes
+allowed metric families, a forbidden family and planted private-ID labels. The
+real Alloy pipeline must deliver the former and remove the latter. An HTTP 204
+alone proves none of this: the fixture decodes the bounded Snappy/protobuf payload
+and checks labels/jobs. Keep raw bodies and credentials out of the retained
+report. This is metrics-path evidence, not a claim about traces, logs or an
+actual Grafana Cloud account. See the [sidecar experiment contract](RELEASE_CAPACITY_PROOF.md).

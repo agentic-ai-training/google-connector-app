@@ -3980,3 +3980,23 @@ deployment/cost/placement, Ollama/Alloy, actual model/RAG/tool load, generated-a
 deployment, production backups/migrations, promotion journaling, security/load/
 restore, learning evidence or any other unfinished original requirement. No cloud
 service was started and no hosting or protected budget was changed.
+
+### 30 October — separate telemetry/embedding capacity fixture prepared
+
+- [x] Implement source-labelled, keyless, opt-in native sidecar experiment in
+  existing CI, without replacing any required PR job or candidate trust policy.
+- [x] Pin current Alloy v1.16.1 and verify actual metric-family filtering,
+  six private-label removals and authenticated remote-write through an isolated
+  synthetic sink. Add a separate CPU-only Ollama candidate with verified official
+  release and exact Nomic model blobs, preserving the current service and index.
+- [x] Add bounded artifact/archive/measurement/redaction/embedding regressions;
+  focused capacity/process/workflow suite: 143 passed, targeted lint/security pass.
+- [ ] Run this exact source natively, inspect actual image/cgroup/OOM/writable-layer
+  measurements and accept only genuine current-batch success plus owned cleanup.
+- [ ] Decide actual funded service placement and embedding-runtime compatibility
+  before any production switch; retain all original live rollout/evidence gates.
+
+The embedding probe uses all eight current 6,000-character inputs with truncation
+disabled and requires 768 finite nonzero dimensions. Neither the model family nor
+existing corpus is changed. No local large-image download, model call to a paid
+provider, cloud resource, production variable or protected budget was touched.

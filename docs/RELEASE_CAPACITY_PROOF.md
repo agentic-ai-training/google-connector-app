@@ -1,5 +1,9 @@
 # Native release image and constrained-runtime proof
 
+Latest accepted backend result: the four Python-role experiment below passed.
+The separate Alloy/Ollama experiment is implemented but its native result is
+still pending; neither result is permission to deploy or spend protected funds.
+
 29 October 2026 — mechanism added to the existing no-secret Linux candidate CI.
 Actual native results are pending; local contract tests are not cloud fit proof.
 The focused capacity/process/fail-fast suite passed 86 tests in 6.22s; targeted
@@ -101,6 +105,63 @@ load, live model/tool/RAG operation, coding generation, Ollama/Alloy placement,
 credits or the whole original goal. The remaining-proof section below still applies.
 
 ## What the job now does
+
+### Separate sidecar experiment (30 October; native execution pending)
+
+The existing `CI` workflow has an opt-in `sidecar_capacity` boolean for
+`workflow_dispatch`. Only that experiment runs when selected; ordinary PR/push
+validation retains all four required jobs. A manual capacity run is not trusted
+as a substitute for a candidate's pull-request CI evidence.
+
+```bash
+gh workflow run ci.yml --ref agent/non-groq-runtime-provider -f sidecar_capacity=true
+```
+
+The standard Linux runner builds source-labelled images and invokes
+`python -m scripts.verify_sidecar_capacity --source-commit "$GITHUB_SHA"`.
+No larger paid runner or cloud resource is selected. The job has read-only
+repository permission, no checked-out Git credential, no provider secrets and a
+25-minute deadline. It retains only a small seven-day JSON evidence artifact,
+after owned cleanup succeeds. Build-time public downloads are distinct from the
+runtime fixture's internal-only network.
+
+- Alloy remains **v1.16.1**, now pinned to its multiarchitecture index digest.
+  The exact current `monitoring/alloy/config.alloy` scrapes both synthetic API/
+  worker endpoints. A disposable authenticated remote-write sink decodes bounded
+  Snappy/protobuf records and verifies all three permitted metric families,
+  both jobs, the application label and removal of all six private-ID labels and
+  their deliberately planted synthetic values. No real Grafana credential or
+  external telemetry destination is used. This measures metrics only, not OTLP
+  trace/log delivery.
+- `Dockerfile.ollama-capacity` is a **separate CPU-only candidate**, not an edit
+  to the existing `docker-compose.yml` Ollama service. The official v0.40.13
+  AMD64 release has a fixed SHA-256 and size. A bounded, exclusive public fetch
+  verifies it; streaming extraction selects only `bin/ollama` and the CPU root
+  libraries, rejects traversal/devices/duplicate paths/unsafe links, and omits GPU
+  subdirectories. No fetched shell installer is executed.
+- The exact existing `nomic-embed-text` manifest is pinned to
+  `0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f`;
+  every public blob's hash and byte count is verified. The model is baked into
+  the candidate, so isolated runtime needs neither internet nor a model volume.
+  Cloud inference is disabled, parallelism is one and only one model may load.
+- A real `/api/embed` probe requires 768 finite, nonzero dimensions. It then
+  tests the **current application batch envelope: eight distinct 6,000-character
+  inputs, with API truncation disabled**, not a smaller hello-world substitute.
+  This is a synthetic resource probe, not a semantic-quality/cross-runtime
+  compatibility test or proof of all languages/documents/long-context cases.
+- Both services retain the unchanged 1,000,000,000-byte RAM/no-swap/2-CPU/1,000-PID
+  constraints, image-size and writable-layer limits, zero-OOM checks and 20%
+  measured smoke margin. The fixture reuses exact ownership/immutable-ID cleanup
+  from the backend experiment. It publishes no ports and mounts no host data.
+
+The local focused suite passed **143 tests**, with targeted flake8/Bandit and
+whitespace checks. These contract tests do not prove native image build, actual
+Snappy delivery or Ollama batch fit. A real native failure must be diagnosed;
+limits, input size and headroom must not be quietly weakened to obtain green CI.
+Production placement, a measured cost/credit lifetime, embedding compatibility,
+rollout authorization and all other original requirements remain open.
+
+### Backend experiment
 
 The same standard Ubuntu candidate-validation job builds the real `Dockerfile`,
 worker, candidate and builder images, reusing their common Docker layers. Each is
