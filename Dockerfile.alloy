@@ -1,4 +1,4 @@
-FROM grafana/alloy:v1.16.1
+FROM grafana/alloy:v1.16.1@sha256:51aeb9d829239345070619dad3edd6873186f913c84f45b365b74574fcb38ec0
 COPY monitoring/alloy/config.alloy /etc/alloy/config.alloy
 EXPOSE 12345
 ENTRYPOINT ["/bin/alloy"]

@@ -288,7 +288,9 @@ fn execute_planner_loop(
 
             if name == "submit_plan" {
                 validate_submitted_plan(&arguments)?;
-                let plan_bytes = serde_json::to_vec_pretty(&arguments)
+                let mut approved_plan = arguments.clone();
+                approved_plan["origin"] = json!("cloud_model");
+                let plan_bytes = serde_json::to_vec_pretty(&approved_plan)
                     .map_err(|error| format!("cannot serialize plan: {error}"))?;
                 atomic_private_write(plan_path, &plan_bytes)?;
                 checkpoint.events.push(json!({
@@ -365,6 +367,10 @@ fn broker_request(name: &str, arguments: &Value) -> Result<Value, String> {
         "inventory",
         "project_summary",
         "find_symbols",
+        "language_inventory",
+        "dependency_inventory",
+        "complexity_inventory",
+        "conversion_contract",
         "search_literal",
         "read_lines",
         "hash_file",
@@ -391,6 +397,7 @@ fn invoke_readonly_broker(
         .args(["broker-read", "--workspace"])
         .arg(workspace)
         .env_clear()
+        .envs(crate::isolation_environment())
         .env(
             "PATH",
             std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string()),
@@ -432,6 +439,10 @@ fn validate_submitted_plan(plan: &Value) -> Result<(), String> {
             ToolRequest::Inventory { .. }
             | ToolRequest::ProjectSummary
             | ToolRequest::FindSymbols { .. }
+            | ToolRequest::LanguageInventory { .. }
+            | ToolRequest::DependencyInventory { .. }
+            | ToolRequest::ComplexityInventory { .. }
+            | ToolRequest::ConversionContract { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. } => {}
@@ -466,6 +477,22 @@ fn tool_schemas() -> Vec<Value> {
         function_tool(
             "find_symbols",
             json!({"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["query","paths"]}),
+        ),
+        function_tool(
+            "language_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "dependency_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "complexity_inventory",
+            json!({"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","items":{"type":"string"}}},"required":["paths"]}),
+        ),
+        function_tool(
+            "conversion_contract",
+            json!({"type":"object","additionalProperties":false,"properties":{"source_path":{"type":"string"},"target_language":{"type":"string"}},"required":["source_path","target_language"]}),
         ),
         function_tool(
             "search_literal",
@@ -541,7 +568,7 @@ fn read_checkpoint(path: &Path) -> Result<LocalAgentCheckpoint, String> {
         .map_err(|error| format!("local checkpoint violates its schema: {error}"))
 }
 
-fn validate_run_id(run_id: &str) -> Result<(), String> {
+pub fn validate_run_id(run_id: &str) -> Result<(), String> {
     if run_id.len() != 26
         || !run_id.starts_with("local-")
         || !run_id[6..].bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -633,5 +660,35 @@ mod tests {
         );
         assert!(broker_request("apply_exact_patch", &json!({})).is_err());
         assert!(broker_request("run_validation", &json!({})).is_err());
+    }
+
+    #[test]
+    fn model_registry_exposes_analysis_without_new_authority() {
+        for (name, arguments) in [
+            ("language_inventory", json!({"paths":["app"]})),
+            ("dependency_inventory", json!({"paths":["app"]})),
+            ("complexity_inventory", json!({"paths":["app"]})),
+            (
+                "conversion_contract",
+                json!({"source_path":"app/main.py","target_language":"rust"}),
+            ),
+        ] {
+            assert!(broker_request(name, &arguments).is_ok(), "missing {name}");
+        }
+        let names = tool_schemas()
+            .into_iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        for expected in [
+            "language_inventory",
+            "dependency_inventory",
+            "complexity_inventory",
+            "conversion_contract",
+        ] {
+            assert!(names.contains(&expected.to_string()), "missing {expected}");
+        }
+        assert!(!names.contains(&"shell".to_string()));
+        assert!(!names.contains(&"execute_sql".to_string()));
+        assert!(!names.contains(&"deploy".to_string()));
     }
 }

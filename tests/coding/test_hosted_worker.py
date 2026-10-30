@@ -1,6 +1,5 @@
 import io
 import json
-import subprocess
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,7 +47,15 @@ def test_hosted_plan_denies_infrastructure_and_migration_edits():
     })
 
 
-def test_hosted_planner_forwards_only_dedicated_key_to_local_runner(
+@pytest.mark.parametrize('path',['./Dockerfile','.github/../app/value.py','/tmp/value.py','app//value.py',
+    'app/./value.py','app\\value.py','.improvement-proposals/spoof.candidate.json','../app/value.py'])
+def test_hosted_write_policy_rejects_path_aliases_and_governance_spoofing(path):
+    with pytest.raises(worker.CodingWorkerError):
+        worker._validate_hosted_plan({'actions':[{'tool':'create_file','path':path,'content':'synthetic'}]})
+
+
+@pytest.mark.asyncio
+async def test_hosted_planner_forwards_only_dedicated_key_to_local_runner(
     tmp_path, monkeypatch,
 ):
     binary = tmp_path / "gca-local"
@@ -57,31 +64,31 @@ def test_hosted_planner_forwards_only_dedicated_key_to_local_runner(
     settings = SimpleNamespace(coding_local_runner_binary=str(binary))
     monkeypatch.setattr(worker, "get_settings", lambda: settings)
 
-    def fake_run(arguments, **kwargs):
+    async def fake_run(arguments, **kwargs):
         assert arguments[0] == str(binary)
+        assert kwargs["env"]["GCA_REQUIRE_ISOLATED_VALIDATION"] == "1"
         assert kwargs["env"]["CODING_GROQ_API_KEY"] == "dedicated"
         assert "GROQ_API_KEY" not in kwargs["env"]
         assert "DATABASE_URL" not in kwargs["env"]
-        return subprocess.CompletedProcess(
-            arguments, 0, json.dumps({"ok": True, "status": "planned"}), ""
-        )
+        assert kwargs['cwd'] == kwargs['env']['HOME']
+        return 0, json.dumps({"ok": True, "status": "planned"}).encode()
 
-    monkeypatch.setattr(worker.subprocess, "run", fake_run)
-    assert worker._run_local(["doctor"], coding_key="dedicated")["ok"] is True
+    monkeypatch.setattr(worker, "run_owned", fake_run)
+    assert (await worker._run_local(["plan-request"], coding_key="dedicated"))["ok"] is True
 
 
-def test_hosted_execution_child_receives_no_model_key(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_hosted_execution_child_receives_no_model_key(tmp_path, monkeypatch):
     binary = tmp_path / "gca-local"
     binary.write_text("placeholder")
     binary.chmod(0o755)
     settings = SimpleNamespace(coding_local_runner_binary=str(binary))
     monkeypatch.setattr(worker, "get_settings", lambda: settings)
 
-    def fake_run(arguments, **kwargs):
+    async def fake_run(arguments, **kwargs):
         assert "CODING_GROQ_API_KEY" not in kwargs["env"]
-        return subprocess.CompletedProcess(
-            arguments, 0, json.dumps({"ok": True, "status": "applied"}), ""
-        )
+        assert kwargs["env"]["GCA_REQUIRE_ISOLATED_VALIDATION"] == "1"
+        return 0, json.dumps({"ok": True, "status": "applied"}).encode()
 
-    monkeypatch.setattr(worker.subprocess, "run", fake_run)
-    assert worker._run_local(["execute-plan"])["status"] == "applied"
+    monkeypatch.setattr(worker, "run_owned", fake_run)
+    assert (await worker._run_local(["execute-plan"]))["status"] == "applied"

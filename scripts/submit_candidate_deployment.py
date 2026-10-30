@@ -12,7 +12,10 @@ with open("candidate-domain.json", encoding="utf-8") as handle:
     domain = json.load(handle)
 with open("candidate-frontend.json", encoding="utf-8") as handle:
     frontend = json.load(handle)
+with open('candidate-deployment-claim.json', encoding='utf-8') as handle:
+    claim = json.load(handle)
 payload = {
+    'intent_id': claim['intent_id'], 'intent_nonce': claim['nonce'],
     "candidate_version": os.environ["CANDIDATE_VERSION"],
     "deployment_id": deployment["id"],
     "service_name": os.environ["RAILWAY_CANDIDATE_WORKER_SERVICE"],

@@ -217,13 +217,19 @@ async def resolve_contextual_request(
 async def append_event(pool, run_id, user_id, event_type, *, step_id=None,
                        phase=None, message=None, payload=None):
     async with pool.acquire() as conn:
-        return await conn.fetchval(
-            """INSERT INTO agent_run_events
-               (run_id,step_id,user_id,event_type,phase,message,payload)
-               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id""",
-            run_id, step_id, user_id, event_type, phase, message,
-            _json(payload or {}),
-        )
+        return await append_event_conn(conn, run_id, user_id, event_type, step_id=step_id,
+                                       phase=phase, message=message, payload=payload)
+
+
+async def append_event_conn(conn, run_id, user_id, event_type, *, step_id=None,
+                            phase=None, message=None, payload=None):
+    """Same event contract, participating in an existing business transaction."""
+    return await conn.fetchval(
+        """INSERT INTO agent_run_events
+           (run_id,step_id,user_id,event_type,phase,message,payload)
+           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id""",
+        run_id, step_id, user_id, event_type, phase, message, _json(payload or {}),
+    )
 
 
 async def create_run(pool, user_id, message, session_id, idempotency_key=None,
@@ -357,8 +363,8 @@ async def create_run(pool, user_id, message, session_id, idempotency_key=None,
                    FROM agent_model_calls WHERE created_at>=date_trunc('day',now())"""
             )
             estimated = plan.estimated_max_tokens
-            remaining_after = settings.groq_daily_token_budget - used_tokens - estimated
-            if policy["write"] and remaining_after < settings.groq_quality_reserve_tokens:
+            remaining_after = settings.runtime_daily_token_budget - used_tokens - estimated
+            if policy["write"] and remaining_after < settings.runtime_quality_reserve_tokens:
                 raise RunLimitExceeded(
                     "Quality-model token reserve is too low for a mutating workflow; "
                     "retry after quota resets or increase the configured budget"
@@ -552,11 +558,16 @@ async def clarify_run(pool, run_id, user_id, answers):
             """UPDATE agent_runs SET objective=$1,status=$2,current_phase='planned',
                plan=$3::jsonb,risk_level=$4,requires_approval=$5,
                clarification_questions='[]'::jsonb,clarification_answers=$6::jsonb,
-               executor_version=CASE WHEN canary_id IS NULL THEN $9 ELSE executor_version END,
+               executor_version=CASE WHEN canary_id IS NULL
+                 AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
+                 THEN $9 ELSE executor_version END,
                assignment_reason=CASE WHEN canary_id IS NULL
+                 AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
                     THEN 'clarification completed on current control deployment'
                     ELSE assignment_reason END,
-               assigned_at=CASE WHEN canary_id IS NULL THEN now() ELSE assigned_at END,
+               assigned_at=CASE WHEN canary_id IS NULL
+                 AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
+                 THEN now() ELSE assigned_at END,
                planning_diagnostics=COALESCE(planning_diagnostics,'{}'::jsonb) ||
                    jsonb_build_object('request_analysis',$7::jsonb)
                WHERE id=$8""",
@@ -786,11 +797,14 @@ async def decide_run(pool, run_id, user_id, approved, digest, note=None):
                 """UPDATE agent_runs SET status=$1,current_phase=$2,
                    cancellation_source=CASE WHEN $1='cancelled' THEN 'approval_rejected' END,
                    executor_version=CASE WHEN $1='queued' AND canary_id IS NULL
+                       AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
                        THEN $5 ELSE executor_version END,
                    assignment_reason=CASE WHEN $1='queued' AND canary_id IS NULL
+                       AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
                        THEN 'approval granted on current control deployment'
                        ELSE assignment_reason END,
                    assigned_at=CASE WHEN $1='queued' AND canary_id IS NULL
+                       AND COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='postgres'
                        THEN now() ELSE assigned_at END
                    WHERE id=$3 AND user_id=$4""",
                 next_status, "queued" if approved else "cancelled", run_id, user_id,

@@ -28,3 +28,7 @@ class CodingRunApproval(BaseModel):
 
 class CodingRunCancel(BaseModel):
     reason: str = Field(default="user_requested", min_length=1, max_length=500)
+
+
+class CodingPublicationReconcile(BaseModel):
+    action_hash: str = Field(pattern=r"^[0-9a-f]{64}$")

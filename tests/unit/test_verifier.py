@@ -394,6 +394,19 @@ def test_reconciliation_marks_verified_write_complete(monkeypatch):
     assert decision.state == "already_completed"
 
 
+def test_reconciliation_does_not_complete_a_blank_created_sheet_without_population(monkeypatch):
+    async def created(*args, **kwargs):
+        return VerificationOutcome(True, 'created only', evidence={'match': True})
+    monkeypatch.setattr('app.runs.reconciliation.verify_executions_detailed', created)
+    decision = asyncio.run(reconcile_failed_step({'id': 'run'}, {
+        'id': 'step', 'service': 'sheets', 'operation': 'create_and_write', 'read_only': False,
+        'input_data': {'allowed_tools': ['create_google_sheet', 'write_google_sheet']},
+        'output_data': {'tool_executions': [{'tool': 'create_google_sheet', 'arguments': {},
+            'result': {'spreadsheetId': 'empty-sheet'}}]},
+    }))
+    assert decision.state == 'manual_required' and decision.reason_code == 'write_contract_incomplete'
+
+
 def test_uncertain_sheet_append_requires_manual_reconciliation(monkeypatch):
     async def mismatch(*args, **kwargs):
         return VerificationOutcome(

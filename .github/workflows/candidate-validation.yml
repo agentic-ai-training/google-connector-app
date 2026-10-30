@@ -2,16 +2,6 @@ name: Governed candidate validation
 on:
   pull_request:
     branches: [main]
-    paths:
-      - '.improvement-proposals/**'
-      - 'app/**'
-      - 'tests/**'
-      - 'knowledge/**'
-      - 'config/**'
-      - 'docs/**'
-      - 'monitoring/**'
-      - 'web/**'
-      - 'mobile/**'
 
 permissions:
   contents: read
@@ -19,6 +9,7 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -32,21 +23,30 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - run: ': > candidate-tests.log'
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt bandit pip-audit
+      - run: pip install -r requirements-orchestration.txt
       - name: Validate candidate with no production credentials
+        shell: bash
         env:
+          RUN_INTEGRATION_TESTS: '1'
           ALLOW_DEV_AUTH: 'true'
           JWT_SECRET_KEY: automated-test-only-secret-at-least-32-bytes
           DATABASE_URL: postgresql://agent_user:agent_pass_2024@localhost:5432/agent_db
           ASYNC_DATABASE_URL: postgresql+asyncpg://agent_user:agent_pass_2024@localhost:5432/agent_db
+          COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
           {
             python -m compileall -q app scripts
             alembic upgrade head
-            pytest tests/ -q
+            pytest tests/ -q -W error::pytest.PytestUnraisableExceptionWarning
             python scripts/run_golden_evals.py
             python scripts/run_chunking_evals.py
             python scripts/run_workflow_replays.py
@@ -58,24 +58,33 @@ jobs:
             python -m flake8 app scripts tests migrations
             bandit -q -r app scripts -ll
             pip-audit -r requirements.txt --progress-spinner off
-            alembic downgrade 012
-            alembic upgrade head
-            test "$(alembic current | tail -1)" = "015 (head)"
-            docker build -f Dockerfile.worker -t candidate-worker:test .
-            docker build -f Dockerfile.candidate -t candidate-api:test .
-            docker build -f Dockerfile.builder -t candidate-builder:test .
+            python -m scripts.verify_cloud_migrations_local
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile -t control-api:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.worker -t candidate-worker:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.candidate -t candidate-api:test .
+            docker build --label "org.opencontainers.image.revision=$CANDIDATE_HEAD_SHA" -f Dockerfile.builder -t candidate-builder:test .
+            python -m scripts.verify_release_capacity --source-commit "$CANDIDATE_HEAD_SHA"
           } 2>&1 | tee candidate-tests.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: candidate-backend-log
           path: candidate-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-release-capacity
+          path: release-capacity.json
+          retention-days: 7
 
   web:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: web}}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - run: ': > candidate-web.log'
       - uses: actions/setup-node@v6
         with:
@@ -83,7 +92,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - run: |
+      - name: Validate candidate web
+        shell: bash
+        run: |
+          set -euo pipefail
           {
             npm run lint
             npm run build
@@ -100,11 +112,17 @@ jobs:
     defaults: {run: {working-directory: mobile}}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - run: ': > candidate-flutter.log'
       - uses: subosito/flutter-action@v2
         with: {channel: stable, cache: true}
       - run: flutter pub get
-      - run: |
+      - name: Validate candidate mobile
+        shell: bash
+        run: |
+          set -euo pipefail
           {
             flutter analyze
             flutter test
@@ -116,66 +134,25 @@ jobs:
           name: candidate-flutter-log
           path: mobile/candidate-flutter.log
 
-  remediate-failure:
-    needs: [backend, web, flutter]
-    if: failure() && github.event.pull_request.head.repo.full_name == github.repository
+  coding-runtime:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    defaults:
+      run:
+        working-directory: coding_runtime
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: {python-version: '3.12'}
-      - run: pip install 'httpx==0.28.1'
-      - uses: actions/download-artifact@v4
         with:
-          pattern: candidate-*-log
-          path: candidate-failure-logs
-          merge-multiple: true
-      - name: Queue bounded remediation from sanitized CI evidence
-        env:
-          CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
-          CANDIDATE_CI_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_CI_ATTESTATION_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          RUN_ID: ${{ github.run_id }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-          BACKEND_RESULT: ${{ needs.backend.result }}
-          WEB_RESULT: ${{ needs.web.result }}
-          FLUTTER_RESULT: ${{ needs.flutter.result }}
-        run: python scripts/submit_candidate_validation_failure.py
-
-  attest:
-    needs: [backend, web, flutter]
-    if: success() && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with: {python-version: '3.12'}
-      - run: pip install 'httpx==0.28.1'
-      - uses: actions/download-artifact@v4
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: candidate-backend-log
-      - name: Detect a governed candidate manifest
-        id: candidate
+          toolchain: '1.98.0'
+          components: rustfmt, clippy
+      - name: Validate candidate Rust broker
         run: |
-          count="$(find .improvement-proposals -maxdepth 1 -type f -name '*.candidate.json' 2>/dev/null | wc -l | tr -d ' ')"
-          test "$count" -le 1
-          if test "$count" = 1; then
-            echo 'present=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'present=false' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Submit trusted validation attestation only after every candidate gate
-        if: steps.candidate.outputs.present == 'true'
-        env:
-          CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
-          CANDIDATE_CI_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_CI_ATTESTATION_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          RUN_ID: ${{ github.run_id }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python scripts/submit_candidate_attestation.py
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+  # Reporting runs separately from the trusted default branch after completion.
+  # No candidate checkout/job receives a callback, provider or production secret.

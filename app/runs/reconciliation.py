@@ -7,12 +7,13 @@ from app.runs.verifier import verify_executions_detailed
 from app.tools.contracts import (
     WRITE_TOOLS,
     attempted_required_tools,
+    contract_satisfied,
     write_contract_for,
 )
 
 
 ReconciliationState = Literal[
-    "safe_to_retry", "already_completed", "manual_required",
+    "safe_to_retry", "already_completed", "manual_required", "continue_verified_prefix",
 ]
 
 
@@ -56,6 +57,8 @@ async def reconcile_failed_step(
         "failure_category": step.get("error_category") or run.get("error_category"),
         "artifact_count": len(artifacts or []),
     }
+    if step.get('receipt_write_uncertain'):
+        return ReconciliationDecision('manual_required', 'tool_receipt_write_outcome_uncertain', None, evidence)
     external_configuration_error = str(step.get("error_message") or "").casefold()
     if step.get("service") == "chat" and any(marker in external_configuration_error for marker in (
         "chat api configuration is incomplete",
@@ -115,6 +118,18 @@ async def reconcile_failed_step(
         executions, service=step.get("service"), operation=step.get("operation"),
     )
     evidence["verification"] = outcome.evidence
+    if outcome.passed and not contract_satisfied(contract, executions):
+        from app.runs.prefix_continuation import ordered_prefix
+        # Only fresh private invocation evidence can support continuation. A
+        # legacy partial list or arbitrary successful prose cannot grant it.
+        if step.get('receipt_source_digest') and ordered_prefix(step, executions):
+            names = {item['tool'] for item in executions}
+            unaccounted = any(item.get('tool_name') in WRITE_TOOLS and item.get('tool_name') not in names
+                for item in step.get('historical_tool_attempts') or [])
+            if not unaccounted:
+                return ReconciliationDecision('continue_verified_prefix', 'verified_ordered_prefix', step_id,
+                    {**evidence, 'prefix_length': len(executions), 'automatic_retry': False})
+        return ReconciliationDecision('manual_required', 'write_contract_incomplete', None, evidence)
     if outcome.passed:
         return ReconciliationDecision(
             "already_completed", "postconditions_already_satisfied", step_id, evidence,

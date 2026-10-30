@@ -1,4 +1,5 @@
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -143,6 +144,8 @@ class CandidateValidationFailure(BaseModel):
 
 
 class CandidateDeploymentAttestation(BaseModel):
+    intent_id: UUID | None = None
+    intent_nonce: str | None = Field(default=None, min_length=40, max_length=100, repr=False)
     candidate_version: str = Field(pattern=r"^[0-9a-f]{40}$")
     deployment_id: str = Field(min_length=1, max_length=300)
     service_name: str = Field(min_length=1, max_length=200)

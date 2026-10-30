@@ -1,6 +1,14 @@
 # Google Workspace AI Agent — Complete Project Specification
 > For Codex: Execute every epic, story, and task in order. Do not skip steps. Do not assume anything is already done unless explicitly marked DONE. After every sprint, run verification commands and confirm output before proceeding.
 
+> **Current architecture amendment (2026-08-22):** This document preserves the original
+> build specification as historical acceptance context. The governed upgrade plan in
+> `project_progress_upgrade.md` is authoritative for the current model boundary: ordinary
+> Workspace/composition and RAG evaluation use a distinct Gemini `RUNTIME_API_KEY`; Groq
+> is restricted to the isolated coding/candidate plane through `CODING_GROQ_API_KEY`.
+> Ollama `nomic-embed-text` remains the embedding model, so this inference-provider change
+> does not alter pgvector dimensions or require re-indexing.
+
 ---
 
 ## Project Context
@@ -2066,6 +2074,12 @@ boundaries.
 Separate Rust brokers expose only bounded process names (never command arguments), workspace
 log tails, migration inventories, schema-only PostgreSQL metadata in a read-only transaction,
 and non-mutating Compose/image inspection. No arbitrary terminal text or SQL is registered.
+The repository broker additionally exposes extension-grounded language counts, bounded
+lexical import/dependency edges, bounded lexical control-flow/declaration counts, and a
+hash-bound language-conversion contract. These outputs explicitly deny complete-static-
+graph, Big-O/cyclomatic-proof, and semantic-equivalence status; they localize the exact
+source and tests that must be inspected and verified instead of turning heuristics into
+success claims.
 The semantic cache policy is executable: immutable source and validation evidence may be
 content-addressed; repository/source/schema observations use version-specific invalidation;
 process/log/deployment state expires within seconds; secrets, raw private content, approvals,

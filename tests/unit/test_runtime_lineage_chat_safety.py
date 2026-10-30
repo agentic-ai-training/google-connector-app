@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -819,7 +820,7 @@ async def test_chat_contract_binds_trusted_recipient_and_resolved_space(monkeypa
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
 
     result = await make_service_node("chat")({
-        "message": "send hello", "model_to_use": "groq_fast",
+        "message": "send hello", "model_to_use": "runtime_fast",
         "services": ["chat"],
         "allowed_tools": ["resolve_chat_destination", "send_chat_message"],
         "tool_arguments": {"destination": "approved@example.com"},
@@ -875,7 +876,7 @@ async def test_completed_write_contract_does_not_require_post_tool_model_call(
 
     result = await make_service_node("calendar")({
         "message": "create a meeting",
-        "model_to_use": "groq_fast",
+        "model_to_use": "runtime_fast",
         "services": ["calendar"],
         "allowed_tools": ["create_calendar_event"],
         "requires_write": True,
@@ -942,7 +943,7 @@ async def test_ordered_sheet_calls_bind_created_id_before_population(monkeypatch
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
     result = await make_service_node("sheets")({
-        "message": "create and populate", "model_to_use": "groq_fast",
+        "message": "create and populate", "model_to_use": "runtime_fast",
         "services": ["sheets"],
         "allowed_tools": ["create_google_sheet", "write_google_sheet"],
         "requires_write": True, "operation": "create_and_write",
@@ -996,7 +997,7 @@ async def test_partial_write_failure_preserves_successful_artifact_evidence(monk
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: _LLM())
     result = await make_service_node("sheets")({
-        "message": "create and populate", "model_to_use": "groq_fast",
+        "message": "create and populate", "model_to_use": "runtime_fast",
         "services": ["sheets"],
         "allowed_tools": ["create_google_sheet", "write_google_sheet"],
         "requires_write": True, "operation": "create_and_write",
@@ -1320,10 +1321,18 @@ async def test_verified_failed_sibling_is_reconciled_without_retry(monkeypatch):
     async def event(*args, **kwargs):
         events.append((args, kwargs))
 
+    @asynccontextmanager
+    async def commit(pool, run):
+        # This unit test isolates readback routing. Real ownership/transaction
+        # fencing is exercised against PostgreSQL in test_tool_admission.py.
+        async with pool.acquire() as conn:
+            yield conn
+
     monkeypatch.setattr(
         "app.runs.worker.reconcile_failed_step", reconciled,
     )
-    monkeypatch.setattr("app.runs.worker.append_event", event)
+    monkeypatch.setattr("app.runs.worker.append_event_conn", event)
+    monkeypatch.setattr("app.runs.worker.fenced_postgres_commit", commit)
 
     count = await _reconcile_verified_failed_siblings(
         _Pool(), {"id": "run-1", "user_id": "user-1"},

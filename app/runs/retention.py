@@ -4,6 +4,8 @@ from contextlib import suppress
 from datetime import datetime, timezone
 
 from app.config.settings import get_settings
+from app.runs.event_outbox import prune_published_in_transaction
+from app.runs.workflow_projection import prune_diagnostics
 
 
 async def apply_retention(pool) -> dict[str, int]:
@@ -15,6 +17,7 @@ async def apply_retention(pool) -> dict[str, int]:
         ("expired_run_events", "agent_run_events", "DELETE FROM agent_run_events WHERE created_at < now()-($1 * interval '1 day')", settings.workflow_retention_days),
         ("raw_embedding_payloads", "embedding_jobs", "DELETE FROM embedding_jobs WHERE completed_at IS NOT NULL AND completed_at < now()-($1 * interval '1 day')", settings.raw_telemetry_retention_days),
         ("expired_private_tool_results", "private_tool_results", "DELETE FROM private_tool_results WHERE expires_at < now()", 0),
+        ("expired_validation_results", "coding_validation_claims", "UPDATE coding_validation_claims c SET encrypted_result=NULL WHERE encrypted_result IS NOT NULL AND (run_id IS NULL OR result_expires_at<=now() OR EXISTS(SELECT 1 FROM coding_runs r WHERE r.id=c.run_id AND r.user_id=c.user_id AND r.deleted_at IS NOT NULL))", 0),
         ("expired_rag", "rag_chunks", "UPDATE rag_chunks SET deleted_at=now() WHERE deleted_at IS NULL AND indexed_at < now()-($1 * interval '1 day')", settings.workflow_retention_days),
         ("expired_runs", "agent_runs", "UPDATE agent_runs SET deleted_at=now() WHERE deleted_at IS NULL AND retention_until < now() AND status NOT IN ('queued','running','awaiting_approval')", 0),
         ("expired_coding_approvals", "coding_runs", "UPDATE coding_runs SET status='blocked',current_phase='approval_expired',approval_status='expired',updated_at=now() WHERE status='awaiting_approval' AND approval_expires_at < now()", 0),
@@ -35,6 +38,35 @@ async def apply_retention(pool) -> dict[str, int]:
                    VALUES($1,$2,$3,$4)""",
                 policy, table, affected, sql.split(" ", 1)[0].lower(),
             )
+        # Schema-gated for rolling compatibility with pre-023 installations.
+        if await conn.fetchval("SELECT to_regclass('coding_publication_receipts')") is not None:
+            status = await conn.execute('''UPDATE coding_publication_receipts p SET encrypted_manifest=NULL,encrypted_result=NULL
+              FROM coding_runs r WHERE r.id=p.run_id AND (p.encrypted_manifest IS NOT NULL OR p.encrypted_result IS NOT NULL)
+                AND (p.expires_at<=clock_timestamp() OR r.deleted_at IS NOT NULL)''')
+            removed = int(status.rsplit(' ', 1)[-1])
+            report['expired_coding_publication_payloads'] = removed
+            await conn.execute('''INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+              VALUES('expired_coding_publication_payloads','coding_publication_receipts',$1,'update')''', removed)
+        if await conn.fetchval("SELECT to_regclass('agent_tool_receipts')") is not None:
+            status = await conn.execute('''UPDATE agent_tool_receipts t SET encrypted_payload=NULL
+              FROM agent_runs r WHERE r.id=t.run_id AND t.encrypted_payload IS NOT NULL
+                AND (t.expires_at<=clock_timestamp() OR r.deleted_at IS NOT NULL)''')
+            removed = int(status.rsplit(' ', 1)[-1])
+            report['expired_tool_receipt_payloads'] = removed
+            await conn.execute('''INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+              VALUES('expired_tool_receipt_payloads','agent_tool_receipts',$1,'update')''', removed)
+        if await conn.fetchval("SELECT to_regclass('workflow_event_envelopes')") is not None:
+            removed = await prune_published_in_transaction(
+                conn, retention_days=min(90, settings.workflow_retention_days),
+            )
+            report['published_workflow_delivery'] = removed
+            await conn.execute("""INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+                VALUES('published_workflow_delivery','workflow_event_envelopes',$1,'delete')""", removed)
+        if await conn.fetchval("SELECT to_regclass('workflow_event_revocations')") is not None:
+            for policy, removed in (await prune_diagnostics(conn)).items():
+                report[policy] = removed
+                await conn.execute("""INSERT INTO retention_audit(policy_name,table_name,affected_rows,action)
+                    VALUES($1,$2,$3,'delete')""", policy, policy.replace('workflow_revocations', 'workflow_event_revocations'), removed)
     return report
 
 
@@ -153,6 +185,7 @@ async def export_user_data(pool, user_id: str) -> dict:
         "google_connected": google_connected,
         "oauth_credentials_excluded": True,
         "private_tool_results_excluded": True,
+        "private_tool_receipts_excluded": True,
         "runs": runs, "steps": steps, "events": events, "artifacts": artifacts,
         "conversations": conversations, "feedback": feedback,
         "rag_chunks_without_embeddings": rag, "learning_trajectories": trajectories,

@@ -2185,8 +2185,10 @@ not from algorithmic complexity.
 
 A non-Git workspace is a source directory without commit, branch or index metadata. Safety
 cannot rely on `git diff`, reset or commit history. The local runner therefore uses file
-hashes as identity, a copied sandbox as isolation, a declared changed-file set as the write
-manifest, and atomic replacement as the commit primitive.
+hashes as identity, a copied workspace to protect original files, a declared changed-file
+set as the write manifest, and atomic replacement as the commit primitive. A copied
+directory is not OS isolation: generated validation needs a separate execution boundary
+such as the [managed gVisor launcher](ISOLATED_VALIDATION.md).
 
 For `k` changed files, verification costs the sum of their byte lengths. The runner retains
 all preimages and, if replacement `i` fails, restores replacements `0..i-1` in reverse order.
@@ -2201,8 +2203,10 @@ guarantee where available.
 Authority separation assigns observation, proposal, validation and mutation to different
 capability boundaries. The Groq planner can select only read tools and submit a structured
 plan. An environment-cleared child owns read-only repository access. A different keyless
-child builds the sandbox, validates, and produces an approval token. Only an explicitly
-approved invocation may copy validated bytes into the authoritative workspace.
+child prepares the temporary copy, requests isolated validation, and produces an approval
+token. Only an explicitly approved invocation may copy validated bytes into the
+authoritative workspace. Local compatibility validation is labelled `host_not_isolated`;
+clearing environment variables alone does not contain hostile code.
 
 This is stronger than asking one agent to “be careful”: no prompt can manufacture a file
 descriptor, shell, provider credential or approval capability that the process does not
@@ -2350,3 +2354,3054 @@ A specialist broker owns one narrow authority domain—repository, process/log, 
 deployment. Its result is a typed observation with bounded size and provenance. A specialist
 is not necessarily another LLM; deterministic specialists are cheaper, more testable, and
 cannot hallucinate an operation that their enum does not contain.
+
+<a id="dictionary-provider-boundary"></a>
+## Model-provider boundary
+
+A model-provider boundary is an adapter plus a credential and policy boundary that keeps
+application reasoning independent from a particular hosted model. In this project,
+ordinary Workspace/composition calls pass through the Gemini runtime adapter, while the
+isolated coding/candidate planner alone may use Groq. A legacy route label is data, not
+authority: interpreting `groq_fast` from an old checkpoint maps it to the current fast
+runtime tier and never recreates a Groq client.
+
+From a DSA perspective, provider selection is a total function over a small enum rather
+than arbitrary string dispatch:
+
+```python
+def runtime_model(tier: str, fallback: bool) -> str:
+    table = {
+        ("fast", False): "gemini-2.5-flash",
+        ("reasoning", False): "gemini-2.5-pro",
+        ("fast", True): "gemini-2.5-flash-lite",
+        ("reasoning", True): "gemini-2.5-flash-lite",
+    }
+    return table[(tier, fallback)]
+```
+
+Lookup is average `O(1)`. More importantly, the finite key space makes an invalid provider
+state unrepresentable after validation and prevents a fallback from crossing into another
+credential plane.
+
+<a id="dictionary-credential-plane"></a>
+## Credential plane
+
+A credential plane is the set of processes and operations that can receive one secret.
+The runtime plane receives `RUNTIME_API_KEY`; the coding plane receives
+`CODING_GROQ_API_KEY`; the keyless sandbox receives neither. Equality is rejected because
+two differently named variables containing the same secret would still collapse the
+authority boundary. This is an object-capability invariant, not merely configuration
+tidiness.
+
+<a id="dictionary-generation-embedding-separation"></a>
+## Generation–embedding separation
+
+A generation model predicts response/tool-call tokens. An embedding model maps content to
+a fixed-dimensional vector used for similarity search. Replacing Gemini/Groq generation
+does not change the Ollama `nomic-embed-text` vectors because the two pipelines are
+independent. Re-indexing is required only when the embedding model, dimension, chunker, or
+relevant indexed representation changes—not whenever the response model changes.
+
+<a id="dictionary-lexical-program-analysis"></a>
+## Lexical program analysis
+
+Lexical program analysis scans bounded source text for declarations, imports, and control-
+flow markers without constructing a complete language AST or resolving runtime dispatch.
+For `N` source characters, a fixed collection of regular scans is normally `O(N)` time and
+bounded output is `O(K)`, where `K` is the configured result ceiling. It is useful for
+localization and prioritization, but it cannot prove a complete dependency graph,
+cyclomatic complexity, or asymptotic Big-O. The Rust broker therefore returns explicit
+`complete_static_graph: false`, `cyclomatic_complexity_proven: false`, and
+`big_o_inferred: false` fields. A planner may use these observations to choose the next
+exact read; a verifier may not use them as success evidence.
+
+<a id="dictionary-conversion-contract"></a>
+## Language-conversion contract
+
+A language-conversion contract binds a recognized source file and target language to the
+source SHA-256, detected risk features, available fixed validation profiles, and required
+differential evidence. It does not translate code. The transformation remains an exact
+patch or expected-absent creation inside an ephemeral sandbox. Correctness requires target
+parsing/compilation plus shared normal, boundary, and failure fixtures. This separates the
+planning question “what must be preserved?” from the unprovable claim “these programs are
+equivalent.” Contract construction scans one bounded file in `O(N)` time; behavioral proof
+cost depends on the target compiler and test suite.
+
+<a id="dictionary-semantic-equivalence"></a>
+## Semantic equivalence
+
+Two programs are semantically equivalent for a declared observation set when every allowed
+input produces the same externally relevant output, error, state transition, and side
+effect. Universal equivalence is undecidable for general programs, so a production coding
+agent must never infer it from syntax similarity or one successful example. This project
+uses a practical evidence ladder: hash-bound source, explicit public contract, target
+compiler, differential fixtures, integration tests, and human review for unresolved
+language/runtime differences. The conversion broker always starts with
+`semantic_equivalence_proven: false`.
+
+<a id="dictionary-os-isolation"></a>
+## OS isolation versus a workspace copy
+
+A copied directory is a data structure containing independent file bytes. It does not
+change what system calls a process can make. A process running a generated test could
+still open another host path, connect to the network or start descendants. A keyless
+environment removes selected secrets; it does not remove those operating-system powers.
+
+The managed launcher uses gVisor to interpose on the workload's system calls, with
+separate filesystem/network views and resource controls. The trusted Docker controller
+stays outside; the workload receives no Docker socket. See the executable evidence and
+remaining limits in [ISOLATED_VALIDATION.md](ISOLATED_VALIDATION.md).
+
+<a id="dictionary-bounded-stream"></a>
+## Bounded stream and backpressure
+
+A compiler can print unbounded output. Reading everything into one Python string uses
+`O(N)` memory for `N` emitted bytes and can exhaust the controller. Keeping only the first
+`B` bytes uses `O(min(N, B))` retained memory. Both stdout and stderr must still be drained:
+otherwise a full pipe can block the child while its parent waits for termination.
+
+```python
+remaining = max(0, byte_budget - len(stdout) - len(stderr))
+selected_stream.extend(chunk[:remaining])
+truncated |= len(chunk) > remaining
+```
+
+The launcher uses `selectors` to drain both channels, a shared budget, and a monotonic
+deadline. Reading remains `O(N)` work until that deadline; a byte cap alone is not a CPU
+or execution-time cap. An output truncation flag is evidence, never a reason to invent
+the missing diagnostic.
+
+<a id="dictionary-tmpfs-budget"></a>
+## tmpfs and multidimensional resource budgets
+
+tmpfs is an ephemeral memory-backed filesystem. Its size bound limits that mount, while
+container memory accounting also includes its pages. A 256 MiB workspace and 64 MiB temp
+mount inside a 1 GiB memory-limited container do not provide 1 GiB plus 320 MiB of free
+capacity. Admission must account for memory, CPU, PIDs, storage and deadline separately.
+This is vector feasibility, not a one-dimensional token-budget calculation.
+
+<a id="dictionary-cleanup-uncertainty"></a>
+## Cleanup uncertainty and truthful success
+
+An API timeout does not prove that a container was never created. Allocate an exact job
+identity before creation, record intent, and reconcile that identity after a lost response.
+Validation success and resource cleanup are separate postconditions. A controller crash
+needs a durable reaper and retained capacity claim; an in-process `finally` block cannot
+run after the controller itself disappears. The current launcher supplies bounded lifetime
+and explicit cleanup failure. A durable host journal and scoped reaper were added on
+28 September 2026 IST; central capacity-ledger binding remains activation work.
+
+<a id="dictionary-process-lock-durable-intent"></a>
+## Process lock versus durable intent
+
+An operating-system file lock is released automatically when its owning process dies.
+That makes it useful for mutual exclusion, but insufficient as proof that a remote
+side effect stopped. A SQLite job row persists after process death. The validation
+launcher therefore requires both an available lock and no unreconciled job row.
+
+```text
+Acquire host lock -> commit creating(job_id) -> create exact container
+                                             |
+                                           running
+                                             |
+                                      verify cleanup -> cleaned
+
+Controller dies -> lock released, row remains -> block new admission
+                 -> scoped reaper -> verified absence/removal -> cleaned
+```
+
+The journal uses a primary-key lookup for job identity and an index on state/deadline.
+Lookup is approximately `O(log J)` for `J` retained jobs; a bounded reaper batch costs
+`O(B log J)` local lookups plus at most `O(B)` provider interactions. An index improves
+lookup cost, not authority: a matching row still requires matching container identity.
+
+The invariant is `unreconciled job => slot unavailable`. It remains true across a
+controller crash, provider timeout and delayed container creation. The converse does
+not grant deployment authority: the cloud cost ledger and tenant authorization are
+separate requirements. Deleting a row to clear a blockage would break the invariant.
+
+<a id="dictionary-shared-resource-admission"></a>
+## Shared-resource admission and serializable decisions
+
+For a host with usable capacity vector `C = (CPU, RAM, storage)`, admit request `r`
+only if `sum(unreleased allocations) + r <= C` component by component. Deployments
+and validation containers must be in the same sum. Two independent counters can each
+be below their own limit while overbooking the physical machine together.
+
+The project serializes this decision with an account/host row lock, then inserts the
+claim and its audit event in the same transaction. With `D` deployment allocations
+and `V` validation claims, the straightforward aggregate costs `O(D + V)` over the
+selected pool; indexes bound which records are scanned. The lock, not that complexity
+bound, prevents two concurrent requests from both consuming the same remaining slot.
+
+Dispatch is another state transition, not just reading the reserved record. It rechecks
+the user/run/target/deadline and returns permission to exactly one caller. That is
+at-most-one local authorization, not exactly-once execution across a network. If the
+reply is lost, reconcile the host job instead of repeating an external operation.
+The local journal and central ledger therefore describe different facts and both are
+required. See [the central validation contract](VALIDATION_CAPACITY.md).
+
+<a id="dictionary-dispatch-binding"></a>
+## Dispatch binding: integrity, identity and replay
+
+A content hash answers “are these the same bytes?”, not “who authorized them?”. An
+attacker can calculate SHA-256 too. Authorization requires a trusted identity boundary
+(here, a protected operator spool delivered through authenticated host transport).
+The envelope then binds claim ID, run/step, host, source archive, image and deadline.
+
+The host's SQLite primary key acts like a durable set of consumed claim IDs. Membership
+checks cost approximately `O(log N)` for `N` retained claims. Insert the claim and job
+intent in one transaction **before** creating the container; retain membership after
+cleanup so a replay cannot create another job. A Python `set` alone would lose this
+property after process restart. The source archive hash costs `O(B)` for `B` source
+bytes and uses a deterministic filtered representation, not an arbitrary Git hash.
+
+Cleanup and correctness are distinct predicates. `container absent` can release a
+resource allocation only with identity-bound evidence; it does not prove tests passed.
+A lost result stays unknown. This distinction prevents a recovery mechanism from
+silently becoming a false-success mechanism.
+
+<a id="dictionary-framing-and-backpressure"></a>
+## Framing, backpressure and trusted transport
+
+A byte stream has no inherent message boundaries. The validation transport uses one
+bounded newline-terminated header containing the archive length, followed by exactly
+that many bytes. Bounds are checked before allocation/execution; short reads are errors.
+Only typed `validate` and `observe` operations exist. There is no model-selected command.
+
+The sender drains its stream while reading stdout/stderr concurrently. Without that
+concurrency, a full pipe in one direction can deadlock a writer waiting in the other.
+Bounded readers stop runaway output and timeouts terminate the local transport process
+group. That does **not** prove the remote process stopped: the durable host journal and
+reaper own remote reconciliation. One host lock during upload also prevents concurrent
+large transfers from multiplying staging memory outside the sandbox's limit.
+
+TLS/SSH authentication and content hashes have different roles. SSH pins the remote
+identity; the source hash pins bytes; the claim pins authority. All three are needed.
+The control path holds SSH/IAP credentials, while the data-plane sandbox receives only
+the filtered source and fixed toolchain. See [transport details](VALIDATION_CAPACITY.md#fixed-command-iapssh-transport).
+
+<a id="dictionary-observation-versus-outcome"></a>
+## Observation, outcome and idempotent recovery
+
+An observation describes a remote resource; an outcome describes the task it ran.
+Verified cleanup does not reveal whether tests passed. The controller keeps separate
+states: `capacity_status` for resource accounting and `validation_outcome` for test
+results. `(released, unknown)` is valid after a lost result. It must never be recast as
+`(released, passed)` just because the sandbox is gone.
+
+A unique key and transaction lock make one reservation. The host's durable consumed-
+claim set prevents a second dispatch after restart. A worker lease is a fencing check:
+only its current owner may cross the dispatch gate. A late real result can still be
+recorded as evidence, but cannot authorize another execution. Indexed membership costs
+roughly `O(log N)` for `N` claims; exactly-once effects over a network remain unproven
+until the remote outcome is independently checked.
+
+Deletion and compensation are also distinct. A deleted user's private result is
+scrubbed, while a minimal orphan claim remains until the host job is reconciled. A
+simple cascade-delete would lose the only evidence needed for safe cleanup.
+
+<a id="dictionary-oci-content-addressed-image"></a>
+## OCI images, content-addressed storage and Merkle-style identity
+
+An image tag is a mutable name. A digest identifies exact bytes. Our local
+[OCI packaging component](OCI_PACKAGING.md) produces a manifest referencing a
+configuration blob and an ordered list of filesystem layers. Each descriptor contains
+the hash and size of its blob. Changing a child blob changes its descriptor; rebuilding
+the parent manifest changes its digest. This is a Merkle-style directed acyclic graph,
+not proof of who built it. Authentication, tenant authorization, signing and measured
+validation provenance remain distinct requirements.
+
+```text
+image manifest digest
+       |
+       +--> config digest --> ordered uncompressed layer diff IDs
+       |
+       +--> compressed base layer digest(s)
+       |
+       `--> compressed generated-output layer digest
+```
+
+Python's `dict` indexes blobs by digest, so duplicate content can share one entry:
+
+```python
+import hashlib
+
+def blob_key(body: bytes) -> str:
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+candidate_blobs = [b"first blob", b"second blob", b"first blob"]
+expected_digest = blob_key(b"first blob")
+blobs = {blob_key(body): body for body in candidate_blobs}
+assert blob_key(blobs[expected_digest]) == expected_digest
+```
+
+Hashing `B` bytes costs `O(B)` time. Dictionary insertion/lookup is expected `O(1)`
+after computing the key; cryptographic hashing is not free. The stored blobs still
+cost `O(B)` space. Hash collision resistance is a cryptographic assumption, not a
+mathematical guarantee that two different inputs can never collide. Never equate a
+hash supplied by a caller with trusted authority.
+
+<a id="dictionary-image-diff-id-whiteout"></a>
+## Image layer digest, diff ID and whiteout
+
+A compressed layer digest hashes the gzip bytes. A diff ID hashes the uncompressed
+tar bytes. They normally differ. Our assembler streams decompression while checking
+the base's diff IDs, with an aggregate expansion bound. This is a streaming-algorithm
+problem: retain a hash state and a byte counter, not the complete expanded filesystem.
+Time is `O(B)` in expanded bytes; extra checking memory is bounded by the read buffer.
+
+An OCI whiteout (`.wh.<name>`) represents deletion from a lower layer. It is not an
+ordinary asset filename. Generated React output must not acquire deletion authority
+merely by naming a file that way. The packager rejects whiteout path components before
+forming the output layer. This is an example of semantic validation beyond generic
+path traversal checks.
+
+Canonical ordering, fixed tar ownership/modes, zero timestamps and deterministic
+compression reduce irrelevant digest changes. Determinism is only promised for the
+same inputs and supported toolchain behavior, not for independently generated source
+or every future Python/zlib version. It does not prove that the application works.
+
+<a id="dictionary-non-executing-packaging"></a>
+## Non-executing packaging versus isolated validation
+
+Validation runs generated tests inside the sandbox; packaging copies their measured
+outputs into a trusted runtime contract without running them. These are different
+capabilities and should have separate authority. The sequence is a dependency DAG:
+
+```text
+source --tests/build--> verified output --package--> measured image
+                                                 |
+                                  publish/sign/deploy/behavioral checks
+```
+
+No node may infer a downstream result from its predecessor's success. A valid JAR
+header is not a passing API test; a valid image manifest is not a running container;
+a running container is not a connected database; an available URL is not proof of
+correct user-request completion. The durable workflow must verify each postcondition
+and preserve its evidence separately.
+
+The in-process local assembly helper is not yet a production keyless worker. A Python
+thread cannot be forcibly stopped safely when a coroutine is cancelled. Production
+needs process/container lifetime, finite resource admission and durable recovery.
+
+<a id="dictionary-image-job-ownership"></a>
+## One-time dispatch, recovery receipts and resource vectors
+
+A lease is a temporary right to coordinate work, not evidence that a previous
+process stopped. Consider a controller that sends a job, loses its connection,
+and then expires. Reassigning the same execution to the next controller can run
+two processes at once. Our image-job state machine consumes its dispatch token
+once and keeps uncertain work allocated until authenticated observation settles it.
+
+```text
+reserved -> dispatched -> finished -> retired
+                  |           |
+                  v           +-- CPU/memory free; output disk still held
+              uncertain
+                  |
+           old receipt recovery OR verified full cleanup
+```
+
+The UUID is a dispatch identity, not a monotonically increasing fencing token and
+not a substitute for authentication. A true fencing protocol increments an epoch
+and makes the resource reject commands from earlier epochs; checking a lease only
+in the controller does not stop an already-running old process. Our one-time
+dispatch ledger must be paired with host-journal consumption and enforced process
+ownership before production activation. A new controller with a valid parent-run lease
+may record the old worker's bound receipt, but may not start that consumed job
+again. The completion timestamp must fit the original execution window. This
+separates *when work happened* from *when its result arrived*.
+
+Capacity is a vector, not one Boolean slot:
+
+```python
+def fits(host: tuple[int, int, int], used: tuple[int, int, int],
+         request: tuple[int, int, int]) -> bool:
+    """CPU millis, memory MiB, storage MiB; illustration, not admission authority."""
+    if any(value < 0 for vector in (host, used, request) for value in vector):
+        raise ValueError("negative resource count")
+    return all(u + r <= limit for limit, u, r in zip(host, used, request))
+
+assert fits((2000, 8192, 20480), (1000, 3072, 2048), (1000, 2048, 4096))
+assert not fits((2000, 8192, 20480), (1000, 3072, 2048), (2000, 2048, 4096))
+```
+
+For three resources this comparison is `O(1)` time/space; in `d` resource dimensions
+it is `O(d)`. Summing `n` claims is `O(nd)` without cached aggregates. Under concurrent
+requests, summing and checking outside one transaction is incorrect: both callers
+can see the same spare capacity. The real database code locks the account/pool and
+checks all build, validation and deployment claims before committing the new claim.
+
+Finished computation and retained data have different lifetimes. Releasing CPU
+must not release output disk; deleting private metadata must not imply physical
+disk cleanup. This is conservation accounting with a state machine. A capacity
+ledger only admits work—it does not enforce operating-system limits. The keyless
+worker must independently enforce those limits and authenticate its cleanup proof.
+See [the implemented boundary and remaining worker work](OCI_PACKAGING.md).
+
+<a id="dictionary-durable-oci-output-commit"></a>
+## Durable output commit, tombstones and two different cleanup proofs
+
+An image held in a Python object is not a durable workflow result. Our output store
+uses this ordering to bridge file bytes and the journal:
+
+```text
+bound intent committed (writing)
+  -> exclusive temporary file -> write -> fsync(file)
+  -> exclusive final link -> remove temporary link -> fsync(directory)
+  -> journal commit (retained)
+  -> compact measured reference returned
+```
+
+A crash before the last journal commit leaves an uncertain `writing` record, not
+permission to overwrite or pretend the image completed. A lost response after the
+last commit can be recovered by reading and rehashing the exact retained object.
+These are different failure states. SQLite commits and filesystem fsync are separate
+durability primitives; no single transaction magically covers both.
+
+Deletion leaves a **tombstone**: a compact record that a job identity was removed.
+This prevents delayed messages from recreating the same output. Live bytes, live
+object count and tombstone count each need bounds. Reaching a bound is an explicit
+capacity error, not a reason to silently drop replay-protection history.
+
+Rehashing a `B`-byte output costs `O(B)`. Verifying its manifest/blob references is a
+graph traversal with dictionary lookup, `O(V + E)` graph work plus the cost of hashing
+all compressed and bounded expanded bytes. The current implementation retains bounded
+archive/blob bytes in memory; it is not an unbounded streaming store. Production must
+also enforce the declared cgroup/process/storage limits.
+
+Finally, deleting a file and terminating a process are independent observations.
+The CAS may prove `output_removed=true` while explicitly reporting
+`execution_cleanup_verified=false`. Only the authenticated host controller can
+combine exact job/runtime identity and verified termination with the CAS observation
+to release the central resource obligation. Matching JSON fields alone are not proof.
+
+<a id="dictionary-shared-journal-observation-state-machine"></a>
+## Shared journal, purpose partition and cleanup observations
+
+A **purpose** label partitions meaning, not physical capacity. Validation and image
+packaging use one host slot; separate per-purpose locks could admit both against the
+same CPU/memory allowance. The journal stores the purpose alongside immutable job
+identity and verifies it before deleting a container. Legacy records receive the
+`validation` purpose during the local SQLite schema upgrade.
+
+Two independent state dimensions matter:
+
+```text
+Execution: unknown -> creating/running -> cleanup uncertain -> removed
+Output:    absent  -> writing          -> retained          -> removed
+
+execution removed + output retained = CPU free, disk held
+execution unknown + output removed  = CPU held, success unknown
+execution removed + output removed  = full resource release
+```
+
+This is a **product state machine**: its state is the pair `(execution, output)`,
+not one convenient `done` Boolean. With `e` execution states and `o` output states,
+the naive product has at most `e * o` combinations; explicit invariants remove
+illegal combinations. A reported failure or missing response is an observation,
+not necessarily a transition of the actual process. A trusted, pinned host observer
+must establish the real transition before the controller releases capacity.
+
+The SQL controller serializes account/target/job mutations in one transaction.
+A stable observation hash makes duplicate evidence idempotent **only when current
+resource state is consistent with it**. A late container after retirement must reopen
+the obligation even if its observation repeats an earlier hash. This is why storing
+`seen_hashes` and ignoring every duplicate is not a universally correct algorithm.
+
+The host job ID is looked up through an indexed dispatch mapping; expected binding
+fields are reconstructed and canonically hashed in `O(k)` for `k` metadata bytes.
+The bounded reaper scans at most 128 entries per batch; container inspection is
+external I/O and dominates constant-size comparisons. Matching a hash prevents
+cross-job confusion but is not authentication. The real recovery path separately
+pins SSH identity and never accepts a model-selected command or cleanup assertion.
+See [the current implementation and remaining live proof](OCI_PACKAGING.md).
+
+<a id="dictionary-hierarchical-resource-budget"></a>
+## Hierarchical resource budget and private filesystem lease
+
+A **hierarchical budget** constrains the sum of child consumption, not merely each
+child independently. Two processes each capped at 3 GiB could otherwise consume
+6 GiB. The packaging controller and worker therefore belong below one 3 GiB cgroup
+parent, with tighter worker-specific task limits. The parent must be operator-owned;
+model-generated commands cannot create or raise it. This is a resource tree with
+the invariant `sum(active descendant usage) <= ancestor limit` at every constrained
+node. Inspecting a child alone does not prove the ancestor invariant.
+
+```text
+gcapackaging.slice: 1 CPU / 3 GiB / no swap / 64 tasks
+    +-- controller: trusted artifact/base reads and bounded copying
+    +-- guest: fixed UID 65532 worker / 16 tasks / private network
+
+PostgreSQL storage reservation: 2,048 MiB
+    +-- private backing filesystem: 2,040 MiB
+    +-- bounded host metadata and immutable binding
+```
+
+A **private filesystem lease** separates storage lifetime from process lifetime.
+The mount is tied to one immutable job and backing file, not just a path string.
+Kernel mount identity, filesystem type, mount options and backing-file identity
+must match before recovery or removal. No lazy/forced unmount is allowed: uncertain
+ownership means the ledger continues holding capacity. Filesystem expiry permits
+cleanup, never re-execution. The retained host tombstone prevents dispatch replay.
+
+In Python, dictionaries give expected `O(1)` indexed identity lookup, while canonical
+JSON serialization and hashing cost `O(k)` for `k` metadata bytes. Full OCI content
+verification remains `O(B)` for `B` bytes; a matching metadata hash does not replace
+that work. A bounded directory scan is `O(n)` with a hard cap on `n`. These algorithmic
+bounds complement, but do not replace, kernel CPU, memory, task and filesystem caps.
+
+A **bootstrap trust boundary** controls which Python modules can execute before
+normal application imports. The standalone worker loads exact reviewed, hashed,
+protected sibling source files, not workspace modules or stale `.pyc` caches.
+`python -I -B` and a cleared environment are additional defenses, not a sandbox by
+themselves. Execution isolation still requires the independently verified host and
+guest controls. Local mocked controls are tests of decision logic, not live evidence.
+
+<a id="dictionary-multi-rename-installation-transaction"></a>
+## Multi-rename installation transaction and crash windows
+
+Replacing a directory containing several modules avoids exposing an intentionally
+mixed bundle. But `rename(old, backup); rename(staged, current)` is **two** atomic
+operations, not one atomic operation. Between them the gateway path is absent.
+Failing closed during that interval is preferable to running unreviewed mixed code.
+The installer holds the same host slot as validation and persists an intent outside
+the directory being replaced. It never deletes the durable job journal.
+
+```text
+current = old      -> stage complete + intent recorded
+current = missing  -> old tree preserved at backup
+current = new      -> read-back and isolated import
+                   -> commit installation record
+
+crash at any intermediate state -> inspect actual trees -> verified old-tree restore
+```
+
+The recorded phase can lag reality if a rename completes just before process death.
+Recovery therefore verifies the **actual** old/new tree hashes and installation ID;
+it does not blindly branch on one timestamp or phase. This is an instance of write-
+ahead intent plus state reconciliation. A `finally` block cannot protect against
+`os._exit`, SIGKILL or machine loss. Tests terminate a real child process after each
+rename to prove process-death recovery. They do not prove every power-loss behavior.
+
+With `n` files totaling `B` bytes, source compilation, hashing and copying take
+`O(B)` work and the manifest requires `O(n)` entries. The filesystem rename is
+constant-size namespace work; full integrity verification is not. Bounded file and
+release counts prevent the rollback store becoming an unbounded data structure.
+Old-bundle rollback must also consider **semantic compatibility**: packaging history
+can require cleanup methods absent from the old bundle even if its hashes match.
+See [the operational implementation and live evidence](HOST_BUNDLE_OPERATIONS.md).
+
+<a id="dictionary-host-guest-enforcement-evidence"></a>
+## Host versus guest enforcement evidence and readiness barriers
+
+A sandbox implements a virtual system interface. Its `/proc` and cgroup files need
+not expose the native host kernel's state. Our live gVisor probe showed unavailable
+guest cgroup limit files and virtual `Seccomp=0`, even with configured Docker limits.
+A guest's missing file cannot prove either host safety or host failure. Conversely,
+Docker configuration alone cannot prove the running process has those limits.
+
+```text
+configured limits -> launch fixed worker -> native host verification
+                                             |
+                                    job-bound readiness proof
+                                             |
+                               worker may consume private input
+                                             |
+                         bounded execution -> exact cleanup proof
+```
+
+A **readiness barrier** is a synchronization point, not another model prompt. Its
+consumer waits only within a fixed deadline. The producer is the trusted host;
+proof identity must bind the exact job, dispatch, runtime profile and expiry. The
+read-only per-job mount prevents a worker from inventing its own readiness. A
+matching hash is binding, not authentication: host origin and verified mount/control
+authority must be established independently. The barrier and native-kernel checks
+are now implemented and decision-tested locally. They are not yet installed or
+live-proven on the VM; simulated observations do not prove actual enforcement.
+
+The producer/consumer state machine is `starting -> verified -> released`, with
+`failed` and `expired` terminal paths. A stale or cross-job proof cannot transition
+to `released`. This prevents a **time-of-check/time-of-use** gap where private input
+is consumed before the process's controls are established. Verification must concern
+a live native process; an exited `PID=0` is not a valid process handle. Parent resource
+budgets must include runtime helpers as well as the application. Our 16-task startup
+failure versus 64-task success illustrates why measured runtime overhead matters.
+See [observations, local implementation and pending live proof](OCI_PACKAGING.md).
+
+<a id="dictionary-native-process-handle"></a>
+## Native process handles, PID reuse and termination evidence
+
+A **PID** is a reusable integer, not permanent process identity. Between two reads,
+one process can exit and another can receive the same number: an ABA-style identity
+problem. A start-time discriminator helps detect reuse. On Linux, `os.pidfd_open`
+opens a kernel handle tied to a particular process; polling that descriptor observes
+its termination without accidentally targeting a later process with the same PID.
+
+```python
+import os
+import select
+
+def process_has_exited(pid: int) -> bool:
+    descriptor = os.pidfd_open(pid, 0)  # Linux-only; missing support must fail closed.
+    try:
+        events = select.poll()
+        events.register(descriptor, select.POLLIN)
+        return bool(events.poll(0))
+    finally:
+        os.close(descriptor)
+```
+
+This snippet alone does not prove sandbox identity or termination of descendants.
+The actual verifier also checks the exact container, native start time, privilege
+filters, native resource-group membership and limits. Runtime helpers can outlive
+the application, so cleanup must inspect those helpers and the group's populated
+state. Process absence, application success and storage removal are different facts.
+
+With `P` native processes, a bounded helper inventory costs `O(P)` observations;
+proof comparison has a fixed-size schema and constant-size control state. Polling
+one already-open handle is constant-size work, but kernel scheduling and I/O latency
+remain real. The bound prevents indefinite scans or waits. It does not provide an
+absolute response-time guarantee. Raw command lines/environments must not enter
+model context or user-visible telemetry.
+
+The durable state transition is `running -> cleanup_uncertain -> cleaned` only
+after all required termination evidence. Failure or unknown identity keeps the
+resource obligation. A later contradictory observation reopens it rather than
+inventing another execution attempt. This is **evidence-based resource release**,
+not a retry policy or a model prediction.
+
+<a id="dictionary-runtime-versus-guest-privileges"></a>
+## Native runtime privileges versus guest capabilities
+
+The native runtime is not the application running inside its emulated Linux system.
+Our live probe found guest `CapEff=0`, but native `CapEff=000000000008001f`, with
+native seccomp 2 and no-new-privileges 1. The zero-native-capability acceptance
+check rejected it. This does not prove that the guest gained those privileges.
+Nor does it justify accepting that bitmask without verifying isolation.
+
+Linux capabilities are bit sets. Integer bit operations can decode them cheaply:
+
+```python
+def capability_bits(mask: int, width: int = 64) -> list[int]:
+    if type(mask) is not int or not 0 <= mask < 1 << width:
+        raise ValueError("bounded unsigned capability mask required")
+    return [bit for bit in range(width) if mask & (1 << bit)]
+
+assert capability_bits(0x8001F) == [0, 1, 2, 3, 4, 19]
+```
+
+Decoding takes `O(width)` time and `O(k)` output space for `k` set bits. With a
+fixed 64-bit width the work is bounded. Interpretation is a security question:
+the process's user namespace and UID mapping determine where those capabilities
+apply. Its mount namespace, syscall filter and runtime role further constrain
+authority. A bitmask without these bindings is insufficient evidence.
+
+An appropriate runtime profile must bind the pinned executable/release, process
+role, native namespaces/mappings, permitted capability/filter envelope, resource
+group and helper lifetime. At that checkpoint the profile remained rejected pending
+proof; it must not silently become `allow whatever the last probe observed`.
+The later pinned-role and optional-helper correction is described below.
+See [gVisor's native security architecture](https://gvisor.dev/docs/architecture_guide/intro/)
+and [its filesystem/Directfs tradeoff](https://gvisor.dev/docs/user_guide/filesystem/).
+
+<a id="dictionary-runtime-role-graph"></a>
+## Runtime role graphs, descendant proofs and complete process inventories
+
+A runtime consists of more than one executable. The pinned release on this host
+uses a Gofer, a separate Sentry binary and Systrap subprocesses. An inventory that
+checks only the executable named `runsc` misses Sentry processes. Cleanup and
+resource accounting would then be incomplete even if every listed helper passed.
+
+```text
+exact container scope
+  |-- pinned Gofer
+  `-- pinned primary Sentry
+          |-- Systrap master
+          |      `-- Systrap child
+          `-- additional bounded Systrap descendants
+```
+
+This is a directed process-parent graph. To prove a clone belongs to a particular
+Sentry, walk kernel-reported parent links until reaching that exact live Sentry.
+Use a visited set for cycle detection and a hop limit for bounded work. Merely
+calling a process `helper` or matching an executable basename proves nothing.
+
+```python
+def descends_from(pid, root_pid, parent_of, maximum=128):
+    visited = set()
+    for _ in range(maximum):
+        if pid in visited:
+            return False
+        visited.add(pid)
+        pid = parent_of(pid)  # Evidence source must be trusted, not model output.
+        if pid == root_pid:
+            return True
+        if pid <= 1:
+            return False
+    return False
+```
+
+One walk costs `O(h)` time and space for height `h`; checking `P` processes naïvely
+costs `O(P*h)`. Memoization can reduce repeated graph work, but cached kernel
+observations must never survive their process identity or observation interval.
+Our bounded inventory compares `set(scope_processes) == set(verified_helpers)`:
+that set equality detects both missing helpers and unexpected native occupants.
+The actual implementation additionally verifies package digests, live executable
+inodes, namespaces, UID/GID mappings, role-specific capability masks, seccomp,
+no-new-privileges, cgroup budgets, start times and pidfds. Empty command lines are
+accepted only for source-grounded, ancestry-verified Systrap clones—not generally.
+
+<a id="dictionary-complete-inventory-versus-allowlist"></a>
+## Complete inventory versus an allowlist-filtered inventory
+
+An allowlist answers “which objects may be accepted?” It must not answer “which
+objects exist?” Filtering an inventory by accepted executable names before checking
+completeness can erase the very unknown process that should invalidate the proof.
+Our live test exposed this with gVisor's optional FD-parking process.
+
+```python
+def verify_complete_inventory(kernel_members, discovered_members, approved):
+    actual = set(kernel_members)
+    found = set(discovered_members)
+    if actual != found:
+        raise ValueError("missing or stale inventory; no readiness")
+    if not actual.issubset(approved):
+        raise ValueError("unapproved occupant; no readiness")
+    return True
+```
+
+Set construction/equality takes expected `O(P)` time and `O(P)` space for `P`
+bounded process IDs. Equality detects missing and extra IDs; executable, kernel
+namespace and start-time verification must still prove what each ID represents.
+A PID alone is reusable and is not an immutable capability. pidfds retain process
+identity during observation; bounded retries do not extend authorization deadlines.
+
+<a id="dictionary-optional-feature-exclusion"></a>
+## Optional-feature exclusion, durable intents and runtime drift
+
+Removing an optional optimization is different from weakening a security check.
+The pinned gVisor release tolerates its parking helper being unavailable, while
+Sentry and Gofer remain mandatory. We retain the binary with its original hash but
+make it non-executable through an operator-only reversible transition.
+
+```text
+exact binary/hash/mode + idle journal + fresh snapshot
+    -> fsynced prepared intent
+    -> fixed inode mode change + fsync
+    -> independent exact read-back
+    -> committed intent
+    -> native proof before private artifact consumption
+```
+
+This is a small state machine with a write-ahead record. `prepared` is not failure
+or success: after interruption, actual filesystem state must be inspected. A stale
+request must not replay blindly; same-target reconciliation precedes reversal.
+Hashing costs `O(B)` for `B` binary bytes. Snapshot equality detects drift, but
+does not eliminate all concurrency: the implementation also takes the exclusive
+host slot and binds the opened file's device/inode before changing permissions.
+Readiness rechecks the exclusion, so restoring permissions or changing the package
+does not silently restore an unapproved process. Local tests simulate kernel/root
+observations; only live native tests establish the fixed host profile.
+
+<a id="dictionary-obsolete-copy-retirement"></a>
+## Audited retirement, partial sets and crash recovery
+
+Bounded rollback storage eventually fills. Increasing the bound forever is not
+resource governance; silently deleting the oldest directory is not safe recovery.
+The operator must identify a reviewed obsolete **code copy**, distinct from the
+active code, latest predecessor and durable job/artifact data.
+
+```text
+exact active + retention snapshots
+             |
+operator selects obsolete identity (never latest predecessor)
+             |
+fsync prepared audit: original file set, hashes, modes
+             |
+unlink one verified file -> fsync parent -> next file
+             |                       process dies
+             |                            |
+             |                  probe remaining subset
+             |                            |
+             +--------- explicit same-identity reconciliation
+             |
+remove empty known directories -> fsync -> committed audit
+```
+
+The important DSA operation is **subset validation**, not blind deletion. Let
+`original` be a dictionary from relative filename to immutable hash/mode evidence,
+and `remaining` the current observed dictionary. During an interrupted retirement,
+every remaining entry must equal its prepared entry. Missing entries mean deletion
+may already have happened; new or modified entries mean stop and investigate.
+
+```python
+def validate_remaining(original: dict, remaining: dict) -> None:
+    for name, evidence in remaining.items():
+        if original.get(name) != evidence:
+            raise ValueError("unknown or changed remaining file")
+```
+
+Hash-map membership/equality is expected `O(1)` per entry, so matching `n` entries
+is `O(n)`. Computing content hashes is `O(B)` for `B` total bytes. Deterministic
+sorting before unlink is `O(n log n)` and audit space is `O(n)`, bounded in the real
+installer. These costs are tiny relative to a model-generated repair and make the
+operation reproducible. The sample does not implement filesystem safety: real code
+also rejects symlinks/hardlinks, validates ownership/mode, serializes with the shared
+host lock, verifies fresh snapshots and fsyncs the audit before changing files.
+
+The state machine is `unseen -> prepared -> committed`. `prepared` persists across
+process death and blocks unrelated installation/rollback. A committed copy that
+unexpectedly reappears is not silently deleted again. This illustrates why an
+idempotent API must reconcile **observed state**, not merely return an old success.
+`fsync` improves crash durability but is not a distributed transaction or an
+universal guarantee against faulty storage. Tests include real subprocess death
+after unlink; live read-back separately proves the operator-host result.
+
+<a id="dictionary-runtime-compatible-evidence"></a>
+## Runtime-compatible observations are not weaker invariants
+
+An invariant is the property we require; an observation is one representation
+used to test it. Example invariant: **no external network interface in the guest**.
+Native Linux commonly represents interfaces under `/sys/class/net`, but the pinned
+gVisor guest in this project omitted that directory. Treating this absence as
+success would be unsafe; treating the directory as the invariant would reject a
+correctly isolated implementation unnecessarily.
+
+```text
+host: exact Docker network-none + native namespace/runtime identity
+                         |
+guest: proc interface list == [lo] AND socket enumeration == [lo]
+                         |
+sysfs present: must also be loopback-only
+sysfs absent: allowed only with mandatory bound host proof
+                         |
+read-only job-bound readiness barrier -> consume private artifact
+```
+
+This is **representation adaptation with independent evidence**, not a fallback
+that ignores an error. Missing proc/socket data, mismatched lists, duplicate
+interfaces or any non-loopback interface still fail. Native workers without the
+host-proof path still require sysfs. No network connection needs to be attempted
+to enumerate interfaces, and no LLM decides whether to waive isolation.
+The actual live fixed synthetic artifact passed this path on 5 October, then host
+rehash and full cleanup. That proves this component, not every generated runtime,
+arbitrary network policy, sandbox escape resistance or full deployment correctness.
+See [host evidence](HOST_BUNDLE_OPERATIONS.md) and
+[gVisor's netstack](https://gvisor.dev/docs/user_guide/networking/).
+
+<a id="dictionary-offline-dependency-closure"></a>
+## Dependency closure, lazy edges and offline proof
+
+A build dependency graph is a directed graph G=(V,E): vertices represent tools,
+libraries and plugin providers; A -> B means A needs B. The closure of roots is
+every reachable dependency. Breadth-first traversal with a queue and visited set
+costs O(|V|+|E|) time and O(|V|) memory:
+
+```python
+from collections import deque
+
+def closure(roots, dependencies):
+    seen = set(roots)
+    pending = deque(seen)
+    while pending:
+        for item in dependencies.get(pending.popleft(), ()):
+            if item not in seen:
+                seen.add(item)
+                pending.append(item)
+    return seen
+```
+
+Lazy edges are selected only when a compiler/test plugin detects a framework or
+platform. Here Maven go-offline completed, but an actual offline JUnit test could
+not resolve surefire-junit-platform:3.5.6. The declared graph missed a dynamically
+selected edge. Seeding a fixed public test then rerunning real test/package commands
+with network none provided behavioral evidence for this specific role, not arbitrary
+projects or plugins. A lockfile pins versions/integrity; it does not prove every
+platform artifact is cached or that the program is correct.
+
+```text
+declared graph -> acquisition cache -> real test triggers lazy provider edge
+                                            |
+                              seed reviewed missing dependency
+                                            |
+                          offline positive + deliberate negative
+                                            |
+                        separate gVisor + generated-app proof
+```
+
+BFS explains reachability; it does not replace real command execution. See
+[measured role evidence](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-execution-permission-and-isolation"></a>
+## Execution permission versus the isolation boundary
+
+Noexec is a mount policy, not a complete sandbox: interpreters may read and execute
+source without executing that source file directly. Conversely, exec on a bounded
+keyless sandbox mount does not grant host execution, privileged UID, network,
+deployment credentials or Docker access. Tests exposed workspace binary execution
+and tmp JNI loading failures caused by Docker's tmpfs defaults.
+
+```text
+reviewed source -> disposable workspace -> compile/test -> verify output
+                          |
+              internal exec,nosuid,nodev tmpfs
+                          |
+        runtime/net/capability/memory/deadline boundaries
+```
+
+The current launcher source corrects these internal mounts only. Host-backed
+packaging storage remains noexec. Different storage purposes require different
+policies; blindly copying flags across layers is not a security design. Local Docker
+proof must not be described as the existing VM's Linux/gVisor enforcement proof.
+
+<a id="dictionary-streaming-custody-and-merkle-dag"></a>
+## Streaming custody, content addresses and identity namespaces
+
+The new toolchain inspector reads an archive as an iterator of bounded chunks,
+not one giant byte string. Incremental SHA-256 is O(B) time for B input bytes and
+constant hash-state space; retained metadata is separately capped. For example:
+
+```python
+import hashlib
+
+def measure_chunks(chunks, maximum):
+    total = 0
+    digest = hashlib.sha256()
+    for chunk in chunks:
+        total += len(chunk)
+        if total > maximum:
+            raise ValueError('byte limit exceeded')
+        digest.update(chunk)
+    return total, digest.hexdigest()
+```
+
+This small example is not the production parser: it omits deadlines, unsafe
+headers, source authentication and graph validation. In the actual code, a
+512-byte framing state machine rejects PAX/GNU extensions before the tar parser
+can allocate their claimed body. File payload spans are skipped arithmetically
+in that framing state, while a separate streaming hash verifies their bytes.
+Deadlines checked between reads cannot interrupt a blocking reader by themselves;
+the standalone Unix CLI has an independent watchdog and owned-process cleanup.
+
+OCI descriptors form a content-addressed DAG: an edge carries a child's hash and
+size. The same content has the same content address, but different objects must
+not be treated as one identity merely because all use SHA-256:
+
+```text
+archive byte hash (tar representation, headers and padding)
+        |
+        +-- image index digest
+                 |
+                 +-- Linux AMD64 platform manifest digest
+                 |          |
+                 |          +-- runtime configuration digest
+                 |          +-- layer digest(s)
+                 |
+                 +-- non-runtime attestation manifest(s)
+```
+
+The scanner verifies that every descriptor's size/hash matches its blob and that
+the reachable set equals the archive's blob set. A dictionary gives O(1) expected
+digest lookup; set equality catches omitted or unreferenced objects. Graph work is
+O(V+E), while hashing dominates at O(B). A content hash proves byte identity, not
+producer trust, permission, benign behavior or successful execution. Hence
+`image_loaded=false` and `image_approved=false` remain explicit after a valid scan.
+Changing a tar timestamp may change the archive hash without changing the OCI
+image graph; neither digest namespace should silently replace the other.
+
+The actual React and Spring streams were checked on 6 October without large local
+output files. That prepares custody for protected host import; it does not complete
+the original deployment goal. See [exact evidence](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-crash-persistent-maintenance"></a>
+## Maintenance reservations, compare-and-set and uncertain side effects
+
+An **ephemeral lock** proves a process currently owns a resource. A **durable
+reservation** proves that an unfinished operation still owes reconciliation after
+that process dies. These are different facts. Our host uses a shared `flock` for
+live ownership and a bounded SQLite import ledger for persistent exclusion:
+
+```text
+owner alive: flock held + durable prepared intent
+                         |
+                  persist load_started
+                         |
+                     Docker load
+                         |
+owner dies: flock released, load outcome possibly unknown
+                         |
+               durable intent STILL occupies slot
+                         |
+         reconcile exact import; do not retry blindly
+```
+
+**Write-ahead intent** means recording the obligation *before* the external side
+effect. SQLite's FULL-synchronous transaction is the durability boundary, not a
+Python variable or a log line. It does not turn SQLite and Docker into one atomic
+transaction. The gap between them is represented explicitly as `load_uncertain`.
+
+**Compare-and-set (CAS)** permits a transition only from the version/phase actually
+observed. A Python sketch of the principle is:
+
+```python
+def transition(connection, identity, expected, next_phase):
+    with connection:
+        changed = connection.execute(
+            'UPDATE operations SET phase=? WHERE id=? AND phase=?',
+            (next_phase, identity, expected),
+        ).rowcount
+        if changed != 1:
+            raise RuntimeError('Inspect current state; stale transition rejected')
+```
+
+This is a teaching sketch, not sufficient production authority. Our implementation
+also checks the finite-state graph, canonical intent hash, bounded observation
+history, exact retry evidence, stop time and the shared lock. An unchanged exact
+observation retry is idempotent; another Docker invocation is not thereby authorized.
+
+**Reconciliation** observes an external operation and resolves its obligation.
+**Cancellation** is allowed only while no load has started. Expiration prevents
+starting new work but cannot erase unknown side effects. A loaded image still needs
+trusted tests and verified policy/registry publication; a SHA-256 observation alone
+does not prove either. The current local ledger deliberately stops at `proof_pending`
+until that publication controller exists. It grants no image approval or financial
+authority. See [state machine and limitations](OFFLINE_TOOLCHAINS.md).
+
+The history has a fixed maximum of eight intents and sixteen observations each,
+so validation is O(N×H), bounded independently of request traffic. Canonical JSON
+fingerprints make changed image/role/host/archive/policy inputs a different intent.
+Actual subprocess `os._exit` tests reopen SQLite and demonstrate that controller
+death does not clear the reservation. Mocked success cannot establish this property.
+
+<a id="dictionary-custody-quarantine-and-durability"></a>
+## Archive custody, quarantine and file-versus-directory durability
+
+**Custody** means measured bytes are stored at a protected location with their
+identity preserved. It is not execution success, role approval or deployment.
+Our new staging path binds the complete archive and its OCI graph to one canonical
+operator intent; a returned receipt explicitly keeps image loading/approval false.
+
+**Quarantine** preserves rejected or incomplete bytes rather than deleting them.
+The operator must supply the observed hash and length. A bounded write-ahead audit
+records the exact rename before it happens, enabling reconciliation after process
+death. Unknown files or contradictory source/destination states require review.
+There are at most three quarantines and a bounded aggregate byte budget, so
+retention cannot become an unlimited retry loop or disk sink.
+
+```text
+prepared intent -> partial bytes -> validate full OCI/hash -> fsync file
+                                                         |
+                                           re-read -> atomic rename
+                                                         |
+                                             fsync parent directory
+                                                         |
+                                            fsync custody receipt
+                                                         |
+                                         SQLite archive_verified
+
+failed partial -> exact hash/size confirmation -> quarantine intent -> rename
+                                                           |
+                                                     verify and audit
+```
+
+**Atomic visibility** and **durability** are different. Rename makes one directory
+entry switch visible, but does not by itself flush file data or guarantee that the
+rename survives power loss. The archive data, affected directory and control
+receipt are flushed separately. SQLite and filesystem publication are not one
+distributed transaction: recovery verifies the actual archive again before repairing
+the receipt or advancing the journal. For illustration:
+
+```python
+import os
+
+def flush_bytes(stream):
+    stream.flush()                # Python userspace buffer -> kernel
+    os.fsync(stream.fileno())     # ask filesystem to persist file data
+```
+
+This sketch omits parent-directory fsync, protected inodes, lock ownership, size and
+time bounds, compare-and-set and source authentication; do not use it as a complete
+import controller. Our real scanner uses bounded chunks and O(B) hashing; staging
+adds a second O(B) persisted-file read-back. Retained metadata has its own cap.
+An existing receipt or filename cannot replace that read-back.
+
+**Prefix-safe control repair** allows only an exact prefix of the independently
+reconstructed canonical receipt to be completed. Foreign bytes are never truncated.
+**Cooperative deadlines** are checked between reads; they cannot interrupt a blocked
+reader by themselves. A trusted transport still needs an independent watchdog and
+owned-process cleanup. Real `os._exit` tests cover promotion, receipt/journal updates,
+quarantine rename and torn control writes. Both role tests use tiny fake OCI layers;
+they do not prove real Node/Java execution. See [custody scope](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-protocol-evolution-and-control-data-plane"></a>
+## Closed protocol evolution, framing and control/data-plane separation
+
+**Protocol evolution** must preserve the ability to inspect durable records made
+by a previous release. Our first eleven-file operator controller rejected the
+existing seven-file transaction because it compared historical evidence to the
+new install request's inventory. The correct separation is:
+
+```text
+historical record -> exact recognized old/current schema -> validate hashes/ID
+new install       -> exact current schema only          -> compile/import/swap
+unknown subset    -> reject; not an invented legacy version
+```
+
+This is a finite-language membership problem, not permissive backward compatibility.
+For `S = {known_old_inventory, current_inventory}`, historical keys must equal one
+member of S. A subset test would also accept a damaged or malicious incomplete
+installation. In Python, set equality is expected O(N); N is explicitly bounded.
+
+```python
+def recognized_inventory(names, old_names, current_names):
+    keys = set(names)
+    return keys == set(old_names) or keys == set(current_names)
+```
+
+This teaching helper is only inventory validation. The real controller also checks
+types, per-file SHA-256/modes, canonical transaction identity, protected inodes,
+current filesystem evidence and journal exclusion. Compatibility does not grant
+authority to reinstall an old bundle or bypass its retained-history rollback gates.
+
+**Framing** makes control bytes distinguishable from a following binary archive.
+The fixed operator gateway reads a four-byte big-endian count, then at most 4 KiB
+of unique-key JSON, then a separately bounded archive. Without framing, a binary
+tar stream could be misinterpreted as control or force unlimited buffering.
+
+**Control plane** describes what is authorized: fixed role, source closure,
+archive identity, policy/registry hashes, original VM identity and stop time.
+**Data plane** transports only the catalog's measured public archive. Neither
+the archive nor the model can select a shell command, target or new approval.
+
+```text
+control: fixed intent + hashes -> existing journal ownership
+data:    immutable Docker-save -> bounded stream -> OCI/hash -> persisted read-back
+result:  custody receipt       -> explicit pre-load cancel or future load controller
+```
+
+**Independent watchdog** differs from a cooperative deadline: it can interrupt a
+blocked pipe or reader between progress checks. The client owns only its exporter
+and SSH process groups; killing them cannot prove a Docker daemon RPC has stopped.
+Therefore custody, loading, proof and approval remain distinct states. A cancelled
+never-started load retains bytes and audit history; it is not silently reopened.
+The deployed custody gateway uses fixed public GCE metadata only, not the service
+account credential endpoint. It cannot load or approve an image. See the exact
+[operator protocol](HOST_BUNDLE_OPERATIONS.md) and [unfinished phases](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-durable-rpc-claims-and-reconciliation"></a>
+## Durable RPC claims, unit ownership and evidence reconciliation
+
+An SSH connection is a transport, not an execution owner. Closing it must not grant
+permission to retry a write that a server may still be processing. Our subsequent
+local toolchain loader uses a fixed retained systemd unit and a protected outbox.
+The worker acquires the same host journal, verifies its unit/PID/boot/start ticks and
+effective limits, writes a durable claim, advances `load_started`, and only then
+invokes the fixed Docker load RPC. This is operator-owned public-image maintenance,
+not a general model-selected terminal or generated-code execution service.
+
+```text
+SSH client -> durable outbox -> retained unique unit -> fsynced claim -> RPC
+     X                                 |                              |
+disconnect                  work remains independently owned      completion ack
+                                                                   |
+                                                        immutable image read-back
+                                                                   |
+                                               receipt fsync -> SQLite loaded
+```
+
+**Invocation ID** distinguishes separate launches of a unit whose name is reused.
+**Boot ID + PID + process start ticks** distinguish process incarnations even after
+PID reuse. Neither a PID nor an absent process is proof that the Docker daemon's
+RPC ended. Unit limits bound the client process, not the separate daemon; those are
+different resource owners and need separate capacity/behavior verification.
+
+**Normal RPC completion acknowledgement** and **postcondition verification** are
+different facts. The receipt records both. A normal acknowledgement followed by an
+unavailable image read-back can be reconciled using another read, without another
+load. A timeout or missing acknowledgement cannot be repaired from image presence
+alone. A matching positive receipt, claim and journal lineage can repair the SQLite
+projection after process death between receipt publication and the final update.
+
+**Same-custody reopening** is a deliberately controlled state-machine cycle:
+`cancelled -> archive_verified` requires an unexpired unchanged intent, exact
+previous verified receipt, actual retained-file read-back and no competing work.
+It does not erase cancellation history or create a new allocation. The observation
+path remains capped at sixteen entries, so the cycle cannot support unlimited retries.
+Neither `loaded` nor `proof_pending` releases the slot or means approved.
+
+Actual `os._exit` tests cover pre-RPC and post-receipt death using mocked RPCs. The
+real Docker Desktop public-image projection check caught an optional-key template
+bug that mocks missed; optional `Healthcheck` uses a map lookup returning null when
+absent. Both exact public images passed that read-only projection afterward. This
+is not a live VM image load, gVisor execution, role approval or application deployment.
+
+<a id="dictionary-bounded-decompression"></a>
+## Bounded decompression and authenticated source framing
+
+Compression reduces transport bytes, not authority. The new complete source closure
+requires twelve reviewed files, while the live host still has its eleven-file custody
+release. Its installer keeps the 256,000-byte wire limit and declares a separate
+384,000-byte decoded limit, exact decoded byte count and SHA-256. A version-2 apply
+envelope uses base64 for binary transport and zlib for compression.
+
+```text
+bounded wire bytes -> unique-key JSON -> exact envelope -> bounded base64 decode
+       -> decompression(max_output + 1) -> exact count/hash/eof/no trailing bytes
+       -> apply or exact forward resume -> source checks -> existing journal/swap
+```
+
+A **decompression bomb** is a small compressed input that expands to enormous data.
+Checking size only after unbounded decompression is too late. The implementation
+limits produced output first, then rejects unconsumed or trailing compressed data,
+missing end-of-stream, count/hash mismatch and duplicate keys. Let W be wire cap and
+D decoded cap: retained data is bounded by O(W + D), not attacker-proposed expansion.
+This is not signature verification: authorization still comes from the protected
+operator source and pinned SSH/host identity, not a caller's supplied hash.
+
+<a id="dictionary-forward-recovery-and-monotone-authority"></a>
+## Forward recovery, monotone authority and interrupted multi-rename updates
+
+**Forward recovery** completes the already-recorded target state after interruption;
+**rollback** restores the previous state. They are not interchangeable. In this
+project, an old launcher may lack the code needed to recognize retained imports or
+packaging work. Rolling back source could therefore discard a safety barrier even
+when the data remains. Forward recovery preserves that capability without inventing
+a new candidate or deleting history.
+
+**Monotone authority** here means recovery cannot obtain greater permission merely
+because a process crashed. Its allowed target is exactly the original candidate:
+the source bodies, filenames, file modes and their hashes must match the durable
+intent. It cannot substitute a repair generated later, approve a toolchain, increase
+capacity or clear an uncertain operation. A changed candidate needs a new reviewed
+update, not this recovery command.
+
+The DSA model is a small **finite state machine** combined with equality checks on
+three filename-to-hash dictionaries. Recorded phase is only one observation: it can
+lag a successful directory rename. The controller therefore checks actual trees.
+
+```text
+old root + staged prefix, no predecessor
+    -> finish only missing exact files -> verify/import -> save old root
+absent root + exact predecessor + complete stage
+    -> publish stage
+new root + exact predecessor, no stage
+    -> verify/import -> commit
+foreign/missing/contradictory trees -> refuse; preserve evidence
+```
+
+In Python, prefix containment is `all(expected.get(k) == v for k, v in observed.items())`.
+This is dictionary-subset reasoning, not permission to overwrite a mismatching file.
+It is valid only while the original root still exists. Once the root has been saved,
+the complete staged dictionary must equal the candidate dictionary. That stronger
+condition prevents recovering from a supposedly completed copy with missing files.
+
+Let F be the number of files, B their total bytes, and R retained predecessor trees.
+SHA-256 read-back costs O(B); comparing inventories costs expected O(F), with O(F)
+metadata. Scanning protected retention costs O(R) bounded by the existing release
+allowance plus the one in-progress staging tree. No dynamic programming is needed:
+there are a few legal transitions, not competing optimization choices. Equality and
+explicit state guards are both simpler and more reliable than a model choosing the
+next rename.
+
+The implementation uses the **same exclusive host flock** as validation/packaging,
+requires no unresolved jobs/imports, fsyncs each directory boundary, preserves the
+predecessor and reruns isolated imports. Local child-process tests kill execution
+with `os._exit` after each rename and then resume from observed state. They establish
+process-death recovery for those boundaries, not arbitrary power-loss guarantees.
+Unknown torn control files are retained for review rather than silently deleted.
+See [operator commands and exact evidence scope](HOST_BUNDLE_OPERATIONS.md).
+
+<a id="dictionary-fixed-fixture-enrollment-proof"></a>
+## Fixed-fixture enrollment, expected failures and evidence versus authority
+
+An **enrollment proof** asks whether an operator-reviewed runtime can execute known
+source under the required isolation, not whether arbitrary generated code is correct.
+A **fixture** is fixed test input with known expectations. Here its actual tar bytes
+have independent size/hash pins. Matching a hash supplied by the caller is not
+enough: the expected pin must come from the protected reviewed catalog.
+
+```text
+protected fixture pin -> actual bytes -> exact reserved role
+    -> durable attempt -> verify native + guest enforcement
+    -> extract bytes -> run fixed command -> verify native cleanup
+    -> append retained evidence -> all case results known
+                                      |
+                              NOT approval authority
+```
+
+The DSA structure is a bounded map keyed by `(import_id, case_name, attempt)`, with
+a unique job ID as a reverse index. At most eight imports, three cases and two
+attempts yield 48 retained case records. A primary key makes duplicate attempts
+invalid; the exclusive host flock serializes ownership, and an SQLite transaction
+atomically records job intent with its case. These solve different problems: the
+lock excludes concurrent owners, while the transaction prevents a case without
+its corresponding job after interruption.
+
+An **expected failure** is not any error. The negative fixture must reach the
+intended test command, return its known exit code and emit its known failure marker.
+An npm/Maven preparation error, missing binary, truncated output or unknown cleanup
+cannot pass the negative case. In Python, use exact predicates rather than truthy
+coercion: `success is False`, `type(exit_code) is int`, and compare the executed
+command to the protected profile. Boolean values are subclasses of integers in
+Python, so checking only `isinstance(value, int)` can incorrectly accept `True`
+as version 1 or a purported exit code.
+
+**Evidence** records observed facts; **authority** permits a consequential action.
+Three passing case receipts do not themselves approve an image or enable customer
+execution. A separate verified publication transition must bind the same archive,
+image, controller and policy and preserve rollback/recovery. Keeping those concerns
+separate avoids upgrading permission merely because a test finished.
+
+Hashing fixture bytes costs O(B); the bounded indexed case lookup is approximately
+O(log N), with N at most 48, while collecting the three case results is O(3).
+No DP or generative planner is needed: this is an exact state machine and a finite
+truth table, not an optimization problem. An LLM must not choose whether to ignore
+missing native enforcement or convert an unknown result into a pass. Current
+implementation: [toolchain proof controller](../app/coding/toolchain_proof.py);
+local/live evidence limits: [offline toolchains](OFFLINE_TOOLCHAINS.md).
+
+<a id="dictionary-multi-file-publication-and-provenance-chain"></a>
+## Multi-file publication, logical atomicity and provenance chains
+
+An atomic `os.replace` updates **one** directory entry. It does not atomically replace
+both a policy file and a registry file. The application therefore needs **logical
+atomicity**: during partial publication, no consumer is permitted to use the mixed
+pair. Here the same exclusive host flock protects execution and publication; a
+durable `publishing` state denies new work until both files and the completion
+receipt are verified. A process crash releases the OS lock, but not that durable
+admission barrier.
+
+```text
+old registry + old policy       -> durable publishing intent
+new registry + old policy      -> blocked; exact forward recovery only
+new registry + new policy      -> blocked until receipt/phase commit
+new pair + matching receipt    -> enrolled; verify pair/chain before admission
+foreign pair or staging bytes  -> blocked; preserve evidence for review
+```
+
+A **publication plan** is an immutable mapping of original/candidate file bytes to
+their SHA-256 hashes, plus evidence references and the original controller binding.
+Its hash identifies an exact transaction, not merely the desired outcome. Recovery
+may finish that transaction; it may not choose another candidate or overwrite a
+different operator edit. A staged file is repairable only when its bytes are an
+exact prefix of the independently reconstructed target. `target.startswith(prefix)`
+is a predicate on bounded bytes, not authority to rewrite arbitrary content.
+
+**Provenance** answers where an artifact came from. An operator-built image exported
+from Docker is not necessarily a published repository image. A fabricated
+`repository_digest` would conflate acquisition identity with distribution authority.
+Registry v2 instead retains separate index, AMD64 manifest and config identities,
+archive count/hash, recipe hash, import ID, controller binding and three fixed proof
+receipt hashes. The existing Python repository-origin entry is preserved unchanged.
+Neither provenance nor a passing fixture grants central funded deployment access.
+
+Publishing the second role creates a **hash chain** of configuration pairs:
+
+```text
+baseline pair -> React-approved pair -> React-and-Spring-approved pair
+       old/new hashes match at every edge; Python remains present
+```
+
+Verification works backward from the actual current pair. Exactly one retained
+publication must end at it; its original pair becomes the next node. A missing edge,
+fork, altered receipt, expired stop or mismatch closes admission. This is graph
+reachability over at most eight directed edges, not machine-learning confidence.
+The implementation scans a bounded list for each edge: O(N²) comparisons, with
+N ≤ 8, plus O(B) hashing/decoding of bounded configuration bytes. A dictionary keyed
+by pair could reduce traversal to O(N), but the small bound makes explicit duplicate
+and fork checks straightforward. Retained plans occupy O(NB); no external content
+or OAuth/provider credential is needed for this decision.
+
+Local tests use real `os._exit` after reservation, either replacement and completion.
+They verify process-death recovery and admission closure, not arbitrary hardware
+power-loss behavior or live Linux runtime enforcement. Every file/data boundary is
+flushed with `fsync`, but filesystem/provider guarantees still constrain durability.
+Implementation: [publisher](../app/coding/toolchain_publication.py) and
+[admission verifier](../app/coding/isolated_validation.py).
+
+### Deep dictionary: negative authorization, terminal rejection and source-bound retry
+
+**Terminal rejection** is a finite-state-machine outcome, not a synonym for success.
+An operator can abandon a definitely completed but unpublished toolchain while
+retaining all evidence. `rejected` means "do not approve this transaction," not
+"delete its image" or "the Docker call never happened." `load_uncertain` cannot
+transition to it, because an uncertain side effect still needs reconciliation.
+
+```text
+uncertain side effect -> reserved -> independently reconcile
+completed load -> failed/aborted fixture proof -> audited rejection -> no approval
+completed load -> all verified fixtures -> governed publication -> role approval
+```
+
+**Negative authorization** records what authority was NOT granted. A rejection
+receipt explicitly has `image_approved=False` and `configuration_published=False`.
+Consumers verify the root-protected receipt, terminal CAS and retained proof/job
+hash rather than inferring permission from a friendly status label. This is the
+same separation needed for an agent's refusal, partial result or failed verifier:
+none may be presented as successful execution of the requested operation.
+
+**Source-bound retry identity** extends the canonical import key with the reviewed
+controller hash. In Python, `sha256(canonical_json(intent_v2)).hexdigest()` yields a
+different identity for a different controller even if the image bytes are the same.
+The old intent stays terminal; a new reviewed transaction can reuse independently
+verified bytes through a bounded copy. This is not an implicit retry of an uncertain
+effect and does not extend time or financial authority.
+
+**Snapshot integrity** hashes canonical retained proof rows plus their cleaned job
+identities. With at most six attempts per import and eight imports, verification is
+bounded O(N + P + B), where N is imports, P is retained proof/job rows, and B is the
+bounded bytes hashed. Archive copying/reverification is O(A) I/O and bounded-buffer
+space for archive size A. Hard links are prohibited: sharing one mutable inode would
+couple the old evidence to the new transaction and undermine independent custody.
+Receipt persistence before terminal CAS permits exact recovery after process death;
+missing or changed evidence fails closed instead of fabricating a passing result.
+
+### Deep dictionary: execution provenance versus observer provenance
+
+**Execution provenance** identifies the code, input, claim and image used when an
+effect occurred. **Observer provenance** identifies the verifier that later examined
+that effect. They are related but are not interchangeable. A broken image-readback
+template does not prove that a previously acknowledged Docker load failed, and
+repairing the template does not justify rewriting the original execution identity.
+
+An audited repair keeps the original source/binding and completion receipt, then
+records the corrected verifier, validator and repair-controller hashes separately:
+
+```text
+immutable execution claim + original completed-effect receipt
+                      |
+          independently versioned observer
+                      |
+      durable audit + exact before/after receipt states
+                      |
+       reconciled effect (not application/profile approval)
+```
+
+**Write-ahead repair plan** is the recovery analogue of a database write-ahead log:
+persist the exact intended receipt transition before replacing the receipt or
+advancing its state machine. On restart, compare bytes with the recorded before/after
+states; resume only that decision. A missing result is not success. A foreign partial
+file is not a retry checkpoint. The repair audit is bounded by eight records and
+8 KiB per record, with O(N + B) verification of records and bounded bytes; archive
+reverification remains O(A) I/O. An exclusive existing host flock prevents multiple
+repair owners from racing. No learning model, provider key or arbitrary shell is
+needed to make these integrity decisions.
+
+### Deep dictionary: code protection, data privacy and external garbage collection
+
+**Protected** and **private** are different predicates. Protected operator code may
+be readable (0644) but must not be writable by other users, replaced by a symbolic
+link, multiply linked or changed from its reviewed hash. Private receipt/archive
+custody additionally forbids group/other read bits (0600). Reusing a private reader
+for protected public code rejects valid source; weakening it globally exposes data.
+Use separate bounded readers and check an opened descriptor with `fstat`, not only
+the earlier pathname. A replacement-between-check-and-open test verifies the
+TOCTOU boundary. Metadata checks are O(1); hashing B source bytes is O(B).
+
+**External garbage collection** is a state-changing controller outside the agent's
+own state machine. A durable success receipt does not guarantee that a Docker image
+still exists: Coolify can later prune an unused image. Persisted identity, execution
+completion and current availability must be tracked separately.
+
+```text
+reviewed bytes -> durable load claim -> normal daemon completion
+                                        |
+                               external cleanup controller
+                                        |
+                                image no longer available
+                                        |
+                exact absence evidence + retained input + audit
+                                        |
+                    governed restoration, not blind RPC retry
+```
+
+**Write-ahead configuration CAS** stores the exact approved before/after settings
+before changing an external controller. The cleanup guard changes one Boolean
+(`force_docker_cleanup`) and preserves its schedule, threshold, volume/network
+protections and image-retention setting. A database transaction locks and compares
+the current row; an independent read confirms the result before the root receipt
+is committed. A lost response can reconcile the same decision. Foreign settings
+or a mismatched audit require review, not an overwrite. The fixed six-setting map
+has O(1) comparison cost; its bounded canonical JSON hash costs O(B).
+
+**Maintenance-owner coordination** means all actors that can destroy a runtime
+artifact must respect its leases/retention—not merely the process that creates it.
+Changing forced cleanup to threshold cleanup reduces immediate interference, but
+is not proof against manual or threshold-triggered deletion. A production design
+must coordinate cleanup with validation/deployment owners and verify availability
+at dispatch. It must never report completion from historical image presence alone.
+
+**Restoration provenance** distinguishes the original execution history from a
+later recovery of the same immutable content. A cryptographic content ID identifies
+bytes, not the event that placed those bytes on a host. Keep two append-only causal
+chains and join them through explicit hashes, rather than attributing the second
+load to the first worker. This is a small provenance DAG:
+
+```text
+original input -> original claim -> original positive completion
+       |                         -> external deletion
+       +-> absence observation -> restoration plan -> claim -> positive receipt
+                                                            + worker exit
+original receipt + restoration chain + current image -> audited readback repair
+```
+
+**Single-use recovery capability** is an authority that can be consumed at most
+once. Commit the claim before invoking the side effect. If the worker dies after
+claim but before a trustworthy receipt, observe/reconcile instead of invoking it
+again. SQL `UPDATE ... WHERE claim IS NULL` is a compare-and-set, not an exactly-once
+guarantee for the remote Docker daemon. A missing receipt means uncertainty.
+
+**Historical executable custody** preserves the exact reviewed controller that
+actually ran. A later helper edit must not alter the provenance of an earlier
+unit. Store its immutable bytes under a content hash and verify the allowlist,
+hash, length and parsing before any historical observation. Hash verification is
+O(B) time over B bytes; the bounded restoration inventory is at most eight records.
+The project's live 8 October restoration used this distinction. Repair/closure
+did not reload or approve an image; cross-source adoption and native proofs remain
+separate work, not consequences inferred from a successful restoration.
+
+**Completed-load adoption** transfers the right to validate the same immutable
+content under a new reviewed controller version; it does not invent another
+execution. Model the lineage as a bounded DAG whose edge binds the old completion,
+terminal rejection and custody to a new intent. Reject self-edges, cycles, differing
+content/host/deadline and unknown prior execution. Each edge has a canonical hash;
+the current image is independently observed before use. For at most eight retained
+imports, traversal and cycle detection are O(V + E), while archive rehashing is O(B)
+over B retained bytes. The project's `seen` tuple bounds recursion; it is not a
+general claim that arbitrary cyclic workflows are safe.
+
+**State versus effect**: `loaded` means verified content is available for proof,
+not necessarily that this particular controller ran `docker load`. Record the
+origin separately (`daemon load` versus `completed_load_adoption`). A write-ahead
+`adopting` state blocks unrelated work until reconciliation. A database CAS can
+advance bookkeeping after a crash without repeating the external side effect.
+This distinction prevents false audit statements and unnecessary costly retries.
+
+### Deep dictionary: diagnostic custody and atomic evidence
+
+**A hash is not a log.** SHA-256 can prove that retained bytes match an earlier
+fingerprint, but it cannot recover bytes that were discarded. The first native
+Spring fixture exposed this distinction: its failing result was hashed, while its
+actual compiler/test output was not retained. Exit 1 alone cannot establish a
+dependency, memory, JVM or sandbox root cause.
+
+**Atomic evidence pair** means the full bounded result and its proof receipt commit
+in one SQLite transaction. The receipt binds the result's canonical bytes and
+native-enforcement hash; job/source/binding identities remain separate checks.
+If the transaction fails, neither half commits. A cleaned job with no committed
+result is unavailable evidence, never a successful test.
+
+```text
+fixed public fixture -> isolated execution -> identity-verified cleanup
+                                              |
+                       atomic SQLite transaction
+                       [ full result + receipt(hash(result)) ]
+                                              |
+                verify job/source/binding/hash/native evidence
+                                              |
+                     bounded read-only diagnostic tail
+                     (no execution or approval authority)
+```
+
+**Serialization-aware truncation** budgets the bytes actually transmitted, not
+Python character counts: Unicode and control characters can expand during JSON
+escaping. `diagnostic_tail` uses binary search for the longest suffix whose
+canonical JSON fits the budget. For an excerpt budget K, it makes O(log K)
+comparisons and serializes at most O(K log K) characters; K is fixed and small.
+It keeps terminal error context while explicitly reporting truncation. Full
+fixed-fixture results remain separately capped, hash-bound and protected. This is
+not permission to store private Workspace content or generated-customer logs
+without their separate redaction, consent and retention controls.
+
+**Compatibility projection** preserves an older evidence contract while adding a
+new one. The diagnostic endpoint is separate from the existing proof observation,
+so adding logs does not silently alter already-published proof-plan hashes. Missing
+historical output is reported as unavailable, not invented or retroactively filled.
+
+### Deep dictionary: file descriptors and resource-vector admission
+
+**File descriptor (FD)** is a process-local integer referring to an open kernel
+resource, such as a file, socket or pipe. It is not an OCI image descriptor. Java
+compilers can hold many dependency JARs open concurrently. The native Spring
+fixture's `Too many open files` result showed a real FD-resource failure rather
+than a model or OAuth failure.
+
+**Soft versus hard `RLIMIT_NOFILE`**: the soft limit is the currently effective
+ceiling; the hard limit bounds how far the process may raise it. Verify both in
+the actual guest, not just the requested container configuration. Python's
+`resource.getrlimit(resource.RLIMIT_NOFILE)` can inspect them on supported Unix
+systems; it should not be used to raise limits in the shared API process.
+This project uses a fixed typed profile to request and verify the sandbox limits.
+
+**Resource vector** extends scalar admission beyond CPU and memory:
+`(CPU, memory, tasks, FDs, storage, duration, network)`. A feasible task must satisfy
+every coordinate. Increasing one bounded coordinate because of measured evidence
+does not justify weakening other coordinates or increasing cloud cost authority.
+The current correction uses 1,024 soft/hard FDs only for Spring test/package
+processes; Node and other validation profiles stay at 256. This is per process,
+not a claim of a 1,024-FD aggregate host ceiling. Task-count, cgroup and memory
+limits remain independent bounds. Membership/policy lookup is O(1), while
+checking a fixed-size vector is O(d), with a small constant dimension d.
+
+### Deep dictionary: recovery ownership, inode custody and reconciliation
+
+**Write-ahead dispatch versus write-ahead claim.** A dispatch decision is saved
+before asking systemd to start a worker. A worker claim is saved before asking
+Docker to load an image. They protect different failure boundaries: losing the
+dispatch response does not justify starting another unit, and losing a Docker
+response does not justify repeating a potentially completed daemon operation.
+In Python/SQLite, use fixed parameterized statements and a conditional update
+(`WHERE claim IS NULL`) inside a transaction. A row count of one proves ownership
+of that transition, not success of the external action. This is at-most-once
+invocation control, not a universal exactly-once side-effect guarantee.
+
+**Inode custody / TOCTOU (time of check to time of use).** Hashing a path and later
+reopening it may consume different bytes. Open with `os.O_NOFOLLOW`, validate
+`os.fstat(fd)` against protected path metadata, hash through the open descriptor,
+verify metadata again, then seek back to the start. On Linux a fixed trusted CLI
+can inherit the descriptor through `subprocess.run(..., pass_fds=(fd,))` and read
+`/proc/self/fd/<fd>`. The descriptor number is not arbitrary terminal authority:
+this project's operator worker uses it only for its fixed, approved archive.
+Full hashing costs O(n) time for n bytes; streaming uses O(b) memory for buffer b.
+The private archive is never extracted into the application workspace.
+
+**Terminal reconciliation.** Reconciliation joins a durable intent, dispatch,
+worker/process identity, bounded receipt and current external state. Neither
+an old timestamp, `MainPID=0`, nor present image alone proves that a Docker RPC
+completed. Explicit positive completion plus matching image and exited worker are
+needed. A hash chain binds evidence to the original decision; it does not prove
+the truth of unverified facts. The Python-image recovery uses a singleton bounded
+ledger; it is not an unlimited retry queue or approval for new images.
+
+```mermaid
+flowchart TD
+    P[Verified archive and source-bound plan] --> D[Commit dispatch decision]
+    D --> U[Start retained bounded systemd unit]
+    U --> C[Commit single worker claim]
+    C --> L[One Docker load using verified open inode]
+    L --> R[Persist bounded daemon result]
+    R --> V{Positive completion, exact image, matching exited worker?}
+    V -->|Yes| T[Explicit reconciliation releases shared host slot]
+    V -->|Unknown or failure| H[Retain reservation; no automatic replay]
+    T --> W[Run positive and negative validation proofs]
+```
+
+The shared flock serializes host mutation; database CAS-like conditional updates
+make each transition single-use. The recovery reservation also excludes workload
+admission and source installation. A fixture proving these transitions is not a
+live Docker proof; the 12 October operation separately recorded real completion,
+valid/invalid Python execution, replay rejection and native cleanup.
+
+### Deep dictionary: OCI graphs, annotations, prefix recovery and approval
+
+**Image index versus platform manifest versus configuration.** An OCI index
+points to architecture-specific manifests. A Linux/AMD64 manifest points to one
+configuration and an ordered layer list. Each edge has a digest and byte size;
+the configuration separately binds uncompressed layer diff IDs. A tag is a
+mutable lookup hint, not a stable vertex identity. In Python, select the exact
+platform, verify every descriptor and hash actual bytes. Do not confuse Docker's
+reported image ID with whichever graph node a particular storage backend uses.
+
+```mermaid
+flowchart LR
+    I[Pinned multi-platform index] --> M[Pinned Linux/AMD64 manifest]
+    M --> C[Configuration: platform and rootfs diff IDs]
+    M --> L[Ordered compressed layers]
+    L --> H[Compressed digests and bounded decompression]
+    C --> H
+    H --> V[Verified candidate content]
+    V --> S[Separate scan and provenance review]
+    S --> A[Separate runtime approval]
+    A --> E[Actual execution and behavior tests]
+```
+
+**Merkle DAG / content-addressed graph.** Hashes bind parent metadata to child
+bytes. Inspecting a known image graph costs O(V+E+n) for vertices V, references E
+and streamed bytes n; hash-map lookup makes descriptor membership effectively
+O(1) per edge. Integrity is not a vulnerability assessment, publisher signature,
+safe runtime approval or proof of application correctness. Changing even an
+informational annotation changes its containing manifest digest.
+
+**Annotations are data, not control.** OCI permits optional string metadata.
+Rejecting every such map makes real official images incompatible; accepting
+arbitrary fields can create an authority hole. This project accepts only bounded
+string maps and retains hashes, platform, hook, URL and size checks. Even a string
+`org.gca.approved: "true"` cannot approve an image or alter a startup command.
+Annotations do not become LLM instructions, tool arguments or URLs to follow.
+
+**Prefix recovery.** A partial download is not a complete CAS object. Rehash its
+retained prefix, require exact HTTP 206/Content-Range continuation, append within
+the descriptor's size, then verify the entire final digest before atomic promotion.
+For small known metadata, append only if retained bytes are an exact prefix of
+the intended canonical document. This is O(n) total verification work, with O(b)
+streaming memory for buffer b. Restarting from an unverified offset or accepting
+HTTP 200 at a nonzero offset can silently duplicate/corrupt data.
+
+**Source-handover lineage.** A corrected controller creates a new immutable plan
+linked by hashes to prior decisions while preserving catalog, configuration and
+expiry. The prior failure is not rewritten as success. The 13 October candidate
+acquisition demonstrates this boundary using real public blobs, not a mocked
+executable runtime. Approval, scanning, runtime startup and deployment remain
+separate state transitions with their own evidence and authority.
+
+### Deep dictionary: scanner trust, dependency locks and distinct proof states
+
+**Authenticity versus integrity versus safety.** A SHA-256 digest binds exact bytes,
+but does not identify their author. A signature checked against an independently
+trusted certificate policy adds an identity binding. Neither operation proves
+the software is safe or the requested application works. Our scanner preparation
+therefore leaves `scanner_executed`, `scan_completed` and `runtime_approved` false.
+An API response or OKF document saying "verified" is not equivalent to executing
+the corresponding verifier against the exact retained bytes.
+
+**Trust root and certificate-policy graph.** Model the release, certificate,
+issuer and transparency record as vertices with typed verification edges. A graph
+traversal is useful for understanding prerequisites, but ordinary reachability
+is not cryptographic validation. Use the maintained Sigstore verifier, exact
+workflow identity and issuer, and its production trust bootstrap. Do not write a
+homegrown verifier that accepts any certificate because its signature matches a
+key carried by the same untrusted bundle. Trust begins outside the input graph.
+
+**Transparency log / Merkle inclusion.** An inclusion proof links a leaf to a
+signed tree root using sibling hashes, typically O(log N) work for N leaves. It
+shows a signed artifact record was included in the log, not that its contents
+were reviewed or harmless. Certificate-chain policy, timestamp/validity and
+signature checks remain separate obligations. The project's Python controller
+delegates this cryptographic work to Sigstore; tests that mock its successful
+process exit test control flow, not the actual cryptographic proof.
+
+**Content-pinned dependency lock.** Think of a lock as a hash map from canonical
+package identity to (version, allowed distribution digest). Lookup is expected
+O(1); verifying k distributions containing n bytes costs O(k+n). Native wheels
+are platform-specific. A macOS ARM64 hash cannot be quietly replaced by an unpinned
+Linux wheel or source build. The scanner verifier's 31 wheels are separate from
+application requirements, preserving provider/runtime dependency boundaries.
+An exact distribution hash provides integrity; a package version string alone
+does not detect modified files or establish publisher authenticity.
+
+**Non-executable staging and bounded parsing.** Public scanner bytes are first
+data in a private CAS. Python's `tarfile.extractall` is not used: iterate bounded
+members, reject traversal/links/duplicates, read only the exact regular member,
+and check size, ELF architecture and content digest. Complexity is O(n) archive
+processing; memory must include both compressed input and the allowed binary,
+not merely a small read buffer. The actual release exceeded an assumed size cap;
+we measured its signed archive and pinned 172,765,344 bytes rather than disabling
+size checks. The retained file stays mode 0600; executable permission and actual
+sandbox invocation need distinct later authority.
+
+```mermaid
+flowchart LR
+    H[Hash-verified public input] --> S[Identity/signature proof]
+    S --> N[Non-executable exact binary]
+    N --> C[Keyless scan with pinned current database]
+    C --> F[Findings, coverage and provenance]
+    F --> A[Separate runtime approval]
+    A --> V[Application behavior and delivery proof]
+```
+
+**Proof-state separation.** A state machine should prevent one proof from
+substituting for another: signature success cannot become vulnerability success;
+scan success cannot become runtime approval; approval cannot become correct user
+task completion. OKF can explain and version these contracts, but only trusted
+controllers with actual evidence can advance the corresponding transitions.
+See `RUNTIME_SCANNER_PREPARATION.md` for the real versus mocked evidence boundary.
+
+### Deep dictionary: freshness predicates, streaming custody and pre-allocation bounds
+
+**A temporal predicate is not a permanent property.** A database's content digest
+stays constant while its eligibility changes with the current time. Model the gate
+as `eligible(database, now)`, not `database.verified`. The implementation rechecks
+schema, timezone, future skew, maximum age and publisher `NextUpdate`. A saved
+receipt cannot make yesterday's data current. The Java identification database
+and vulnerability database have different purposes and update schedules, but each
+must satisfy the project's independent maximum-age rule when used.
+
+```python
+from datetime import timedelta
+
+def fresh(updated_at, next_update, now):
+    # All three values must first be validated as timezone-aware datetimes.
+    return (now - timedelta(hours=24) <= updated_at
+            <= now + timedelta(minutes=5)
+            and updated_at < next_update <= updated_at + timedelta(hours=72)
+            and now < next_update)
+```
+
+**Prefix-bound continuation.** A resumable transfer has state
+`(offset, SHA256(bytes[0:offset]))`. The receiver observes its retained prefix;
+the sender compares that digest with the corresponding prefix of its independently
+verified source. Append is allowed only for that exact state. A final whole-file
+digest is still necessary: prefix equality does not validate the unreceived suffix.
+For n bytes and a fixed buffer b, sequential hash/transfer work is O(n), with O(b)
+working memory. Rehashing a prefix costs O(offset); this deliberate verification
+cost is safer than trusting a progress counter. A complete partial can reconcile
+without retransmission, while conflicting complete/partial files require review.
+SHA-256 is an integrity mechanism, not encryption or publisher authentication.
+
+**Bounds before allocation.** General archive readers may consume a declared
+PAX/GNU extension before returning the next ordinary member. A size check after
+that consumption is too late. The scanner-database reader examines each fixed
+512-byte header, rejects unsupported extension types before reading their bodies,
+and streams only the two exact regular members under separate declared-size and
+total-expansion caps. Do not interpret this restricted reader as a universal tar
+parser; unsupported valid formats are intentionally rejected. This is an example
+of enforcing an invariant at the transition where a resource is allocated.
+
+**Custody proof versus execution proof.** The scanner transfer preserves an exact
+binary and a reviewed hash of the earlier genuine Sigstore receipt. The destination
+does not claim to have independently performed that cryptographic verification.
+Files remain private, non-executable data. Shared host ownership, fixed deadlines
+and source-pinned IAP commands prevent the custody activity from becoming arbitrary
+shell access. Real gVisor invocation, native resource observations, output coverage,
+cleanup and runtime approval remain separate transitions.
+
+```mermaid
+flowchart TD
+    S[Signature-bound local bytes] --> P[Compare receiver prefix with local prefix]
+    P --> T[Bounded transfer under shared host ownership]
+    T --> H[Whole-file hash and private non-executable custody]
+    H --> X[Pending: native-proved keyless scanner execution]
+    D[Database digest plus current-time freshness gate] --> X
+    X --> R[Coverage and findings tied to exact input/report hashes]
+    R --> A[Separate governed runtime decision]
+```
+
+**Phase splitting and resource vectors.** Identify packages and assess their
+vulnerabilities as distinct typed stages when their database footprints cannot
+coexist in one approved job volume. The dependency edge carries the exact SBOM
+hash, image manifest, scanner version and coverage—not a model's summary of the
+packages. Splitting work does not permit omitting Java identification, fabricating
+package coverage, increasing host budgets or treating an inventory as a completed
+vulnerability scan. The actual two-stage native execution still requires proof.
+See `SCANNER_DATABASE_PREPARATION.md` for the completed data-only checkpoint.
+
+### Deep dictionary: business idempotency keys and durable scanner ownership
+
+**Business identity versus request fingerprint.** A scan has a stable logical
+identity `(scan_id, role, stage)`; its request also has mutable operational facts
+such as a deadline and controller version. Hashing the entire request as the only
+idempotency key permits a retry with a new deadline to become a second execution.
+Use the stable tuple as the dispatch key, and separately retain/fingerprint the
+complete request. The scanner journal does both. Hash-map/SQL key lookup supports
+efficient observation; uniqueness and transactions, not an LLM remembering a past
+attempt, enforce one dispatch. A new UUID is new intent, not safe automatic retry.
+
+**A lock's lifetime differs from an operation's lifetime.** `flock` excludes live
+owners and is released when the process dies. A running sandbox may outlive that
+process. Persist `creating` before calling the external container engine, retain
+uncertain outcomes, and reconcile exact container plus native helper identities
+before releasing the shared slot. This combines a mutex with a durable state
+machine; neither is a substitute for the other.
+
+**Evidence-preserving DAG edges.** An assessment depends on an inventory artifact,
+not just the fact that an earlier step ran. The edge carries the immutable inventory
+digest and native-proof reference from the same logical scan. A matching digest
+reference is still not enough without later actual-byte and package-coverage checks.
+Topological order prevents assessment before inventory; typed lineage prevents
+assessment of the wrong inventory. Cleanup, content verification, coverage and
+runtime approval are distinct predicates.
+
+See `RUNTIME_SCAN_JOURNAL.md`. These new fixed profiles are operator-only primitives,
+not ordinary model-selectable commands or proof that a real scan has completed.
+
+### Deep dictionary: single-copy staging, hard limits and bounded execution evidence
+
+**Resource accounting counts copies, not logical objects.** A 1.55-GiB database has
+the same digest whether stored once or twice, but two copies consume twice the
+space. A content-addressed shared store does not eliminate per-job writable-copy
+cost. The launcher stages one private cache, and the worker uses it directly rather
+than duplicating it. Combined admission must include input, cache, output, temporary
+data and filesystem overhead. Stage splitting keeps the two databases from competing
+for the same fixed volume; it does not erase either stage's resource cost.
+
+**A hard limit is a ceiling, not a suggestion.** An unprivileged process cannot raise
+`RLIMIT_NOFILE` beyond the inherited hard limit. Setting 256 inside a container with
+64:64 fails before any scanner runs. The worker keeps the inherited ceiling at
+64:64. Native cgroup memory/CPU/tasks, per-process limits, disk capacity and command
+deadlines constrain different resources and must all hold simultaneously.
+
+```python
+import resource
+
+def keep_descriptor_ceiling():
+    # The reviewed container contract sets its inherited hard limit to 64.
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+```
+
+**Reverification at a state transition.** A writable private cache can change after
+its initial SHA-256 check. Rehash after the subprocess exits before publishing an
+immutable-source claim. Hashing n bytes takes O(n) work with O(b) working memory
+for a fixed-size buffer b. Rechecking has a real latency cost; admission/deadlines
+must allow for it rather than skipping the invariant. Freshness and deadline checks
+must also be repeated: content identity is stable, current eligibility is not.
+
+**Process lifetime is not pipe lifetime.** A child can close stdout/stderr while a
+descendant keeps running. An output-reader's EOF does not prove process-group cleanup.
+The worker bounds both streams, terminates its exact session, and still leaves native
+cleanup to the host's independent identity-safe observer. Partial diagnostic prefixes
+are explicitly partial; they do not claim a complete log or successful scan.
+
+**Typed evidence is a conjunction of predicates.** A valid SBOM, a CVE report with
+package coverage, exact output custody, native cleanup and runtime approval are
+different facts. A nonempty report or zero findings alone cannot prove all of them.
+For vendor Java binaries, OS package coverage also does not prove JRE coverage.
+See [the implemented worker contract](RUNTIME_SCAN_WORKER.md) for those boundaries.
+
+### Deep dictionary: write-ahead dispatch, clock domains and authority expiry
+
+**Write-ahead dispatch boundary.** Persist `scan_create_attempted` before the
+external Docker RPC. A crash with no such event can reconcile a preparation-only
+attempt through the trusted cleanup path; an event without an exact create result
+is ambiguous and must not be replayed. The immutable business key survives both.
+An event is not evidence that the remote action succeeded. This is an outbox-like
+ordering guarantee: durable intent precedes an external effect, and reconciliation
+bridges the gap when atomic transactions across SQLite and Docker do not exist.
+
+**Clock domains.** Wall time answers whether a grant or hosting term is still valid.
+Monotonic time measures bounded execution duration despite wall-clock adjustments.
+PostgreSQL `now()` is another clock domain used by authorization queries. Tests
+that simulate a historical grant must give application and disposable-schema SQL
+the same explicit logical time; otherwise they fail as the real calendar advances.
+This is not permission to freeze production clocks, move STOP, backdate evidence
+or replace a real billing observation. Negative tests must independently cross the
+expiry boundary and verify that no new host/source access occurs.
+
+**State, authority and evidence are separate.** A VM can be stopped while its disk
+still exists and incurs charges. A positive trial balance does not renew an expired
+hosting grant. A valid historical native proof does not establish present container
+health. Model these as separate fields/predicates rather than one `ready` boolean.
+
+```mermaid
+flowchart LR
+    V[Current provider resource observation] --> G{Current authority and capacity?}
+    B[Fresh attributable billing evidence] --> G
+    H[Human-approved term and ceiling] --> G
+    G -->|No| P[No dispatch; preserve state and continue local work]
+    G -->|Yes| D[Durable intent then bounded provider action]
+    D --> R[Independent postconditions and reconciliation]
+```
+
+For this project, the 22 October provider read confirms the original VM stopped;
+it does not authorize a restart. See [current evidence](HOSTING_TERM_STATUS_2026_10_22.md)
+and [local scan-host implementation](RUNTIME_SCAN_HOST.md). These requirements also
+apply to deployment workers, candidates and future training-budget reservations.
+
+### Deep dictionary: transactional outbox, fenced delivery and inbox deduplication
+
+**Transactional outbox.** A database transaction stores the business event and a
+delivery-intent row together. This removes the failure gap between “commit the
+event” and “remember to publish.” It does not make the later PostgreSQL/Kafka pair
+one transaction. The publisher can lose its response after Kafka accepted a record,
+so retrying the same immutable event ID is necessary and duplicates are expected.
+This project's default-off capture trigger bridges existing Workspace SQL insert
+paths. It does not yet bridge coding events or grant workflow-execution authority.
+
+**Inbox set and atomic projection.** A unique key `(consumer_name, event_id)` is
+the durable equivalent of a set membership check. Insert that key and perform the
+trusted SQL projection in one transaction. If the projection fails, roll back both;
+otherwise a retry could be suppressed even though its work never happened. A
+unique index, rather than an in-memory set, coordinates concurrent processes and
+survives restart. Index work is typically O(log n); a single-process hash set's
+expected O(1) lookup does not provide transactionality or cross-process durability.
+
+```python
+async def project_once(conn, consumer, event_id, apply_projection):
+    async with conn.transaction():
+        inserted = await conn.fetchval(
+            "INSERT INTO inbox(consumer,event_id) VALUES($1,$2) "
+            "ON CONFLICT DO NOTHING RETURNING event_id", consumer, event_id)
+        if inserted is None:
+            return False
+        await apply_projection(conn)  # Trusted SQL only, not a Google/API write.
+        return True
+```
+
+This is teaching pseudocode. The implementation additionally checks exact retained
+envelope bytes, tenant identity and run privacy state. External writes cannot be
+made atomic by putting an inbox insert around them; they need separate idempotency
+and reconciliation. A Kafka consumer must commit its offset only after the SQL
+transaction. The project's transport consumer loop is still pending.
+
+**Fencing token / compare-and-set.** Every delivery lease has a fresh random token.
+An ACK must match both the event and the currently unexpired token. After another
+worker reclaims an expired lease, the original worker cannot mark it published.
+The lease fences database state; it cannot recall a network request already sent.
+A publisher and consumer therefore need both fencing and duplicate handling.
+
+**Per-key ordering and head-of-line blocking.** Allocate sequence numbers while
+holding the parent-run row lock. Claim only the earliest unpublished event of each
+run, while unrelated runs can progress concurrently. The Kafka key combines tenant
+and run UUID. A poison/dead-letter event intentionally blocks that run's successors
+until reconciled. More workers cannot safely remove this dependency; unreviewed
+skipping would change semantics. Changing the partition count also changes key
+placement and needs a protocol migration, not an incidental configuration edit.
+
+**Backpressure is admission policy.** Per-tenant and global counters bound pending
+intent before the transaction commits. Once capacity is exhausted, an enabled
+capture transaction fails rather than silently losing an event. This protects
+durability but can reduce business availability; measure contention and queue
+drain rate before activation. A bounded batch, semaphore and deadline constrain
+work differently from storage caps and must be evaluated together.
+
+**Pseudonymization and deletion.** Random tenant IDs hide direct email addresses
+but still identify a tenant's events. Do not call them anonymous. Soft/hard erasure
+invalidates the authoritative envelope and local inbox; old broker messages can no
+longer recreate projections. It does not instantly erase retained broker segments.
+Short retention, least-privilege access and a documented erasure boundary are all
+needed. See [the actual local contract](WORKFLOW_EVENT_OUTBOX.md) for exact limits,
+implemented code, tests and the still-unproven live-delivery/Temporal work.
+### Deep dictionary: consumer positions, rebalance epochs and erasure tombstones
+
+**Fetched position versus committed offset.** A consumer may fetch eight records
+and advance its in-memory position while none of their SQL work is durable. Never
+commit that whole fetched position after processing only the first record. Commit
+the specific partition's processed offset plus one. Kafka offsets can have gaps,
+so monotonic order does not imply every integer is a visible record. A lost commit
+response means uncertainty; replay through the SQL inbox, not repeated external work.
+
+**Rebalance epoch.** Membership changes invalidate local assumptions about who
+owns a partition. A per-assignment token detects a stale fetched batch or task.
+Do not take a lock around `getmany` that the SDK's rebalance callback also needs:
+the fetch can wait for the callback while the callback waits for that same lock.
+The implemented callback cancels old SQL work without speculative offset commits.
+A batch that crosses reassignment stops instead of continuing from an advanced
+fetch position. Kafka group fencing and transactional inbox deduplication are still
+required; a local token is not a distributed consensus algorithm.
+
+**Poison record.** A malformed or unverifiable record is not an ordinary temporary
+network failure. The consumer stores bounded location/digest/category evidence and
+stops without committing past it. A retry counter is diagnostic, not permission to
+skip a record or call an LLM repeatedly. Repair/review and explicit restart preserve
+the distinction between operational recovery and silently abandoning an event.
+
+**Erasure tombstone.** Removing a private source while its broker record survives
+creates a referential gap. An exact short-lived digest proves those specific bytes
+were deliberately invalidated. The consumer can acknowledge them without rebuilding
+data. Unknown bytes do not inherit that disposition. Tombstones are still linkable
+metadata and need ACLs/retention; broker segment deletion and application TTL are
+different mechanisms and clocks. An expired proof cannot authorize a skip.
+
+**Projection versus source of truth.** A last-event view is a materialized reduction,
+not proof of completed business work. A monotone `max(sequence)` avoids an older
+event replacing a newer view, while an inbox prevents duplicate count increments.
+Retention and capture start bound the count's meaning. Do not convert “last phase
+was completed” directly into verified artifact success or 100% task completion.
+
+```mermaid
+flowchart LR
+    B[Bounded fetched batch] --> V[Check assignment and authoritative bytes]
+    V --> T[SQL inbox plus registered projection]
+    T --> K[Commit exact partition offset plus one]
+    K -->|Lost response| R[Replay through durable deduplication]
+    V -->|Poison or stale owner| S[Stop; preserve uncommitted position]
+```
+
+See [the implemented consumer and test evidence](WORKFLOW_CONSUMER.md). This remains
+local/default-off and does not complete live Kafka, coding-stream proof or Temporal.
+
+### Deep dictionary: tagged identities, composite keys and staged event contracts
+
+**Tagged identity / sum type.** `WorkspaceRun(id)` and `CodingRun(id)` are different
+values even if their UUID strings match. A tag makes the domain explicit:
+`('workspace', uuid)` versus `('coding', uuid)`. Independent BIGSERIAL counters also
+overlap, so source-event identity is `(kind, source_id)`. A globally unique delivery
+UUID solves deduplication but not business-source identity. Forgetting the tag can
+merge unrelated queues, projections or privacy deletion scopes.
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+from uuid import UUID
+
+@dataclass(frozen=True)
+class WorkflowIdentity:
+    kind: Literal['workspace', 'coding']
+    run_id: UUID
+
+# A dictionary/set key is the complete frozen value, not just run_id.
+```
+
+**Composite key.** A SQL unique constraint on `(kind, run_id, sequence)` supplies
+separate ordered namespaces with B-tree lookup typically O(log n). Two sequence-one
+events can coexist in different domains. Ordering must compare the same identity
+as uniqueness. Kafka keys must preserve that separation; adding a tag to an old key
+changes placement, so the project preserves Workspace v1 keys and tags new v2 keys.
+
+**Conditional parent FK.** A polymorphic run ID without a database FK can point
+nowhere. Migration 025 derives two generated parent columns from the tag; exactly
+the matching one holds the run ID and references its real table. Hard deletion
+cascades correctly. Soft deletion needs a kind-scoped trigger, and tenant cleanup
+must consider both ledgers. A bare run-ID filter is unsafe across those tables.
+
+**Versioned protocol versus activation.** New decoder support does not permit
+publishing to old consumers. Roll out version-aware consumers before enabling the
+new producer. Default-off flags, preserved old bytes/keys and downgrade drain checks
+reduce risk but do not prove broker offsets or live compatibility. An empty delivery
+table cannot prove rollback while external wire records remain. See
+[the implemented mixed-source bridge](WORKFLOW_CODING_EVENTS.md).
+
+### Deep dictionary: context boundaries and negative-space tests
+
+**Build context versus image.** The context is the input file set offered to the
+builder; the image is the resulting artifact. Excluding a file from a final stage
+does not prove it never reached a remote builder or an earlier layer. Deny private
+inputs before upload **and** before Docker context creation. Git tracking status
+and Docker ignore matching are different mechanisms, not interchangeable ACLs.
+
+**Negative-space / canary test.** Testing both a private path that must disappear
+and a public path that must survive avoids an always-empty context falsely passing.
+With P private and U public canaries, classification is O(P+U) engine calls here;
+the small fixed corpus favors auditable engine behavior over an invented glob
+implementation. Synthetic canaries are test data, never copies of actual secrets.
+
+```python
+private = {'.env.local', 'backups/database.sql'}
+public = {'app/api/main.py', 'requirements.txt'}
+assert not (private & exported_paths)
+assert public <= exported_paths
+```
+
+**Negation / ordered rule system.** An ignore file can re-include an earlier denied
+path through `!`. Membership in a set of denial lines therefore does not by itself
+prove exclusion. This checkpoint rejects all negations and per-Dockerfile overrides
+and separately tests actual engine matching; adding exceptions requires review.
+
+**Ambient authority.** A command can inherit credentials, a remote Docker context,
+registry config or Git global settings without naming them in its arguments. A
+minimal environment, empty config and pinned local daemon remove these implicit
+edges. This is defense in depth, not an OS sandbox or a content-secret scanner.
+See [the exact implemented context audit](DEPLOYMENT_CONTEXT_BOUNDARY.md).
+
+### Deep dictionary: orchestration ownership, fences and rollback
+
+**Single owner versus exactly-once effect.** A run belongs to one durable scheduler.
+That prevents two competing control loops but does not make a Google send exactly
+once. A network response can still be lost after a successful write. Tool-specific
+idempotency, artifact lookup and uncertain-write reconciliation remain necessary.
+
+**Immutable binding.** Treat owner, workflow identity and execution version as an
+algebraic value selected once, not independent mutable flags. SQL triggers reject
+partial or later mutations. A Python frozen dataclass describes the same intent
+in memory, but only database enforcement protects against another worker process.
+
+```python
+from dataclasses import dataclass
+from uuid import UUID
+
+@dataclass(frozen=True)
+class WorkflowBinding:
+    kind: str
+    run_id: UUID
+    owner: str
+    executor_version: str
+
+    @property
+    def temporal_id(self) -> str:
+        return f'gca.{self.kind}.{self.run_id}'
+```
+
+**Fence versus lock.** A row lock serializes a claim transaction; it is not held
+while an external API runs. A lease provides time-bounded liveness evidence and
+must match the current owner/version when entering execution. An immutable owner
+and a database no-foreign-lease invariant prevent a second scheduler from taking
+the same business run. Losing a lease does not prove an external write failed.
+
+**Rollback as admission change.** Switching future requests is different from
+moving existing state machines. Let in-flight workflows retain their history and
+owner, stop admitting new candidates, reconcile uncertain effects, and only then
+consider schema contraction. A flag flip alone cannot erase external history.
+
+**State machine versus event projection.** Kafka's last-event view can display
+progress but cannot decide who executes. Temporal history, PostgreSQL business
+state and observability projections have separate jobs; they need typed lineage,
+not competing autonomous recovery loops. See
+[the current owner fence and unfinished Temporal integration](WORKFLOW_OWNERSHIP.md).
+
+### Deep dictionary: starting across two durable systems
+
+**Distributed commit gap.** A SQL commit and a Temporal start are different durable
+operations. Crashing between them leaves missing work or an uncertain reply. A
+transactional start intent records the obligation with the business insert; a
+separate controller reconciles it. This is not a distributed ACID transaction.
+
+**Stable identity versus retry identity.** Use the same business-derived workflow
+ID for every start attempt. A fresh UUID per retry turns a lost response into a
+second workflow. A nonce instead identifies the *controller's temporary lease*;
+it must change on reclaim without changing the business ID.
+
+```python
+business_id = f'gca.workspace.{run_id}'   # Stable across crashes
+lease_nonce = new_uuid()                 # Changes when controller reclaims
+# Acknowledgement requires both the business binding and the current nonce.
+```
+
+**Uncertainty is monotone information.** Once an RPC may have reached a service,
+clearing that fact because a timeout expired is unsound. The set of possible worlds
+still includes successful execution. Preserve `may_have_started`, query the same
+identity and reconcile its receipt. A lease expiration proves only that the local
+controller lost its claim, not that the remote action never happened.
+
+**Receipt binding.** An existing ID alone is insufficient evidence: verify the
+namespace, type, queue, digest/contract metadata and original execution lineage.
+A changed binding is a conflict, not an invitation to terminate and replace work.
+
+**Privacy-preserving referential gap.** Erasure may remove the private parent while
+an external operation remains uncertain. Preserve only the minimal reconciliation
+reference, never reconstruct the deleted prompt/body, and forbid new starts when
+the parent is absent. External history erasure is a separate lifecycle obligation.
+See [the current startup controller and its exact evidence limits](TEMPORAL_START_DELIVERY.md).
+
+### Deep dictionary: deterministic workflow, activity and uncertain effect
+
+**Deterministic control flow is not a hardcoded business answer.** The outer
+workflow replays commands/timers using stable recorded results. Dynamic language
+understanding and Google calls belong inside activities. Our workflow reads ready
+step UUIDs from the existing plan DAG; it does not introduce one canned workflow
+for each English sentence. Typed tools and bounded model fallback remain inside
+the same business executor as before.
+
+**Activity is a retry boundary.** Selecting a function as an activity chooses the
+unit the scheduler may redeliver. “Send email then store receipt” has a gap after
+send. Record the intent before crossing the boundary, and reconcile the same
+identity after loss. A completed SDK call is not a substitute for postconditions.
+Current business activities use one automatic attempt; metadata reads can retry.
+
+**Knowledge lattice / monotone uncertainty.** Once two overlapping executions or a
+lost worker make an effect uncertain, a late local success alone cannot erase the
+uncertainty. Keep the original fact and require an independent reconciliation
+proof. A Boolean `success` field loses this information; a small state machine
+with an immutable identity and protected uncertainty is more expressive.
+
+```text
+new → executing → succeeded
+              ↘ failed (known verified failure)
+              ↘ uncertain (lost or overlapping outcome)
+uncertain ⇏ succeeded merely because a late callback arrived
+```
+
+**Signals as hints, not authority.** A refresh wakes the workflow; it does not
+approve a send. Reread the authenticated approval record and compare the hash of
+the current typed plan. Capture the signal revision before an activity read, so
+a notification arriving during that read is not lost before the wait starts.
+
+**Concurrency versus parallel authority.** Four ready DAG steps may run together,
+but no two controllers may own the same business step. A row lock plus unique
+journal claim prevents duplicate admission; provider idempotency and reconciliation
+still handle the remote boundary. A per-worker semaphore is not global fairness.
+
+**Sandbox versus isolation.** The Temporal Python sandbox checks workflow replay
+restrictions. It is not the keyless OS/container sandbox that runs generated code.
+Trusted activities may use private credentials; generated coding workloads must
+not inherit them. See [actual bridge and evidence boundaries](WORKSPACE_TEMPORAL_EXECUTION.md).
+
+### Deep dictionary: coalescing and wake-up generations
+
+**Coalescing register.** Keep one wake row per workflow, not copies of private
+answers. Work exists when `desired > acknowledged`. Business content stays in its
+original private ledger; only the need to reread it is compressed.
+
+**Stale ACK.** If generation 7 is in flight when approval creates generation 8,
+acknowledge only 7. Generation 8 must remain pending. The nonce identifies the
+current sender; the generation identifies which updates that sender observed.
+
+```python
+desired = 8
+inflight = 7
+acknowledged = inflight  # Do not blindly assign desired.
+assert desired > acknowledged
+```
+
+**Hint versus command idempotence.** Repeating “reread your ledger” grants no
+authority. Repeating “send email” needs stronger reconciliation. A wake signal must
+not contain a trusted approval Boolean, recipient or message body.
+
+**Transactional notification.** Commit the decision and wake generation together.
+Capture/capacity failure rolls back both. A best-effort signal after HTTP success
+has a crash gap; an outbox makes missing delivery observable and retryable. A signal
+ACK still does not prove task completion. See [implemented delivery and evidence
+limits](TEMPORAL_REFRESH_DELIVERY.md).
+
+### Deep dictionary: source-bound proof and quiescence
+
+**Proof versus success flag.** Preserve the uncertain attempt and append evidence
+referencing its exact token/source digest. Later source changes make that proof
+inapplicable. Evidence must come from trusted verification, not an LLM assertion.
+
+**Optimistic verification.** Snapshot a digest, perform external reads without
+holding database locks, then lock/recheck before commit. This closes a local race,
+not a distributed transaction with Google. Evidence remains point-in-time.
+
+**Positive quiescence.** Lease expiry does not prove a worker stopped. One matching
+artifact does not prove that an older activity cannot make another call. A known
+completed boundary is required; lost-worker cleanup and retry need separate proof.
+
+**Conjunction and ordering.** `created AND populated` is not `created`. Required
+tools must be a subset of successful tools, and ordered contracts must form an
+in-order subsequence. Verifying only one artifact cannot establish the whole task.
+
+**Freshness and renewal.** Expire proof relative to verification start, not when a
+slow process saved it. Append a new observation to renew, preserving the older one.
+A B-tree prefix supports O(log n) proof lookup; source hashing costs O(source bytes
+plus relevant artifact metadata). See [implemented recovery](TEMPORAL_VERIFIED_RECOVERY.md).
+
+### Deep dictionary: trusted context and admission races
+
+**Context variable versus model state.** An immutable `ContextVar` value scopes
+trusted worker authority to one asynchronous call tree. A dictionary produced or
+augmented by a model is not the same authority. Reset tokens in `finally`, and
+keep credentials/nonces out of prompts. Child tasks inherit context, not a global
+cross-tenant mutable singleton. Process/container isolation remains separate.
+
+**Freshness versus cached permission.** A once-valid plan cannot prove that the
+user has not cancelled or that another worker now owns the lease. Recheck current
+ledger state at the invocation boundary. An uncertain database result is not
+permission to continue. The check is bounded and content-free.
+
+**TOCTOU.** Time-of-check/time-of-use races remain between the database check and
+remote invocation. A short admission check is not an atomic transaction with
+Google. Holding a database lock over a slow cloud call is not a universal solution.
+Reconcile already-admitted effects and separately fence their completion writes.
+
+**Expected lifecycle denial versus tool failure.** Cancellation, erased state and
+lost ownership can legitimately prevent a call. Do not record a fictional provider
+attempt or turn cancellation into an execution bug. Preserve uncertainty where an
+earlier call may already have crossed the boundary. See
+[current admission gate and open guarantees](LIVE_TOOL_ADMISSION.md).
+
+### Deep dictionary: completion linearization and metadata retries
+
+**Linearization point.** Concurrent cancellation and completion need an observable
+ordering. Lock the current run, verify authority, then commit outcome and event in
+one transaction. Cancellation waiting on that lock rechecks its active-status
+predicate after the winner commits. This orders local records, not remote RPCs.
+
+**Lock-order graph.** Use run → step → journal, never a reverse edge. A fixed
+ordering removes cycles among transactions following that ordering. It is not a
+proof against every unrelated trigger/query in the database. Keep critical
+sections SQL-only, bound waits, and test actual blocked sessions.
+
+**Atomic outcome and event.** `step completed` plus its event must commit together.
+Otherwise a crash can leave a completed step with no completion notification.
+Temporal's journal outcome belongs in that same transaction. Database rollback
+undoes SQL, not an already-completed Google write.
+
+```python
+# Conceptual ordering; use the project's actual fenced transaction contexts.
+async with fenced_step_commit(pool, run, step, succeeded=True) as conn:
+    await persist_verified_outcome(conn)
+    await append_completion_event(conn)
+# Provider I/O must remain outside this lock-holding block.
+```
+
+**Metadata-only recovery.** Rebuild a final summary from committed ordered step
+outputs, rather than invoking the original operations again. Track a durable retry
+counter with the queued state/event, and stop after a finite budget. Work is O(n)
+over persisted steps plus output bytes. It is fundamentally different from retrying
+an email send. A permanent event-sink failure must not cause an unbounded queue.
+
+**Evidence granularity.** A synthetic stored write receipt proves recovery does
+not invoke a write again; it does not prove Google delivered the original message.
+See [implementation, diagrams and remaining guarantees](ATOMIC_WORKFLOW_COMPLETION.md).
+
+### Deep dictionary: per-invocation write-ahead evidence
+
+**Write-ahead boundary.** Commit an invocation reservation before calling a remote
+tool. A crash after that reservation is ambiguous: the call might not have started,
+or its response might have been lost. A marker detects uncertainty; it is not proof
+of either success or failure. A returned response is also not verification.
+
+**Nested durability.** A workflow has steps, and a step may contain multiple tools.
+Saving only the final step output loses intermediate effects. Store each response
+before advancing, then independently verify and complete the step. This is a
+hierarchy of evidence, not nested distributed database transactions with Google.
+
+```mermaid
+flowchart LR
+    R[Run] --> S[Composite step]
+    S --> A[Create Sheet: private receipt]
+    A --> B[Populate Sheet: private receipt]
+    B --> V[Verify full contract]
+    V --> C[Atomic step completion]
+    A -. crash before population .-> U[Recover existing ID; still incomplete]
+```
+
+**Immutable identity and compare-and-set.** Bind a receipt to tenant/run/step,
+attempt, tool, call ID and trusted authority. Permit dispatched → returned/unknown
+once. A second callback cannot rewrite the first response. An encrypted envelope
+also binds its row identity, preventing cross-row/cross-tenant payload substitution.
+
+**Sequence versus completeness.** Ordered receipts reconstruct invocation order.
+They do not prove that all required operations ran. `create` followed by no
+`populate` remains incomplete even if the first artifact is valid. A unique B-tree
+index supports lookup/identity checks; loading k bounded receipts is O(k + bytes).
+Cap count and payload size; pagination alone is not a correctness contract.
+
+**Expiry versus permission to retry.** Nulling private ciphertext does not erase
+the possibility that an email was sent. Retain the uncertainty marker until its
+approved parent lifecycle ends. Expired evidence cannot become “no effect.” A
+missing result must not silently authorize repeating a non-idempotent action.
+
+**Fault injection versus simulation.** The local receipt test uses a fresh process
+that commits a synthetic effect and receipt, then exits abruptly. Recovery must
+leave the effect counter at one. This proves that boundary under local PostgreSQL,
+not real Google delivery or a production Temporal replay. See
+[implementation and operational limits](DURABLE_TOOL_RECEIPTS.md).
+
+### Deep dictionary: retry generations and supersession
+
+**Redelivery versus a new attempt.** Repeating the same activity ID is recovery of
+that invocation, not new permission to call Google. A new generation has a distinct
+nonce and activity ID plus explicit source-bound authorization. Never reset an old
+uncertain row to `executing` to make a retry look fresh.
+
+**Append-only attempt graph.** A bounded chain links each read attempt to its exact
+predecessor: `generation 0 → permit 1 → generation 1`. The parent token prevents
+skipping or attaching to a different attempt. A compound B-tree key indexes
+`(run, step, generation)`; selecting the latest generation is not selecting any
+matching row. Retain original outcomes for audit and fault analysis.
+
+```mermaid
+flowchart LR
+    O[Old read: uncertain, finished] --> P[Authenticated expiring permit]
+    P --> N[New read generation: separate token]
+    N --> V[Verified current result]
+    O -. old delivery .-> S[Superseded; cannot mutate new step]
+    W[Uncertain write] --> M[Separate reconciliation; no read permit]
+```
+
+**Monotone history versus effective state.** The old uncertain read does not become
+successful. A proven read-only successor can make it irrelevant to current task
+completion. That logic cannot be applied to an unknown email send: its side effect
+may still matter even if a later action succeeds.
+
+**Renewal versus budget reset.** An expired, unused permit may be replaced by a new
+reference after explicit review, while the original remains immutable. This does
+not reset attempt counts. Bound both actual attempts and permission-history growth;
+otherwise repeated expiry can grow metadata indefinitely without running a tool.
+
+**Classification as an invariant.** Read/write tool membership must be explicit and
+disjoint. A CI set-equality assertion against the trusted registry detects missing
+classification. A live invocation guard enforces it; a Boolean in a plan is not
+sufficient by itself. See [actual read-generation implementation and open proof](TEMPORAL_READ_RETRY_GENERATIONS.md).
+
+### Deep dictionary: server histories, replay and proof boundaries
+
+**Workflow replay versus replaying tool effects.** The SDK compares deterministic
+workflow commands with recorded history. It does not send the old Gmail message
+again. Activities remain I/O boundaries. Deterministic workflow code must not read
+the private database or call model/Google APIs during replay.
+
+**Mock fixture versus real server history.** A simulator can check a proposed plan
+without network effects. A genuine server history additionally records scheduling,
+activity completions, signals, cancellation and timers. Keep both tests; neither
+alone proves all production behavior. Current local tests exercise both real
+startup/refresh adapters and saved-history replay, not just a fake success flag.
+
+**Worker restart versus server restart.** A new task poller reconstructs workflow
+state from history still held by the server. A server restart must also recover
+its persistence. The local test stops/reopens SQLite and retains the first
+execution ID. A clean stop is not abrupt crash, replica failover or power-loss
+durability. PostgreSQL restore needs its own drill.
+
+```mermaid
+flowchart LR
+    W[Deterministic workflow] --> C[Recorded commands and events]
+    C --> H[Bounded content-checked history]
+    H --> R[Fresh offline replay]
+    R --> A{Commands still compatible?}
+    A -->|Yes| P[Replay evidence]
+    A -->|No| F[Reject incompatibility; do not invoke external tools]
+```
+
+**Negative control.** A test that only accepts matching history might not reveal
+a broken verifier. Deliberately alter one scheduled activity type and require
+rejection. Pair that with successful original-history replay to distinguish a
+working compatibility check from a checker that rejects everything.
+
+**Integrity versus provenance.** A SHA-256 digest detects disagreement with the
+saved metadata. It does not prove who generated that metadata or approve a
+candidate for deployment. Trusted CI identity, scoped publication and human
+promotion gates remain separate. A `replay_passed` Boolean is not proof by itself.
+
+**Environment isolation versus sandboxing.** A temporary HOME/cwd and explicit
+environment whitelist keep developer/API credentials out of these trusted tests.
+They are not an OS isolation boundary for arbitrary generated code. Bound process
+lifetimes, stop only the owned process group, verify listener shutdown and retain
+only synthetic evidence. See [actual proof, commands and limitations](LOCAL_TEMPORAL_SERVER_PROOF.md).
+
+### Deep dictionary addition: verified-prefix continuation
+
+**Verified prefix versus a retry.** For an ordered contract `T = (create, populate)`,
+an encrypted successful `create` result does not complete the task. After current
+provider readback, recovery may return exactly that result to the executor without
+calling `create` again, then invoke `populate` only if it was never attempted.
+An unknown `populate` acceptance is not evidence that it is safe to repeat.
+
+**Sequence invariant.** With cursor `i`, the next invocation must equal `T[i]`.
+For `i < k`, where `k` is the proven prefix length, both tool identity and canonical
+arguments must match the saved receipt. For `i >= k`, use ordinary admission and a
+new write-ahead receipt. A cursor is not permission: tenant, lease, approval,
+source hash and expiry must also remain current. Reaching `len(T)` is necessary
+but not sufficient: the verifier must still prove the complete requested state.
+
+```python
+# Teaching model, not the project's authorization implementation.
+def classify_next(required, prefix, cursor, name, arguments):
+    if cursor >= len(required) or name != required[cursor]:
+        raise ValueError('out-of-order operation')
+    if cursor < len(prefix):
+        saved = prefix[cursor]
+        if saved['arguments'] != arguments:
+            raise ValueError('not the same operation')
+        return 'reuse', saved['result']
+    return 'new invocation requires live authority and write-ahead evidence', None
+```
+
+**Capability grant versus cached data.** A cached result answers “what happened?”
+An expiring single-use grant answers “may this exact plan continue now?” Separate
+them: schema 033 grants contain hashes and opaque references; private results stay
+encrypted. A result being present never overrides current authorization.
+
+**Compare-and-set and fencing.** Consumption takes run → step locks and records
+the current lease hash once. Concurrent callers cannot both consume the same
+grant. Per-call cursor admission also rejects concurrent use of the same
+in-memory prefix. Neither a Python `ContextVar` nor an in-memory lock alone is a
+durable ownership boundary; live SQL fencing provides that boundary.
+
+**Complexity.** Checking one position is O(1) in contract length; comparing its
+arguments costs O(argument bytes). Loading/hashing the bounded receipt sequence
+costs O(k + payload bytes), and hashing dependencies costs O(dependency output
+bytes). Provider readback adds real network latency. “O(1) cursor” does not imply
+O(1) recovery, nor do more tokens make uncertain external writes retryable.
+
+**Monotone budgets.** Explicit continuations append immutable grants and increment
+attempt counts. They do not reset the automatic retry counter or erase prior
+uncertainty. The current local path permits at most three explicit PostgreSQL
+continuations; Temporal needs its own journal generation rather than inheriting
+that permission. See [actual implementation and limits](VERIFIED_PREFIX_CONTINUATION.md).
+
+### Deep dictionary addition: write generations and uncertainty
+
+**Monotone generation versus retry count.** A new generation is an append-only
+execution identity `(run, step, generation, permit)`, not a reset of the old
+activity's outcome. Compare the incoming generation with the current journal:
+older deliveries cannot mutate newer work; a higher number still requires an
+exact permit and source proof. Increasing an integer is not authorization.
+
+**Disjoint capability types.** A read retry and a write-prefix continuation have
+different invariants. Do not represent both as a generic `retry_allowed=True`.
+Schema 034 uses separate permit tables, mutually exclusive journal references and
+independent SQL triggers. The activity chooses using the private step's actual
+read/write classification, not a caller's claim that a mutation is a read.
+
+**Positive quiescence.** “Lease expired” and “activity completed” are not equivalent.
+A timed-out process may still be running or a provider may already have accepted
+a mutation. A finished activity plus fresh exact prefix receipts can justify
+continuing a never-attempted suffix. Unknown acceptance cannot justify a resend.
+
+**Supersession versus rewriting history.** Keep the old uncertain row intact.
+An independently admitted successor can make only that exact predecessor token
+irrelevant to *current* finalization because its known prefix was verified and
+reused. The successor's own uncertainty still blocks completion. This resembles
+an append-only event log with a derived current-state projection, not deleting
+an inconvenient failed node from a DAG.
+
+**Transport failure versus business failure.** If a send succeeds remotely but
+its response is lost, a timeout proves loss of acknowledgement, not absence of
+the message. Likewise, a local logging failure after receipt persistence must
+not become a model-facing “tool failed, try again.” The project now raises a
+typed durable reconciliation failure and preserves whether a response was saved.
+
+```mermaid
+flowchart LR
+    A[Reserve receipt] --> B[Invoke provider]
+    B -->|Response captured| C[Persist private response]
+    B -->|Response lost| U[Unknown acceptance: block repetition]
+    C --> D[Projection / logging / verification]
+    D -->|Local failure| R[Readback reconciliation, not model retry]
+    D -->|Verified full contract| S[Business completion]
+```
+
+**Evidence complexity.** For at most `g` retained generations and `k` receipts,
+reconciliation examines O(g + k + payload bytes), plus provider readback latency.
+The current bounds are three explicit continuations and 64 invocation receipts.
+Indexes narrow a single step lookup; they do not make decryption, hashing or
+network readback constant-time. The real SDK/server tests prove only their tested
+paths, not arbitrary model correctness or distributed exactly-once delivery.
+See [implemented write generations and actual evidence](TEMPORAL_WRITE_PREFIX_GENERATIONS.md).
+
+**Renewal is not an execution.** A permit that expires before admission did not
+create a new activity or provider effect. Append a fresh, independently verified
+permit for the same next generation; do not change an expired row or increment a
+fictional attempt to evade a unique constraint. Lookup selects the newest grant,
+and a delayed old delivery is superseded. Renewals consume the same lifetime
+grant budget, so repeated expiration cannot create an unbounded loop.
+
+### Deep dictionary addition: coding-process and transaction boundaries
+
+**Task versus thread versus process.** Cancelling an `asyncio.Task` interrupts its
+coroutine, not work already running in `to_thread`, a child process or a remote
+provider. The hosted coding worker now awaits an owned asynchronous process
+group. TERM/KILL and joining cleanup are explicit. This is a lifecycle boundary,
+not proof that arbitrary generated code is isolated from the operating system.
+
+**Process group versus sandbox.** A POSIX group identifies the newly launched
+program and ordinary descendants so the controller can stop its own work rather
+than arbitrary user PIDs. A malicious program might escape a group; a remote
+container is not necessarily killed by local group cleanup. OS isolation,
+container/job expiry and durable crash reconciliation remain separate needs.
+
+**Repeated cancellation.** Cleanup itself awaits I/O. A second cancellation must
+not interrupt it halfway through escalation from TERM to KILL. A shielded join
+records caller cancellation, finishes owned cleanup and then preserves the
+cancellation outcome. If the whole process/event loop is killed, an in-memory
+task cannot guarantee cleanup; a durable supervisor must reconcile that case.
+
+**TOCTOU and directory handles.** Checking a path string and later opening it can
+race a symlink replacement. The private evidence reader opens the state directory
+and walks child components using directory descriptors with `O_NOFOLLOW`.
+`fstat` checks the opened file, not a name that could now refer elsewhere.
+Reject hardlinks and non-regular files, and cap bytes before parsing them.
+
+**Canonical representation.** Infrastructure policy must reject alternate spellings
+such as `./Dockerfile` or `app/../Dockerfile`, not merely compare the raw string
+with `Dockerfile`. Do not silently rewrite an approved plan: reject ambiguous
+paths before its hash becomes execution authority. The server's governed
+manifest is not a model-authored self-service file.
+
+**Source-bound lease.** Ownership is more than a worker name. Match tenant,
+version, repository/commit, input/plan bytes and hashes, policy provenance,
+attempt identity and current approval. Recheck before external work and again
+under the run-row lock before business completion. A cached earlier check is
+not current authority.
+
+**Savepoint versus independent commit.** Optional cache metadata should not be
+committed on a second connection after its parent run was cancelled or erased.
+Use a savepoint within the protected transaction: cache failure rolls back the
+optional sub-operation, while outer rollback removes both business and cache
+facts. A cache hit remains an observation, not live postcondition evidence.
+
+```mermaid
+flowchart LR
+    L[Lock and validate run] --> B[Business rows + artifacts + event]
+    B --> S[Optional cache savepoint]
+    S -->|Cache error| R[Rollback savepoint only]
+    S -->|Cache succeeds| C[Commit outer transaction]
+    R --> C
+    B -->|Outer error| X[Rollback all, including cache]
+```
+
+**Backpressure on output.** Reading process output without a cap can exhaust
+memory even when the process has a time limit. Drain stdout/stderr concurrently,
+bound retained bytes and discard private stderr. Complexity is O(output bytes)
+until the fixed cap, with bounded memory; killing a process is not evidence that
+an earlier network side effect did not occur. See
+[the actual hosted coding implementation and open limits](CODING_EXECUTION_FENCES.md).
+
+### Deep dictionary addition: publication intent and recovery
+
+**Write-ahead intent versus acknowledgement versus verification.** These are three
+different facts. Commit the exact private intended files *before* any external
+mutation. Retain the external response even if cancellation won meanwhile. Then
+independently read back the exact artifact before business completion. A saved
+response is not approval and a timeout is not proof of no effect.
+
+**Monotone state machine.** A publication receipt progresses through
+`prepared → dispatched → returned`. The relation is a directed acyclic graph:
+there is no transition from returned back to prepared. A database trigger prevents
+an old owner from replacing the immutable binding or outcome. This constrains
+retries more strongly than a loop around an HTTP POST. A prepared intent proves
+only that *this protocol* has not dispatched it; a dispatched intent without a
+response is uncertain and cannot be repeated just because a GET returns 404.
+
+**Exact-delta verification with hash maps.** Represent each Git leaf entry as
+`path → (mode, type, Git object SHA)`. Copy the base map, apply only the frozen
+approved file changes and compare it to the complete head map. Equality rejects
+extra files, unintended deletions, altered modes and wrong contents. Building and
+comparing maps costs expected O(N + K) time and O(N + K) memory for N base files
+and K approved mutations; Python dictionaries do not make fetching N remote
+entries free. Reject a truncated tree rather than claiming equality of incomplete
+maps. Git object SHA-1 is an object-addressing format, not the SHA-256 integrity
+digest used for the private publication manifest.
+
+```python
+def expected_tree(base_entries, approved_entries):
+    # Teaching model: real code validates paths, modes, objects and bounded input.
+    expected = dict(base_entries)
+    expected.update(approved_entries)
+    return expected
+
+
+def exact_delta_matches(base_entries, approved_entries, actual_entries):
+    return expected_tree(base_entries, approved_entries) == actual_entries
+```
+
+**Evidence lifetime versus permission lifetime.** A frozen manifest may survive
+for up to 24 hours while its original write approval expires earlier. Recoverable
+bytes do not extend permission. Read-back requests require current tenant, source
+and approval; expired or erased payloads cannot be regenerated from a hash. A new
+lease can recover the same approved source, but changing the source requires a
+new decision rather than altering the old receipt.
+
+```mermaid
+flowchart LR
+    I[Freeze private intent] --> D[Record dispatch]
+    D --> A[Retain acknowledgement]
+    A --> V[Verify exact external state]
+    D -->|Lost response| V
+    V -->|Exact + current authority| C[Atomic business commit]
+    V -->|Absent or inconsistent| R[Reconcile; no repeated write]
+```
+
+The real implementation and unproven production boundaries are documented in
+[coding publication recovery](CODING_PUBLICATION_RECOVERY.md). It is not a
+distributed transaction across PostgreSQL and GitHub and does not claim that all
+partial publications can be completed automatically.
+
+### Deep dictionary addition: CI trust and exact-attempt evidence
+
+**Authentication versus attestation.** A callback secret proves possession of
+that secret, not that tests ran. A string such as `passed: true` is a claim. Bind
+independently observed evidence to repository, workflow definition digest,
+candidate commit/tree, run, attempt, required jobs/steps and frozen file hashes.
+Even then, passing a test is not proof that the test suite is sufficient.
+
+**Set coverage versus nonempty success.** Let R be required job names and O be
+observed required names. Accept only R = O, with one identity per name and every
+required step actually successful. One unrelated successful job cannot satisfy
+this contract. Reject duplicate names instead of allowing a dictionary overwrite
+to hide a failed job. With J jobs and S total steps, building/checking sets and
+maps takes expected O(J + S) time; network transfers still have explicit bounds.
+
+```python
+def required_gate_passes(required_steps, observed_steps):
+    names = [step['name'] for step in observed_steps]
+    if len(names) != len(set(names)):  # teaching version: reject duplicate evidence
+        return False
+    by_name = {step['name']: step for step in observed_steps}
+    return all(name in by_name and by_name[name]['status'] == 'completed'
+               and by_name[name]['conclusion'] == 'success'
+               for name in required_steps)
+```
+
+**Attempts are generations, not interchangeable samples.** A rerun creates a
+new attempt of a workflow run. Looking at a cached earlier success or merging jobs
+from multiple attempts can manufacture a result that never existed. Read the
+specific attempt, bind every job's source identity, and check that the run/attempt
+and newest-run inventory did not change before accepting the observation.
+
+**Advisory transaction fence.** A row lock protects an existing run, but cannot
+prevent a new trust-policy row being inserted. A per-repository advisory lock
+serializes policy publication/revocation against final CI acceptance. Acquire it
+only for the short SQL transaction, not while waiting on GitHub. The insert
+trigger and acceptance code must use the same key; it is coordination, not an
+authorization mechanism. The actual test observes PostgreSQL's advisory lock wait
+instead of assuming concurrency from an arbitrary sleep.
+
+**Trusted reporter versus untrusted candidate.** Running generated test code
+without production/provider/callback credentials is a different trust domain from
+publishing its result. The reporter reads bounded inert metadata on a trusted
+default-branch checkout; it must not run candidate code or extract executable
+artifacts while holding credentials. A separate read-only GitHub client and a
+callback-only client prevent cross-service header reuse. A read-only API token is
+still a secret; least privilege is not permission to expose it to model code.
+
+The actual implementation, human activation APIs, evidence scope and remaining
+promotion/supply-chain work are in [CI trust](CODING_CI_TRUST.md). Policy identity
+does not replace human-published OKF or grant code/deployment authority.
+
+### Deep dictionary addition: fail-fast pipelines and complete process cleanup
+
+**Pipeline status is an aggregation rule.** For shell commands `A | B`, default
+status is normally B's exit status, not an AND of both results. Thus a failing
+test process can be hidden by a successful log collector. `set -e` alone does not
+repair this aggregation. In a Bash validation script, use `set -euo pipefail`:
+`pipefail` propagates pipeline failure, `-e` stops subsequent work, and `-u` rejects
+unset variables. Commands deliberately used as conditions have different `-e`
+semantics, so test the actual shell structure rather than merely checking text.
+
+```mermaid
+flowchart LR
+    T[Tests fail] --> G[Brace group exits nonzero]
+    G --> L[tee successfully stores log]
+    L --> D{Pipeline aggregation}
+    D -->|Default: last command| F[False green]
+    D -->|pipefail| R[Gate fails; retain log; stop later work]
+```
+
+Treat a validation pipeline as ordered gates, not a vote. With n gates, success
+requires all n successes; test failures at each of n positions. Executing each
+prefix independently is O(n²) total mock-command invocations, acceptable for this
+small bounded suite. Production validation still executes gates once in O(n)
+steps (their individual costs dominate). `test_ci_fail_fast.py` preserves the real
+pipeline syntax but substitutes inert commands; it also reproduces the old false
+green as a negative control. This is different from changing a test to pass.
+
+**Process exit versus transport closure.** A reaped child PID does not prove its
+stdout/stderr pipes are closed. A buffered reader can stop consuming after an
+output limit, leave a paused pipe transport, and later trigger `Event loop is
+closed` during garbage collection. Grandchildren can retain pipe handles too.
+The owned runner uses public `asyncio.SubprocessProtocol` callbacks with a bounded
+stdout bytearray and immediately discarded stderr/overflow. Cleanup signals only
+the owned process group, closes its public transport and waits for
+`connection_lost` before returning or removing the private working directory.
+
+State is not merely `running → exited`; it includes `closing → closed`, and the
+successful resource-release postcondition is closed handles **and** exited child.
+Cancellation is a request to begin that lifecycle, not evidence that it finished.
+Repeated caller cancellation cannot interrupt the joined cleanup. Retained Python
+output is O(B), where B is the configured byte bound; receiving M bytes is O(M)
+work even when excess output is discarded. Time/resource limits remain necessary.
+Neither process groups nor these bounds constitute a sandbox for generated code.
+
+**Version identity includes the upstream tag grammar.** Temporal's download API
+resolves CLI tag `v1.9.1`; `1.9.1` returned 404 in the real Linux CI. A local cache
+had masked that path. A cache hit is not fresh-install proof. Test both entry
+points and verify uncached native CI; a version string alone is also not a
+cryptographic supply-chain attestation. See [CI trust](CODING_CI_TRUST.md) for
+the actual run IDs and remaining evidence boundaries.
+
+### Deep dictionary addition: admission snapshots versus external transactions
+
+A **source-bound admission snapshot** is a bounded observation, not permanent
+authority. It binds exact candidate bytes, source/version, current CI policy and
+latest run/attempt. Reading remote facts while holding database locks can stall
+all reviewers; reading them first without rechecking can admit a changed source.
+The implemented bridge is: observe remotely → acquire short SQL locks in one
+order → recheck source/policy/freshness → record proof and human decision together.
+The real code gates use this sequence in `app/improvements/ci_admission.py`.
+
+Lock order is a directed graph. If one path takes proposal → policy while another
+takes policy → proposal, their waits can form a cycle. Using coding run → policy
+→ build → proposal across both CI acceptance and review removes that particular
+cycle. Acyclic ordering does not remove every possible database deadlock or
+network race; bounded lock waits and safe retry are still required. No external
+model or deployment is called inside the admission transaction.
+
+An **atomic audit record** commits or rolls back with the local human effect.
+The `current_ci_admission` entry stores hashes and workflow facts, not source
+bodies; it does not itself grant approval. PostgreSQL commit cannot atomically
+commit a later GitHub merge or Railway deployment. That second boundary still
+needs a durable dispatch intent, independently observed outcome and reconciliation
+of lost acknowledgements. Fresh CI admission is one necessary layer, not an
+exactly-once external release mechanism. These remaining boundaries are explicit
+in [CI trust](CODING_CI_TRUST.md).
+
+### Deep dictionary addition: credentialed controller versus source data
+
+A candidate directory is a data namespace, not an execution namespace. Put the
+reviewed controller and candidate in separate sibling roots; execute fixed
+controller scripts with isolated imports and upload candidate data explicitly.
+Otherwise a candidate `json.py`, helper script, package hook or local tool name
+can become a **confused deputy**: untrusted content runs with a controller token.
+The real controller uses this split; it does not run candidate install/build
+commands locally. Trusted vendor tools still need independent supply-chain review.
+
+Directory isolation is not an OS sandbox. `resolve()` establishes where a path
+points; `lstat()` inspects the link inode itself. Following `stat()` alone can
+mistake a symlink target for an approved regular source file. A hardlink can share
+an inode with another name, so checking `st_nlink == 1` rejects that ambiguity.
+The source checker also compares the clean working tree to its immutable Git
+commit, rejects all untracked data and checks the exact repository origin.
+For F files with total path depth P and source bytes B, metadata/path validation
+is O(F + P), while Git content checking can require O(B); it is not just a constant
+time SHA comparison. Explicit file/count/byte/output/deadline limits remain needed.
+
+This establishes a local upload boundary, not a remotely verified deployment or
+approval grant. Tokens belong only in trusted controller steps, never source
+archives or model sandboxes. A timed-out upload may already have created remote
+effects; source custody cannot solve that distributed uncertainty. See the
+[actual controller and open dispatch requirements](CANDIDATE_DEPLOYMENT_CONTROLLER.md).
+
+### Deep dictionary addition: one-use deployment authority and uncertain ACKs
+
+**Write-ahead authority** differs from a success log. A success log written after
+a POST disappears if the caller crashes between remote acceptance and local
+commit. The schema-037 controller journal instead commits an immutable intent
+with human approval, then transitions to `dispatch_unknown` before the external
+call. Only a received ACK can advance it to `dispatched`. Unknown does not mean
+failed; neither a timeout nor an empty eventually consistent run list proves that
+no workflow started. The recovery algorithm observes before considering any new
+authority. See [the implementation contract](CANDIDATE_DEPLOYMENT_CONTROLLER.md#schema-037-dispatch-and-claim-custody).
+
+```mermaid
+stateDiagram-v2
+    [*] --> prepared: human approval and intent commit together
+    prepared --> dispatch_unknown: commit before POST
+    dispatch_unknown --> dispatched: response acknowledged
+    dispatch_unknown --> claimed: exact workflow claims despite lost ACK
+    dispatched --> claimed: exact workflow claims once
+    prepared --> cancelled: human cancellation before claim
+    dispatch_unknown --> cancelled: fence future claims
+    dispatched --> cancelled: fence future claims
+    claimed --> attested: bound live nonce and current authority
+```
+
+**Compare-and-set (CAS)** makes one legal state transition the linearization
+point. Two callers may read `prepared`, but only one can lock the row and commit
+`dispatch_unknown`; the second sees changed state and cannot POST. This is
+at-most-one dispatch admission, **not** exactly-once cloud effects. The same
+principle makes a claim non-renewable. An SQL transaction cannot atomically commit
+an external Railway deployment or GitHub merge.
+
+```python
+from enum import Enum
+
+class State(Enum):
+    PREPARED = 'prepared'
+    UNKNOWN = 'dispatch_unknown'
+    DISPATCHED = 'dispatched'
+    CLAIMED = 'claimed'
+
+def admit_dispatch(current: State) -> State:
+    if current is not State.PREPARED:
+        raise RuntimeError('observe/reconcile; do not automatically retry')
+    return State.UNKNOWN
+```
+
+This function teaches the transition only: using it on a Python object is not
+cross-process synchronization. Production applies the transition under SQL locks,
+checks frozen source/current CI/policy/human approval, and commits before POST.
+The transition lookup is O(1); checking N bounded file hashes costs O(N + source
+bytes). Sort/compare of K surface names is O(K log K), with K bounded to four.
+An indexed journal ID lookup is not a full history scan; listing its H transitions
+is O(log J + H) for J journal/event index entries, excluding network/serialization.
+
+**One-use capability receipt** is a bearer value bound to an intent/run/target,
+not a reusable account token. The server retains a hash; the trusted controller
+receives the nonce once and writes it exclusively with mode 0600 and fsync.
+Losing the response cannot safely mint another nonce: the first caller might
+already possess it. Status/incident logs must omit it. Expiry prevents a future
+grant but does not undo a cloud write already accepted.
+
+**Cancellation versus compensation.** Cancelling an unclaimed intent fences a
+late claim. Once claimed, the workflow may already have changed a provider;
+the system must reconcile actual effects and then perform separately authorized
+cleanup/compensation. Never relabel that state `cancelled` merely to obtain a
+green dashboard. The initial claim is not continuous revocation at every later
+provider call, and the current local journal is not yet full live lifecycle proof.
+
+### Deep dictionary addition: independent observation and SSRF boundaries
+
+**Assertion versus observation.** A reporter sending `verified=True` is making a
+claim. Checking its bearer token proves who reported, not whether Railway is
+running that image. An independent verifier reads the exact provider identifiers,
+scoped target, image and active instances itself. Application health and startup
+logs add version/readiness evidence but remain self-reported by application code;
+they do not replace behavioral tests or cryptographic build provenance. The local
+implementation repeats observations before traffic activation and fences SQL
+source/approval/intent state again afterward.
+
+**Time-of-check/time-of-use (TOCTOU).** A service may change between a provider read
+and SQL commit. Bounded observation age, immutable IDs, current CI and source/
+approval locks narrow that interval; they cannot atomically lock a remote cloud.
+Runtime revocation and continuing health/rollback are additional mechanisms, not
+consequences of a green preflight. Provider timestamps assume synchronized clocks;
+they are not a substitute for a distributed execution journal.
+
+**SSRF (server-side request forgery).** A callback can submit a URL to `127.0.0.1`,
+a private hostname or a redirect that leads there. Even a credential-free GET can
+read internal services. Here the verifier accepts only a provider-owned origin
+whose hostname independently belongs to the approved service/preview, forbids
+redirects and proxy inheritance, and sends no provider token to that application.
+Provider API credentials are scoped to their fixed API origin. “Uses HTTPS” alone
+does not establish ownership, isolation or authorization.
+
+For R bounded replica/log/domain records, validation work is O(R + response bytes),
+with retained output bounded separately. The provider read count is constant for
+the supported service surfaces, but latency is network-dependent, not O(1) wall
+time. Deadlines and response-byte bounds protect different resources. Store only
+necessary IDs, digests, counts and readiness decisions; never append arbitrary
+provider metadata or logs to a model prompt or permanent incident record. See
+[provider-readback contracts](CANDIDATE_PROVIDER_READBACK.md).
+
+### Deep dictionary addition: capacity experiments and measurement scope
+
+**A limit is not a measurement.** Docker's configured memory ceiling says what
+the kernel should enforce; it does not show how much the application needs. The
+new native capacity fixture inspects the configured ceiling and reads cgroup
+current/peak memory plus OOM counters after real startup and a durable synthetic
+request. Equal memory/swap limits prevent swap from concealing a RAM shortfall.
+An API process alive under the cap is not proof its task completed, so the test
+also requires exact successful steps and zero model calls for its informational
+case. This says nothing about a later large RAG/coding/model workload.
+
+**Experimental controls.** Keep source SHA, architecture, image IDs, resource
+limits, request and data boundary explicit. A smaller fixture passing cannot prove
+an unmeasured production workload fits. Report four backend-role images separately;
+do not infer Ollama or Alloy consumption, service-count placement, credit lifetime,
+or paid hosting authority from them. Document remaining confounders.
+
+**High-water mark versus steady state.** `memory.current` samples the present;
+`memory.peak` records a cgroup high-water mark, including startup and the probe
+itself. Neither predicts every future allocation. Testing a 20% smoke margin is a
+conservative acceptance rule, not a mathematical guarantee. Resource checks are
+O(R) for R measured roles and bounded response data; wall time is dominated by
+real startup and bounded polling, not by the constant-sized metric comparisons.
+
+**Owned cleanup.** Assign unpredictable names/labels before create calls, reconcile
+even a lost create ACK, verify exact ownership before removal, and verify absence
+afterward. A whole-engine prune is not owned cleanup. A CI fixture using only
+tmpfs synthetic data cannot validate restoring real Neon/GCP data. See the exact
+[capacity experiment and limitations](RELEASE_CAPACITY_PROOF.md).
+
+**Observed byte limits versus kernel pages.** A one-billion-byte configured limit
+was read back as 999,997,440 bytes in the actual Linux proof, with 4,096-byte pages.
+The memory counter uses whole pages. Preserve units and the controller's concrete
+rounding rule instead of accepting arbitrary near-enough values:
+
+```python
+requested_bytes = 1_000_000_000
+page_bytes = 4096
+observed_expected = (requested_bytes // page_bytes) * page_bytes
+assert observed_expected == 999_997_440
+assert observed_expected <= requested_bytes < observed_expected + page_bytes
+headroom_acceptance = observed_expected * 4 // 5
+```
+
+This is O(1) integer arithmetic and must not raise the configured ceiling or hide
+OOMs/swap. Validate the observed page size before using it. Different controllers
+can have different rounding rules; do not generalize one byte comparison to every
+kernel interface. Exact-source native CI at `d937ba3` then measured API peak
+137,342,976 bytes and completed the real synthetic durable request. That evidence
+does not predict a later unmeasured workload; see the [retained actual report](evidence/release-capacity-d937ba3.json).
+
+### Deep dictionary addition: public artifacts and representative sidecar probes
+
+**Content address versus mutable name.** A tag such as `latest` is a lookup name,
+not immutable evidence. The embedding capacity candidate pins the exact manifest
+SHA-256, then verifies the size/hash of every referenced blob before storing it.
+A digest proves byte identity relative to the approved digest, not that a model
+is semantically correct, benign, production-compatible or authorized for private
+data. Keep provenance, version, privacy and evaluation as separate gates.
+
+**Projection without model quantization.** The CPU-only image removes unneeded
+GPU runtime directories; it does not quantize/retrain the embedding weights,
+change `nomic-embed-text` or reinterpret 768-dimensional existing vectors. An
+inference-runtime version change still needs compatibility testing before rollout.
+Smaller image bytes do not imply lower model activation memory.
+
+**Safe streaming selection.** The artifact preparer streams an archive, selects
+only allowed CPU files, bounds counts/sizes and rejects unsafe paths and links.
+For B decompressed bytes and F entries, work is O(B + F); download and hashing
+are linear in artifact bytes. Streaming avoids holding the archive in Python
+memory but cannot make reading/decompressing it free. Retained disk includes
+selected files and verified model blobs, not all GPU payloads.
+
+**Representative envelope.** One 768-dimensional vector proves neither the
+application's eight-item batch nor production throughput. The new isolated probe
+therefore uses eight distinct 6,000-character inputs and disables API truncation.
+Measure peak memory/OOMs after it, keeping the same CPU/RAM ceiling and acceptance
+margin. Even this is one synthetic envelope, not exhaustive correctness or load
+proof. A measured failure calls for a resource-aware implementation correction,
+not quietly shrinking the request or raising the cap.
+
+**Positive and negative telemetry controls.** The synthetic scrape includes
+allowed metric families, a forbidden family and planted private-ID labels. The
+real Alloy pipeline must deliver the former and remove the latter. An HTTP 204
+alone proves none of this: the fixture decodes the bounded Snappy/protobuf payload
+and checks labels/jobs. Keep raw bodies and credentials out of the retained
+report. This is metrics-path evidence, not a claim about traces, logs or an
+actual Grafana Cloud account. See the [sidecar experiment contract](RELEASE_CAPACITY_PROOF.md).

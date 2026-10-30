@@ -6,7 +6,7 @@ import time
 import httpx
 
 
-service = os.environ["RAILWAY_CANDIDATE_WORKER_SERVICE"]
+service = os.environ["RAILWAY_CANDIDATE_SERVICE_ID"]
 candidate_version = os.environ["CANDIDATE_VERSION"]
 surfaces = set(filter(None, os.environ.get("CANDIDATE_RUNTIME_SURFACES", "").split(",")))
 with open("candidate-domain.json", encoding="utf-8") as handle:
@@ -14,13 +14,14 @@ with open("candidate-domain.json", encoding="utf-8") as handle:
 healthy = None
 for _ in range(60):
     value = json.loads(subprocess.check_output([
-        "npx", "-y", "@railway/cli@latest", "status", "--json",
+        "railway", "status", "--json",
     ], text=True))
     deployment = None
     for environment in value.get("environments", {}).get("edges", []):
         for entry in environment.get("node", {}).get("serviceInstances", {}).get("edges", []):
             node = entry.get("node", {})
-            if node.get("serviceName") != service:
+            if (node.get("serviceId") != service
+                    or node.get('environmentId') != os.environ['RAILWAY_CANDIDATE_ENVIRONMENT_ID']):
                 continue
             active = [
                 item for item in node.get("activeDeployments", [])
@@ -45,7 +46,7 @@ for _ in range(60):
             time.sleep(10)
             continue
         logs = subprocess.check_output([
-            "npx", "-y", "@railway/cli@latest", "logs", deployment["id"],
+            "railway", "logs", deployment["id"],
             "--service", service, "--lines", "200", "--json",
         ], text=True)
         ready = (
@@ -70,7 +71,8 @@ for _ in range(60):
         if not ready:
             time.sleep(10)
             continue
-        healthy = {"latestDeployment": deployment}
+        healthy = {"latestDeployment": {"id": deployment["id"], "status": status,
+            "meta": {"imageDigest": meta["imageDigest"]}}}
         break
     if status in {"FAILED", "CRASHED", "REMOVED"}:
         raise SystemExit(f"Candidate deployment failed: {status}")

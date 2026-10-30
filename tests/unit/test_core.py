@@ -15,6 +15,7 @@ from app.rag.retriever import _recency_bonus
 from app.rag.evaluation import retrieval_metrics
 from app.mlops.ragas_eval import _context_text, _retrieved_contexts
 from scripts.run_ragas_eval import _score_payload
+from scripts.probe_runtime_model import validate_probe_calls
 from scripts.sync_grafana_dashboards import (
     build_dashboard_payload,
     load_local_credentials,
@@ -28,7 +29,7 @@ from app.improvements.candidates import (
 from app.improvements.routing import candidate_applies, resolve_candidate_frontend_target
 from app.improvements.analyzer import _json_object, _number
 from app.evaluation.metrics import compare_policy_metrics, evaluate_plan
-from app.agents.router import route_model_node
+from app.agents.router import get_llm, get_model_name, route_model_node
 from app.agents.supervisor import (
     build_agent_graph,
     make_service_node,
@@ -44,7 +45,7 @@ from app.api.routes.admin import _candidate_build_view, _candidate_retry_delay
 from app.db.google_clients import SCOPES
 from app.db.oauth_credentials import missing_google_scopes
 import jwt
-from app.config.settings import get_settings
+from app.config.settings import Settings, get_settings
 from app.config.feature_flags import cohort_selected
 from app.runs.planner import build_plan, classify_request, validate_plan
 from app.okf.loader import load_bundle
@@ -2072,8 +2073,44 @@ def test_recover_rejected_groq_tool_call():
 
 @pytest.mark.asyncio
 async def test_model_router():
-    assert (await route_model_node({"message": "search gmail"}))["model_to_use"] == "groq_fast"
-    assert (await route_model_node({"message": "analyse and plan"}))["model_to_use"] == "groq_reasoning"
+    assert (await route_model_node({"message": "search gmail"}))["model_to_use"] == "runtime_fast"
+    assert (await route_model_node({"message": "analyse and plan"}))["model_to_use"] == "runtime_reasoning"
+
+
+def test_runtime_model_provider_is_non_groq_and_uses_distinct_credential(monkeypatch):
+    monkeypatch.setenv("RUNTIME_API_KEY", "runtime-only-key")
+    monkeypatch.delenv("CODING_GROQ_API_KEY", raising=False)
+    get_settings.cache_clear()
+    try:
+        llm = get_llm("runtime_fast")
+        assert llm.__class__.__name__ == "ChatGoogleGenerativeAI"
+        assert get_model_name("runtime_fast") == "gemini-2.5-flash"
+        assert get_model_name("runtime_reasoning") == "gemini-2.5-pro"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_runtime_provider_rejects_groq_and_shared_credentials():
+    with pytest.raises(ValueError, match="must be gemini"):
+        Settings(runtime_model_provider="groq", _env_file=None)
+    with pytest.raises(ValueError, match="must be distinct"):
+        Settings(
+            runtime_api_key="shared-secret",
+            coding_groq_api_key="shared-secret",
+            _env_file=None,
+        )
+
+
+def test_runtime_provider_probe_requires_exact_typed_call():
+    validate_probe_calls([
+        {"name": "runtime_probe_echo", "args": {"nonce": "probe"}}
+    ], "probe")
+    with pytest.raises(RuntimeError, match="exactly one"):
+        validate_probe_calls([], "probe")
+    with pytest.raises(RuntimeError, match="changed"):
+        validate_probe_calls([
+            {"name": "runtime_probe_echo", "args": {"nonce": "wrong"}}
+        ], "probe")
 
 
 @pytest.mark.asyncio
@@ -2117,7 +2154,7 @@ async def test_service_node_executes_tool(monkeypatch):
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("gmail")({
         "message": "echo",
-        "model_to_use": "groq_fast",
+        "model_to_use": "runtime_fast",
         "services": ["gmail"],
         "allowed_tools": ["echo"],
         "session_id": "test",
@@ -2163,7 +2200,7 @@ async def test_write_service_gets_one_missing_tool_only_correction(monkeypatch):
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("sheets")({
-        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "message": "write", "model_to_use": "runtime_fast", "services": ["sheets"],
         "allowed_tools": ["required_write", "unrelated_write"],
         "requires_write": True, "operation": "write",
         "expected_write_tools": ["required_write"], "write_completion_mode": "all",
@@ -2193,7 +2230,7 @@ async def test_second_tool_free_write_answer_is_tool_selection(monkeypatch):
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("sheets")({
-        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "message": "write", "model_to_use": "runtime_fast", "services": ["sheets"],
         "allowed_tools": ["required_write"], "requires_write": True,
         "operation": "write", "expected_write_tools": ["required_write"],
         "write_completion_mode": "all", "session_id": "test",
@@ -2229,7 +2266,7 @@ async def test_failed_write_tool_is_not_repeated(monkeypatch):
     )
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("sheets")({
-        "message": "write", "model_to_use": "groq_fast", "services": ["sheets"],
+        "message": "write", "model_to_use": "runtime_fast", "services": ["sheets"],
         "allowed_tools": ["required_write"], "requires_write": True,
         "operation": "write", "expected_write_tools": ["required_write"],
         "write_completion_mode": "all", "session_id": "test",
@@ -2286,7 +2323,7 @@ async def test_sheet_create_success_then_correction_exposes_only_write(monkeypat
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FakeLLM())
     result = await make_service_node("sheets")({
         "message": "create and populate a sheet",
-        "model_to_use": "groq_fast", "services": ["sheets"],
+        "model_to_use": "runtime_fast", "services": ["sheets"],
         "allowed_tools": [
             "create_google_sheet", "write_google_sheet", "append_to_google_sheet",
         ],
@@ -2322,7 +2359,7 @@ async def test_service_node_retries_rejected_groq_tool_generation(monkeypatch):
     monkeypatch.setattr("app.agents.supervisor.get_llm", lambda _: FlakyLLM())
     result = await make_service_node("gmail")({
         "message": "echo",
-        "model_to_use": "groq_fast",
+        "model_to_use": "runtime_fast",
         "services": ["gmail"],
         "session_id": "test",
     })
@@ -2363,7 +2400,7 @@ async def test_safe_read_records_rate_limit_and_fallback_model(monkeypatch):
     monkeypatch.setattr("app.agents.supervisor._record_model_call", record)
     monkeypatch.setattr("app.agents.supervisor._record_model_event", event)
     result = await make_service_node("gmail", pool=object())({
-        "message": "read mail", "model_to_use": "groq_fast", "services": ["gmail"],
+        "message": "read mail", "model_to_use": "runtime_fast", "services": ["gmail"],
         "session_id": "test", "run_id": "run", "step_id": "step",
         "allow_small_fallback": True,
     })
@@ -2398,7 +2435,7 @@ async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch)
     monkeypatch.setattr("app.agents.supervisor._record_model_call", record)
     monkeypatch.setattr("app.agents.supervisor._record_model_event", event)
     result = await make_service_node("gmail", pool=object())({
-        "message": "send mail", "model_to_use": "groq_fast", "services": ["gmail"],
+        "message": "send mail", "model_to_use": "runtime_fast", "services": ["gmail"],
         "session_id": "test", "run_id": "run", "step_id": "step",
         "allow_small_fallback": False,
     })
@@ -2408,7 +2445,7 @@ async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch)
     assert result["error_component"] == "model_router"
     assert result["error_boundary"] == "quality_model_quota"
     assert result["error_evidence"] == {
-        "model": get_settings().groq_fast_model,
+        "model": get_settings().runtime_fast_model,
         "fallback_allowed": False,
         "write_contract_active": False,
     }
@@ -2418,7 +2455,7 @@ async def test_complex_write_pauses_instead_of_using_small_fallback(monkeypatch)
 @pytest.mark.asyncio
 async def test_agent_graph_preserves_structured_service_failure(monkeypatch):
     async def route(state):
-        return {"model_to_use": "groq_fast"}
+        return {"model_to_use": "runtime_fast"}
 
     async def retrieve(state):
         return {"retrieved_context": "", "operational_context": ""}

@@ -5,13 +5,13 @@ import os
 import subprocess
 
 
-service = os.environ["RAILWAY_CANDIDATE_WORKER_SERVICE"]
+service = os.environ["RAILWAY_CANDIDATE_SERVICE_ID"]
 surfaces = set(filter(None, os.environ.get("CANDIDATE_RUNTIME_SURFACES", "").split(",")))
 
 
 def railway(*args):
     return subprocess.check_output(
-        ["npx", "-y", "@railway/cli@latest", *args, "--service", service, "--json"],
+        ["railway", *args, "--service", service, "--json"],
         text=True,
     )
 
@@ -26,7 +26,7 @@ elif "api" not in surfaces:
         identifier = item.get("id") or item.get("domain") or item.get("url")
         if identifier:
             subprocess.check_call([
-                "npx", "-y", "@railway/cli@latest", "domain", "delete",
+                "railway", "domain", "delete",
                 str(identifier), "--yes", "--service", service,
             ])
     domains = []

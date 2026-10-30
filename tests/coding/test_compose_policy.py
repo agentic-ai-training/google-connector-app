@@ -1,0 +1,228 @@
+"""Generated-service Compose policy uses exact bytes and no provider calls."""
+from hashlib import sha256
+from uuid import uuid4
+
+import pytest
+
+from app.coding.compose_policy import ComposePolicyError, release_identity, validate_compose
+from app.coding.deployment_admission import (
+    DeploymentManifest, GENERATED_STACK_PROFILES, ValidationProof, validation_set_hash,
+)
+from app.coding.host_capacity import CapacityRequest
+from datetime import datetime, timedelta, timezone
+
+
+def approved(text: str, *, cpu=1500, memory=3072):
+    data = text.encode()
+    source_hash = "d" * 64
+    compose_hash = sha256(data).hexdigest()
+    # Invalid-policy fixtures can still have a valid release identity; their
+    # rejection must come from the specific Compose policy under test.
+    image = "registry.example/api@sha256:" + "a" * 64
+    manifest = DeploymentManifest(
+        request_id=uuid4(), target_id="test-target", target_hash="a" * 64,
+        release_hash=release_identity(source_hash, compose_hash, {"api": image}),
+        compose_hash=compose_hash, validated_source_hash=source_hash,
+        validation_attestation_hash="c" * 64, estimated_upper_bound_paise=0,
+        capacity=CapacityRequest(pool_id="test-host", cpu_millis=cpu,
+                                 memory_mib=memory, storage_mib=10240),
+        planned_end_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    return data, manifest
+
+
+def safe_compose():
+    return ("services:\n"
+            "  api:\n"
+            "    image: registry.example/api@sha256:" + "a" * 64 + "\n"
+            "    environment:\n"
+            "      DATABASE_PASSWORD: '${DB_PASSWORD:?required}'\n"
+            "    volumes: [dbdata:/data]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '1.0', memory: 2GiB}\n"
+            "volumes:\n"
+            "  dbdata: {}\n")
+
+
+def safe_stack_compose():
+    return ("services:\n"
+            "  frontend:\n"
+            "    image: registry.example/frontend@sha256:" + "a" * 64 + "\n"
+            "    depends_on: [backend]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.4', memory: 512MiB}\n"
+            "  backend:\n"
+            "    image: registry.example/backend@sha256:" + "b" * 64 + "\n"
+            "    depends_on: [database]\n"
+            "    environment:\n"
+            "      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/app\n"
+            "      SPRING_DATASOURCE_USERNAME: app\n"
+            "      SPRING_DATASOURCE_PASSWORD: '${DB_PASSWORD:?required}'\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.6', memory: 1GiB}\n"
+            "  database:\n"
+            "    image: registry.example/postgres@sha256:" + "c" * 64 + "\n"
+            "    environment:\n"
+            "      POSTGRES_DB: app\n"
+            "      POSTGRES_USER: app\n"
+            "      POSTGRES_PASSWORD: '${DB_PASSWORD:?required}'\n"
+            "    volumes: [dbdata:/var/lib/postgresql/data]\n"
+            "    deploy:\n"
+            "      resources:\n"
+            "        limits: {cpus: '0.5', memory: 1GiB}\n"
+            "volumes:\n"
+            "  dbdata: {}\n")
+
+
+def approved_stack(*, proofs=None, text=None):
+    text = text or safe_stack_compose()
+    data = text.encode()
+    source_hash = "d" * 64
+    proofs = proofs or tuple(ValidationProof(
+        profile=profile, claim_id=uuid4(), result_hash=format(index + 1, "x") * 64,
+    ) for index, profile in enumerate(sorted(GENERATED_STACK_PROFILES)))
+    images = {
+        "frontend": "registry.example/frontend@sha256:" + "a" * 64,
+        "backend": "registry.example/backend@sha256:" + "b" * 64,
+        "database": "registry.example/postgres@sha256:" + "c" * 64,
+    }
+    compose_hash = sha256(data).hexdigest()
+    manifest = DeploymentManifest(
+        request_id=uuid4(), target_id="test-target", target_hash="a" * 64,
+        release_profile="react_spring_postgres", validation_proofs=proofs,
+        validation_attestation_hash=validation_set_hash(proofs),
+        validated_source_hash=source_hash, compose_hash=compose_hash,
+        release_hash=release_identity(source_hash, compose_hash, images),
+        estimated_upper_bound_paise=0,
+        capacity=CapacityRequest(pool_id="test-host", cpu_millis=1500,
+                                 memory_mib=3072, storage_mib=10240),
+        planned_end_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    return data, manifest
+
+
+def test_exact_digest_pinned_bounded_compose():
+    data, manifest = approved(safe_compose())
+    assert validate_compose(data, manifest) == safe_compose()
+    with pytest.raises(ComposePolicyError, match="does not match"):
+        validate_compose(data + b"\n", manifest)
+    with pytest.raises(ComposePolicyError, match="capacity"):
+        validate_compose(data, manifest.model_copy(update={
+            "capacity": manifest.capacity.model_copy(update={"memory_mib": 1024}),
+        }))
+
+
+def test_release_identity_is_bound_to_source_compose_and_each_pinned_image():
+    data, manifest = approved(safe_compose())
+    for changed in (
+        {"release_hash": "f" * 64},
+        {"validated_source_hash": "e" * 64},
+        {"validated_source_hash": None},
+    ):
+        with pytest.raises(ComposePolicyError, match="release identity"):
+            validate_compose(data, manifest.model_copy(update=changed))
+    other = safe_compose().replace("@sha256:" + "a" * 64, "@sha256:" + "b" * 64)
+    with pytest.raises(ComposePolicyError, match="release identity"):
+        validate_compose(other.encode(), manifest.model_copy(update={
+            "compose_hash": sha256(other.encode()).hexdigest(),
+        }))
+
+
+def test_generated_stack_requires_all_four_profile_proofs_and_canonical_shape():
+    data, manifest = approved_stack()
+    assert validate_compose(data, manifest) == data.decode()
+    with pytest.raises(ValueError, match="four distinct"):
+        DeploymentManifest.model_validate({**manifest.model_dump(),
+                                           "validation_proofs": manifest.validation_proofs[:3]})
+    with pytest.raises(ValueError, match="four distinct"):
+        DeploymentManifest.model_validate({**manifest.model_dump(),
+                                           "validation_proofs": (
+                                               *manifest.validation_proofs[:3],
+                                               manifest.validation_proofs[0],
+                                           )})
+    single_data, single_manifest = approved(safe_compose())
+    with pytest.raises(ComposePolicyError, match="multi-service"):
+        validate_compose(data, single_manifest.model_copy(update={
+            "compose_hash": sha256(data).hexdigest(),
+        }))
+    wrong = data.decode().replace("depends_on: [database]", "depends_on: []")
+    with pytest.raises(ComposePolicyError, match="dependencies"):
+        validate_compose(wrong.encode(), manifest.model_copy(update={
+            "compose_hash": sha256(wrong.encode()).hexdigest(),
+        }))
+    assert validate_compose(single_data, single_manifest) == single_data.decode()
+
+
+@pytest.mark.parametrize("before,after", [
+    ("SPRING_DATASOURCE_USERNAME: app", "SPRING_DATASOURCE_USERNAME: other"),
+    ("SPRING_DATASOURCE_PASSWORD: '${DB_PASSWORD:?required}'",
+     "SPRING_DATASOURCE_PASSWORD: '${OTHER_PASSWORD:?required}'"),
+    ("jdbc:postgresql://database:5432/app", "jdbc:postgresql://elsewhere:5432/app"),
+    ("POSTGRES_DB: app", "POSTGRES_DB: other"),
+    ("POSTGRES_PASSWORD: '${DB_PASSWORD:?required}'",
+     "POSTGRES_PASSWORD: '${OTHER_PASSWORD:?required}'"),
+    ("      POSTGRES_USER: app\n",
+     "      POSTGRES_USER: app\n      POSTGRES_HOST_AUTH_METHOD: trust\n"),
+    ("dbdata:/var/lib/postgresql/data", "dbdata:/tmp/throwaway"),
+    ("  database:\n", "  database:\n    command: ['echo', 'not-postgres']\n"),
+])
+def test_generated_stack_requires_matching_private_database_configuration(before, after):
+    text = safe_stack_compose()
+    if before.startswith("POSTGRES_PASSWORD"):
+        text = text.replace("      " + before, "      " + after)
+    else:
+        text = text.replace(before, after)
+    data, manifest = approved_stack(text=text)
+    with pytest.raises(ComposePolicyError, match="Spring/PostgreSQL connection"):
+        validate_compose(data, manifest)
+
+
+@pytest.mark.parametrize("fragment", [
+    "    privileged: true\n",
+    "    network_mode: host\n",
+    "    ports: ['5432:5432']\n",
+    "    build: .\n",
+    "    labels: {traefik.enable: 'true'}\n",
+    "    volumes: [/var/run/docker.sock:/var/run/docker.sock]\n",
+    "    environment: {DATABASE_PASSWORD: plaintext}\n",
+    "    deploy: {replicas: 100, resources: {limits: {cpus: '1.0', memory: 2GiB}}}\n",
+    "    depends_on: [outside_service]\n",
+    "    restart: always\n",
+])
+def test_host_escape_or_literal_secret_denied(fragment):
+    text = safe_compose().replace("    volumes: [dbdata:/data]\n", fragment)
+    data, manifest = approved(text)
+    with pytest.raises(ComposePolicyError):
+        validate_compose(data, manifest)
+
+
+def test_alias_duplicate_key_and_unpinned_image_denied():
+    for text in (
+        safe_compose() + "services: {}\n",
+        safe_compose().replace("api:\n", "api: &api\n"),
+        safe_compose().replace("registry.example/api@sha256:" + "a" * 64,
+                               "registry.example/api:latest"),
+    ):
+        data, manifest = approved(text)
+        with pytest.raises(ComposePolicyError):
+            validate_compose(data, manifest)
+
+
+def test_replica_multiplier_is_not_hidden_inside_deployment_limits():
+    text = safe_compose().replace(
+        "    deploy:\n", "    deploy:\n      replicas: 100\n",
+    )
+    data, manifest = approved(text)
+    with pytest.raises(ComposePolicyError, match="cannot scale"):
+        validate_compose(data, manifest)
+
+
+def test_malformed_restart_and_extreme_port_are_policy_failures_not_crashes():
+    for fragment in ("    restart: [always]\n", "    expose: ['" + "9" * 5000 + "']\n"):
+        text = safe_compose().replace("    volumes: [dbdata:/data]\n", fragment)
+        data, manifest = approved(text)
+        with pytest.raises(ComposePolicyError):
+            validate_compose(data, manifest)

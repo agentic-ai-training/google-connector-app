@@ -229,6 +229,110 @@ fn natural_language_mode_requires_explicit_cloud_source_consent() {
 }
 
 #[test]
+fn natural_language_mode_requires_isolation_before_provider_access() {
+    let workspace = TempDir::new().unwrap();
+    let request_directory = TempDir::new().unwrap();
+    let request = request_directory.path().join("request.txt");
+    fs::write(&request, "change the answer safely").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args([
+            "plan-request",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--request-file",
+            request.to_str().unwrap(),
+            "--allow-cloud-source",
+            "true",
+        ])
+        .env("CODING_GROQ_API_KEY", "test-only")
+        .env_remove("GCA_VALIDATION_LAUNCHER")
+        .env_remove("GCA_VALIDATION_CONFIG")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("GCA_VALIDATION_LAUNCHER is required")
+    );
+}
+
+#[test]
+fn natural_language_mode_rejects_workspace_supplied_launcher_before_provider_access() {
+    let workspace = TempDir::new().unwrap();
+    let launcher = workspace.path().join("launcher.sh");
+    let config = workspace.path().join("config.json");
+    let request = workspace.path().join("request.txt");
+    fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(&config, "{}").unwrap();
+    fs::write(&request, "change the answer safely").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+        .args([
+            "plan-request",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--request-file",
+            request.to_str().unwrap(),
+            "--allow-cloud-source",
+            "true",
+        ])
+        .env("CODING_GROQ_API_KEY", "test-only")
+        .env("GCA_VALIDATION_LAUNCHER", &launcher)
+        .env("GCA_VALIDATION_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("outside the workspace")
+    );
+}
+
+#[test]
+fn cloud_model_plan_cannot_preview_or_apply_without_isolation() {
+    let workspace = TempDir::new().unwrap();
+    let plan_directory = TempDir::new().unwrap();
+    let plan_path = plan_directory.path().join("model-plan.json");
+    let plan_bytes = serde_json::to_vec(&json!({
+        "origin": "cloud_model",
+        "actions": [{"tool":"run_validation","profile":"python_compile","timeout_seconds":30}]
+    }))
+    .unwrap();
+    fs::write(&plan_path, &plan_bytes).unwrap();
+    for approve in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gca-local"));
+        command.args([
+            "execute-plan",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--plan",
+            plan_path.to_str().unwrap(),
+        ]);
+        if approve {
+            command.args(["--approve", &sha256_bytes(&plan_bytes)]);
+        }
+        let output = command
+            .env_remove("GCA_VALIDATION_LAUNCHER")
+            .env_remove("GCA_VALIDATION_CONFIG")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("GCA_VALIDATION_LAUNCHER is required")
+        );
+    }
+}
+
+#[test]
 fn readonly_broker_command_rejects_mutation_tools() {
     let workspace = TempDir::new().unwrap();
     fs::write(workspace.path().join("main.py"), "value = 1\n").unwrap();
@@ -265,6 +369,44 @@ fn readonly_broker_command_rejects_mutation_tools() {
         fs::read_to_string(workspace.path().join("main.py")).unwrap(),
         "value = 1\n"
     );
+}
+
+#[test]
+fn readonly_broker_exposes_bounded_program_analysis_tools() {
+    let workspace = TempDir::new().unwrap();
+    fs::write(
+        workspace.path().join("main.py"),
+        "import json\n\ndef choose(value):\n    if value:\n        return json.dumps(value)\n    return 'none'\n",
+    )
+    .unwrap();
+    for request in [
+        json!({"tool":"language_inventory","paths":["main.py"]}),
+        json!({"tool":"dependency_inventory","paths":["main.py"]}),
+        json!({"tool":"complexity_inventory","paths":["main.py"]}),
+        json!({"tool":"conversion_contract","source_path":"main.py","target_language":"rust"}),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gca-local"))
+            .args([
+                "broker-read",
+                "--workspace",
+                workspace.path().to_str().unwrap(),
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(request.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "request failed: {request}");
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["ok"], true, "request failed: {request}");
+    }
 }
 
 #[test]

@@ -22,6 +22,7 @@ from app.runs.repository import (
     InvalidClarificationAnswers,
     RunLimitExceeded,
     append_event,
+    append_event_conn,
     cancel_run,
     clarify_run,
     create_run,
@@ -50,6 +51,7 @@ from app.rag.user_sync import (
 )
 from app.improvements.failure_intelligence import record_failure_incident
 from app.mlops.metrics import write_reconciliation
+from app.runs.tool_receipts import receipt_evidence
 from app.runs.planner import (
     classify_request,
     infer_operation_sequence,
@@ -58,6 +60,7 @@ from app.runs.reconciliation import (
     ReconciliationDecision,
     reconcile_failed_step,
 )
+from app.runs.temporal_resolution import ResolutionConflict, bind_decision, snapshot as resolution_snapshot
 from app.improvements.routing import (
     resolve_candidate_api_target,
     resolve_run_candidate_api_target,
@@ -173,7 +176,7 @@ async def _reconcile_and_resume(
     async with pool.acquire() as conn, conn.transaction():
         run_row = await conn.fetchrow(
             """SELECT * FROM agent_runs WHERE id=$1 AND user_id=$2
-               AND status IN ('failed','partial') FOR UPDATE""",
+               AND status IN ('failed','partial') AND deleted_at IS NULL FOR UPDATE""",
             run_id, user_id,
         )
         if not run_row:
@@ -193,6 +196,7 @@ async def _reconcile_and_resume(
             )
         if not step_row:
             raise HTTPException(409, "No matching failed step can be resumed")
+        proof_source = await resolution_snapshot(conn, dict(run_row), dict(step_row))
         artifacts = await conn.fetch(
             "SELECT * FROM agent_artifacts WHERE run_id=$1 AND step_id=$2",
             run_id, step_row["id"],
@@ -202,6 +206,10 @@ async def _reconcile_and_resume(
                WHERE run_id=$1 AND step_id=$2 ORDER BY attempt_no""",
             run_id, step_row["id"],
         )
+        receipts = await receipt_evidence(conn, run_id, step_row['id'], user_id)
+        reconciliation_observed_at = await conn.fetchval('SELECT clock_timestamp()')
+        from app.runs.prefix_continuation import source_hash as prefix_source_hash
+        prefix_source = await prefix_source_hash(conn, dict(run_row), dict(step_row))
         await conn.execute(
             """UPDATE agent_runs SET current_phase='reconciling',
                current_step_id=$1 WHERE id=$2""",
@@ -210,6 +218,14 @@ async def _reconcile_and_resume(
 
     run = dict(run_row)
     step = dict(step_row)
+    step['receipt_write_uncertain'] = receipts.blocked
+    step['receipt_source_digest'] = receipts.digest
+    if receipts.executions:
+        output = dict(step.get('output_data') or {})
+        # New receipts are the ordered invocation evidence. Do not merge stale
+        # partial lists in ways that duplicate effects or invent ordering.
+        output['tool_executions'] = receipts.executions
+        step['output_data'] = output
     step["historical_tool_attempts"] = [
         dict(item) for item in historical_tool_attempts
     ]
@@ -232,25 +248,57 @@ async def _reconcile_and_resume(
 
     settings = get_settings()
     resume_executor_version = (
-        settings.executor_version or settings.deployment_version
+        run['executor_version'] if run.get('orchestration_owner') == 'temporal' or run.get('canary_id')
+        else settings.executor_version or settings.deployment_version
     )
     previous_executor_version = run.get("executor_version")
     async with pool.acquire() as conn, conn.transaction():
+        current_run = await conn.fetchrow('''SELECT * FROM agent_runs WHERE id=$1 AND user_id=$2
+          AND deleted_at IS NULL AND status IN ('failed','partial') FOR UPDATE''', run_id, user_id)
+        if current_run is None:
+            raise HTTPException(409, 'Run changed during reconciliation')
         locked = await conn.fetchrow(
-            """SELECT status,error_category FROM agent_run_steps
+            """SELECT * FROM agent_run_steps
                WHERE id=$1 AND run_id=$2 FOR UPDATE""",
             step_row["id"], run_id,
         )
         if not locked or locked["status"] != "failed":
             raise HTTPException(409, "The failed step changed during reconciliation")
+        current_receipts = await receipt_evidence(conn, run_id, step_row['id'], user_id)
+        if (current_receipts.digest != receipts.digest or current_receipts.blocked != receipts.blocked
+                or current_receipts.executions != receipts.executions):
+            raise HTTPException(409, 'Tool invocation evidence changed during reconciliation')
+        locked_step = dict(locked)
+        if receipts.executions:
+            from app.tools.result_projection import project_tool_result
+            # Verification used full private evidence; durable step history keeps
+            # the existing bounded result projection, not a second raw corpus.
+            compact = [{**item, 'result': project_tool_result(item['tool'], item['result'],
+                max_tokens=2_000).compact_result} for item in receipts.executions]
+            locked_step['output_data'] = {**step['output_data'], 'tool_executions': compact}
+        try:
+            from app.runs.prefix_continuation import bind_prefix_decision
+            decision = await bind_prefix_decision(conn, dict(current_run), dict(locked), decision,
+                receipts, user_id, resume_executor_version, reconciliation_observed_at, prefix_source, proof_source)
+            decision = await bind_decision(conn, dict(current_run), locked_step, decision, proof_source, user_id)
+        except ResolutionConflict as error:
+            raise HTTPException(409, str(error)) from None
         if decision.state == "already_completed":
+            if receipts.executions and current_run.get('orchestration_owner') != 'temporal':
+                from app.runs.temporal_resolution import verified_receipt
+                await conn.execute('UPDATE agent_run_steps SET output_data=$2::jsonb WHERE id=$1', step_row['id'],
+                    json.dumps({**locked_step['output_data'], 'output': verified_receipt(step),
+                                'verification': 'Deterministic readback reconciled per-tool receipts'}, default=str))
+                from app.runs.worker import _store_artifacts
+                from app.runs.verifier import extract_artifacts
+                await _store_artifacts(conn, dict(current_run), locked_step, extract_artifacts(receipts.executions), verified=True)
             await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',
                    error_category=NULL,error_message=NULL,completed_at=COALESCE(completed_at,now())
                    WHERE id=$1""",
                 step_row["id"],
             )
-        elif decision.state == "safe_to_retry":
+        elif decision.state in {"safe_to_retry", "continue_verified_prefix"}:
             await conn.execute(
                 """UPDATE agent_run_steps SET status='pending',started_at=NULL,
                    completed_at=NULL,error_category=NULL,error_message=NULL WHERE id=$1""",
@@ -268,26 +316,28 @@ async def _reconcile_and_resume(
                 """UPDATE agent_runs SET status='queued',current_phase='queued',
                    completed_at=NULL,error_category=NULL,error_message=NULL,
                    current_step_id=NULL,lease_owner=NULL,lease_expires_at=NULL,
-                   side_effect_integrity=100,executor_version=$3
+                   side_effect_integrity=CASE WHEN
+                     COALESCE(to_jsonb(agent_runs)->>'orchestration_owner','postgres')='temporal'
+                     THEN side_effect_integrity ELSE 100 END,executor_version=$3
                    WHERE id=$1 AND user_id=$2""",
                 run_id, user_id, resume_executor_version,
             )
-    await append_event(
-        pool, run_id, user_id, "run_reconciled",
-        step_id=step_row["id"], phase="reconciliation",
-        message=f"Resume decision: {decision.reason_code}",
-        payload={
-            "state": decision.state,
-            "reason_code": decision.reason_code,
-            "resume_step_id": decision.resume_step_id,
-            "evidence": decision.evidence,
-            "previous_executor_version": previous_executor_version,
-            "resume_executor_version": (
-                resume_executor_version
-                if decision.state != "manual_required" else previous_executor_version
-            ),
-        },
-    )
+        await append_event_conn(
+            conn, run_id, user_id, "run_reconciled",
+            step_id=step_row["id"], phase="reconciliation",
+            message=f"Resume decision: {decision.reason_code}",
+            payload={
+                "state": decision.state,
+                "reason_code": decision.reason_code,
+                "resume_step_id": decision.resume_step_id,
+                "evidence": decision.evidence,
+                "previous_executor_version": previous_executor_version,
+                "resume_executor_version": (
+                    resume_executor_version
+                    if decision.state != "manual_required" else previous_executor_version
+                ),
+            },
+        )
     write_reconciliation.labels(
         step.get("service") or "unknown",
         step.get("operation") or "unknown",

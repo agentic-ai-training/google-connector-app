@@ -16,7 +16,7 @@ from app.agents.router import get_llm, get_model_name, route_model_node
 from app.agents.context_budget import fit_messages_to_budget
 from app.agents.errors import (
     ModelContextLengthFailure, ModelQuotaFailure,
-    ToolExecutionFailure, ToolSelectionFailure,
+    ToolExecutionFailure, ToolSelectionFailure, WriteReconciliationRequired,
     is_provider_context_length_error,
 )
 from app.agents.state import AgentState
@@ -36,13 +36,15 @@ from app.tools.base import (
 from app.rag.context_packer import pack_context
 from app.rag.retriever import hybrid_retrieve
 from app.runs.planner import classify_request
+from app.runs.tool_admission import require_tool_admission
+from app.runs.tool_receipts import ToolReceiptFailure, begin_receipt, finish_receipt
 from app.okf.retriever import pack_operational_knowledge, retrieve_operational_knowledge
 from app.config.feature_flags import feature_enabled
 from app.config.settings import get_settings
 from app.tools.result_projection import project_tool_result
 from app.tools.result_store import store_private_tool_result
 from app.tools.contracts import (
-    WriteContract, attempted_required_tools, bind_ordered_output_lineage,
+    WRITE_TOOLS, WriteContract, attempted_required_tools, bind_ordered_output_lineage,
     contract_satisfied, missing_required_tools, next_ordered_required_tool,
     successful_required_tools,
 )
@@ -73,7 +75,7 @@ FAILED_TOOL_PATTERN = re.compile(
 
 
 def recover_rejected_tool_call(exc: Exception) -> AIMessage | None:
-    """Recover the structured call Groq includes with tool_use_failed errors."""
+    """Recover a structured call included in a provider tool-validation error."""
     match = FAILED_TOOL_PATTERN.search(str(exc))
     if not match:
         return None
@@ -471,16 +473,39 @@ async def _record_model_event(pool, state, event_type, model, fallback_model=Non
 
 
 async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool):
+    # Denial is a typed admission decision, not a fictional provider/tool failure.
+    # Keep it outside the provider-error conversion below.
+    await require_tool_admission(pool, state, tool_name=tool.name)
+    from app.runs.prefix_continuation import before_tool, after_tool
+    reused, recovered = await before_tool(pool, state, tool.name, call)
+    if reused:
+        envelope = project_tool_result(tool.name, recovered,
+            max_tokens=get_settings().runtime_tool_result_max_tokens)
+        return ToolMessage(content=json.dumps(envelope.compact_result, default=str),
+            tool_call_id=call['id'], name=tool.name), recovered, envelope
+    receipt = await begin_receipt(pool, state, tool.name, call)
+    response_saved = False
     started = time.perf_counter()
     context_token = tool_session_id.set(state.get("session_id"))
     user_token = tool_user_id.set(state.get("user_id"))
     run_token = tool_run_id.set(state.get("run_id"))
     step_token = tool_step_id.set(state.get("step_id"))
     try:
-        result = await tool.ainvoke(call.get("args", {}))
+        try:
+            result = await tool.ainvoke(call.get("args", {}))
+        except BaseException:
+            # Preserve unknown acceptance on timeout/cancellation. This evidence
+            # does not permit retry or declare that a remote mutation failed.
+            await asyncio.shield(finish_receipt(pool, receipt, returned=False))
+            raise
+        # Persist the response before projection, logging or the next tool can
+        # fail. Receipt persistence failure must not become a normal ToolMessage.
+        await finish_receipt(pool, receipt, result=result, returned=True)
+        response_saved = True
+        after_tool(tool.name, call, result)
         envelope = project_tool_result(
             tool.name, result,
-            max_tokens=get_settings().groq_tool_result_max_tokens,
+            max_tokens=get_settings().runtime_tool_result_max_tokens,
         )
         if envelope.truncated:
             try:
@@ -516,7 +541,13 @@ async def execute_tool_call(tool: BaseTool, call: dict, state: AgentState, pool)
             tool_call_id=call["id"],
             name=tool.name,
         ), result, envelope
+    except ToolReceiptFailure:
+        raise
     except Exception as exc:
+        if receipt is not None and tool.name in WRITE_TOOLS:
+            # Never convert response loss OR a later projection/logging failure
+            # into a ToolMessage that invites the model to repeat a real write.
+            raise WriteReconciliationRequired(tool.name, str(receipt.identity), response_saved=response_saved) from None
         elapsed = int((time.perf_counter() - started) * 1000)
         if not isinstance(tool, GoogleWorkspaceBaseTool):
             tool_errors.labels(tool.name).inc()
@@ -566,12 +597,12 @@ def make_service_node(service: str, pool=None):
             if allowed_tools:
                 available = [tool for tool in available if tool.name in allowed_tools]
             by_name = {tool.name: tool for tool in available}
-            model_choice = state.get("model_to_use", "groq_fast")
+            model_choice = state.get("model_to_use", "runtime_fast")
             completion_budget = max(
                 1,
                 int(
                     state.get("completion_token_budget")
-                    or get_settings().groq_max_tokens
+                    or get_settings().runtime_max_tokens
                 ),
             )
             llm_token_options = (
@@ -646,9 +677,9 @@ def make_service_node(service: str, pool=None):
                     try:
                         bounded_messages, context_report = fit_messages_to_budget(
                             messages, available,
-                            context_limit=get_settings().groq_context_window_tokens,
+                            context_limit=get_settings().runtime_context_window_tokens,
                             reserved_completion_tokens=completion_budget,
-                            safety_tokens=get_settings().groq_context_safety_tokens,
+                            safety_tokens=get_settings().runtime_context_safety_tokens,
                         )
                         model_context_preflight_tokens.labels(used_model).observe(
                             context_report.estimated_input_tokens
@@ -713,9 +744,9 @@ def make_service_node(service: str, pool=None):
                             try:
                                 bounded_messages, context_report = fit_messages_to_budget(
                                     messages, available,
-                                    context_limit=get_settings().groq_context_window_tokens,
+                                    context_limit=get_settings().runtime_context_window_tokens,
                                     reserved_completion_tokens=completion_budget,
-                                    safety_tokens=get_settings().groq_context_safety_tokens,
+                                    safety_tokens=get_settings().runtime_context_safety_tokens,
                                 )
                                 response = await llm.ainvoke(bounded_messages)
                             except Exception as fallback_exc:
@@ -782,7 +813,7 @@ def make_service_node(service: str, pool=None):
                         )))
                         # A non-reasoning quality route is the safest recovery when a
                         # reasoning completion spent its allowance without visible text.
-                        model_choice = "groq_fast"
+                        model_choice = "runtime_fast"
                         llm_base = get_llm(
                             model_choice, **llm_token_options,
                         )

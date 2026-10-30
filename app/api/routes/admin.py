@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import re
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -52,7 +53,96 @@ from app.okf.candidates import stage_okf_candidate_bundle
 from app.improvements.failure_intelligence import (
     create_or_update_proposal, create_theme_proposal,
 )
+from app.coding.ci_trust import CITrustError, latest_policy, require_same_policy, validate_jobs, verify_run, verify_workflow_definition
+from app.improvements import ci_admission, deployment_intents, provider_readback
 router=APIRouter(prefix="/admin")
+
+
+async def _prepare_code_admission(pool, key, digest, *, expected_status='awaiting_review'):
+    try:
+        return await ci_admission.prepare(pool, key, digest, get_settings().github_proposal_repository,
+            expected_status=expected_status)
+    except CITrustError as exc:
+        raise HTTPException(409, 'Current trusted CI admission required: ' + str(exc)) from exc
+
+
+async def _lock_code_admission(conn, snapshot):
+    try:
+        proposal = await ci_admission.lock(conn, snapshot)
+    except CITrustError as exc:
+        raise HTTPException(409, 'Current trusted CI admission required: ' + str(exc)) from exc
+    stage = {'awaiting_review': 'canary_review', 'approved_for_canary': 'canary_activation',
+             'awaiting_promotion': 'promotion_review'}[proposal['status']]
+    await conn.execute('''INSERT INTO improvement_evidence(proposal_id,evidence_type,sanitized_payload)
+      VALUES($1,'current_ci_admission',$2::jsonb)''', proposal['id'], json.dumps({
+        'stage': stage, 'candidate_version': proposal['candidate_version'],
+        'candidate_digest': proposal['content_hash'], 'build_id': str(snapshot['build']['id']),
+        'github_observed': snapshot['observed'], 'ci_does_not_grant_approval': True,
+    }))
+    return proposal
+
+
+class CodingCITrustPolicyIn(BaseModel):
+    repository: str = Field(pattern=r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+    workflow_id: int = Field(gt=0)
+    workflow_path: str = Field(pattern=r'^\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$')
+    trusted_commit: str = Field(pattern=r'^[0-9a-f]{40}$')
+    workflow_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    required_jobs: dict[str, list[str]]
+    ttl_hours: int = Field(default=24, ge=1, le=720)
+    confirmation: str = Field(pattern=r'^APPROVE_CI_TRUST_POLICY$')
+
+
+class CodingCITrustRevocationIn(BaseModel):
+    repository: str = Field(pattern=r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+    policy_id: UUID
+    confirmation: str = Field(pattern=r'^REVOKE_CI_TRUST_POLICY$')
+
+
+@router.post('/coding-ci-policies/revoke')
+async def revoke_coding_ci_policy(body: CodingCITrustRevocationIn, request: Request):
+    if not getattr(request.state, 'is_admin', False) or request.state.user_id in {'trusted-ci', 'trusted-candidate-builder'}:
+        raise HTTPException(403, 'Human administrator approval is required')
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('coding-ci-policy:'||$1,0))", body.repository)
+        current = await conn.fetchrow('''SELECT * FROM coding_ci_policies WHERE repository=$1
+          ORDER BY created_at DESC,id DESC LIMIT 1''', body.repository)
+        if not current or current['id'] != body.policy_id:
+            raise HTTPException(409, 'The CI policy changed; review the current policy before revoking it')
+        revoked = await conn.fetchrow('''INSERT INTO coding_ci_policies(repository,workflow_id,workflow_path,trusted_commit,
+          workflow_sha256,required_jobs,approved_by,enabled,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,FALSE,
+          clock_timestamp()+interval '24 hours'-interval '1 second') RETURNING id''', body.repository,
+          current['workflow_id'], current['workflow_path'], current['trusted_commit'], current['workflow_sha256'],
+          current['required_jobs'], request.state.user_id)
+    return {'policy_id': str(revoked['id']), 'enabled': False, 'revoked_policy_id': str(body.policy_id)}
+
+
+@router.post('/coding-ci-policies')
+async def publish_coding_ci_policy(body: CodingCITrustPolicyIn, request: Request):
+    if not getattr(request.state, 'is_admin', False) or request.state.user_id in {'trusted-ci', 'trusted-candidate-builder'}:
+        raise HTTPException(403, 'Human administrator approval is required')
+    settings = get_settings()
+    allowed = {item.strip() for item in settings.coding_allowed_repositories.split(',') if item.strip()}
+    allowed.add(settings.github_proposal_repository)
+    if body.repository not in allowed:
+        raise HTTPException(403, 'CI policy repository is not configured')
+    try:
+        validate_jobs(body.required_jobs)
+        await verify_workflow_definition(body.repository, body.workflow_id, body.workflow_path,
+            body.trusted_commit, body.workflow_sha256)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        policy = await conn.fetchrow('''INSERT INTO coding_ci_policies(repository,workflow_id,workflow_path,
+          trusted_commit,workflow_sha256,required_jobs,approved_by,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,clock_timestamp()+($8*interval '1 hour')-interval '1 second') RETURNING *''',
+          body.repository, body.workflow_id, body.workflow_path, body.trusted_commit, body.workflow_sha256,
+          json.dumps(body.required_jobs), request.state.user_id, body.ttl_hours)
+    return {'policy': dict(policy)}
+
+
 class ExperimentIn(BaseModel):
     name:str; prompt_name:str; control_id:str; variant_id:str; traffic_split:float=.5
     notes:str|None=None; selection_policy:str="ab"
@@ -64,7 +154,7 @@ class ExternalPublicationDecision(BaseModel):
     proposal_hash: str
     confirmation: str
 class PromptIn(BaseModel):
-    name:str; content:str; model_target:str="groq/llama-3.3-70b"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
+    name:str; content:str; model_target:str="gemini/gemini-2.5-flash"; temperature:float=.3; max_tokens:int=1000; notes:str|None=None
 class FeatureFlagIn(BaseModel):
     enabled: bool
     config: dict = Field(default_factory=dict)
@@ -616,12 +706,14 @@ async def remediate_candidate_validation_failure(
     """Create one bounded remediation attempt from trusted, sanitized CI evidence."""
     settings = get_settings()
     pool = await get_pool()
+    ci_snapshot = await _candidate_ci_preflight(pool, build_id, body, expected_status='failed')
     diagnostics = [
         _sanitize_ci_diagnostic(value)
         for value in body.diagnostics
         if str(value).strip()
     ][:30]
     async with pool.acquire() as conn, conn.transaction():
+        await _lock_candidate_ci_source(conn, ci_snapshot)
         source = await conn.fetchrow(
             """SELECT b.*,p.proposal_key
                  FROM candidate_builds b
@@ -631,6 +723,7 @@ async def remediate_candidate_validation_failure(
         )
         if not source:
             raise HTTPException(404, "Candidate build not found")
+        await _assert_candidate_ci_snapshot(conn, source, ci_snapshot)
         if source["status"] not in {"drafted", "validating"}:
             raise HTTPException(
                 409, "Only a frozen candidate awaiting CI may be remediated",
@@ -663,7 +756,7 @@ async def remediate_candidate_validation_failure(
             "repository": body.repository,
             "workflow": body.workflow,
             "run_id": body.run_id,
-            "failed_jobs": body.failed_jobs,
+            "failed_jobs": ci_snapshot['failed_jobs'],
             "diagnostic_codes": body.diagnostic_codes,
             "diagnostics": diagnostics,
             "log_digest": body.log_digest,
@@ -706,7 +799,7 @@ async def remediate_candidate_validation_failure(
             "source_build_id": build_id,
             "remediation_build_id": str(new_id),
             "diagnostic_codes": body.diagnostic_codes,
-            "failed_jobs": body.failed_jobs,
+            "failed_jobs": ci_snapshot['failed_jobs'],
             "contains_private_evidence": False,
         })
         await conn.execute(
@@ -732,6 +825,82 @@ async def remediate_candidate_validation_failure(
     }
 
 
+async def _candidate_ci_preflight(pool, build_id, body, *, expected_status):
+    """GitHub reads happen before SQL locks; posted passing flags never prove CI."""
+    async with pool.acquire() as conn:
+        build = await conn.fetchrow('''SELECT b.*,p.candidate_manifest,p.status AS proposal_status,
+          p.candidate_version AS proposal_candidate_version,p.content_hash AS proposal_content_hash
+          FROM candidate_builds b JOIN improvement_proposals p ON p.id=b.proposal_id WHERE b.id=$1''', build_id)
+        if not build or build['status'] not in {'drafted', 'validating'} or build['candidate_commit'] != body.commit_sha:
+            raise HTTPException(409, 'CI needs an existing frozen candidate bound to this published commit')
+        if build['proposal_status'] in {'rejected', 'changes_requested'}:
+            raise HTTPException(409, 'Candidate proposal no longer authorizes CI acceptance')
+        coding_run = await conn.fetchrow('SELECT * FROM coding_runs WHERE id=$1', build['coding_run_id']) if build['coding_run_id'] else None
+        if build['coding_run_id'] and (not coding_run or coding_run['deleted_at'] is not None
+                or coding_run['status'] not in {'published', 'ci_running'}
+                or coding_run['orchestration_owner'] != 'postgres' or coding_run['candidate_commit'] != body.commit_sha
+                or coding_run['base_commit'] != build['base_commit']):
+            raise HTTPException(409, 'Linked coding publication is unavailable, cancelled or source-inconsistent')
+        manifest = _json_object(build['candidate_manifest'])
+        draft = manifest.get('draft_pr') or {}
+        branch = coding_run['branch_name'] if coding_run else draft.get('branch')
+        number = coding_run['pull_request_number'] if coding_run else draft.get('number')
+        base_ref = coding_run['base_ref'] if coding_run else 'main'
+        if not branch or type(number) is not int:
+            raise HTTPException(409, 'Published PR identity is required before CI acceptance')
+        expected_repository = coding_run['repository'] if coding_run else get_settings().github_proposal_repository
+        if body.repository != expected_repository:
+            raise HTTPException(409, 'CI repository does not match the published candidate')
+        try:
+            policy = await latest_policy(conn, body.repository)
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        files = {row['path']: row['result_hash'] for row in await conn.fetch(
+            'SELECT path,result_hash FROM candidate_build_files WHERE build_id=$1', build_id)}
+    try:
+        observed = await verify_run(policy, commit=body.commit_sha, pull_number=number, base_ref=base_ref,
+            branch=branch, run_id=body.run_id, file_hashes=files)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if observed['status'] != expected_status or (expected_status == 'passed' and observed['tree'] != body.tree_sha):
+        raise HTTPException(409, 'Observed GitHub validation does not match the submitted result')
+    if expected_status == 'failed':
+        failed = sorted(name for name, job in observed['jobs'].items() if not job['passed'])
+        if not failed:
+            raise HTTPException(409, 'No reviewed required gate failed; do not generate a code patch for unrelated workflow failure')
+    return {'build': dict(build), 'coding_run': dict(coding_run) if coding_run else None,
+        'files': files, 'policy': policy, 'observed': observed,
+        'failed_jobs': sorted(name for name, job in observed['jobs'].items() if not job['passed'])}
+
+
+async def _lock_candidate_ci_source(conn, snapshot):
+    from app.coding.execution_fence import SOURCE_FIELDS
+    expected = snapshot['coding_run']
+    if expected is not None:
+        current = await conn.fetchrow('SELECT * FROM coding_runs WHERE id=$1 FOR UPDATE', expected['id'])
+        if (not current or current['deleted_at'] is not None or current['orchestration_owner'] != 'postgres'
+                or current['status'] not in {'published', 'ci_running'}
+                or any(current.get(key) != expected.get(key) for key in SOURCE_FIELDS if key != 'attempt_count')):
+            raise HTTPException(409, 'Coding source changed or is no longer eligible for CI completion')
+    try:
+        await require_same_policy(conn, snapshot['policy'])
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+async def _assert_candidate_ci_snapshot(conn, current, snapshot):
+    expected = snapshot['build']
+    if any(current[key] != expected[key] for key in ['base_commit', 'candidate_commit', 'coding_run_id', 'proposal_id']):
+        raise HTTPException(409, 'Candidate source changed during CI read-back')
+    files = {row['path']: row['result_hash'] for row in await conn.fetch(
+        'SELECT path,result_hash FROM candidate_build_files WHERE build_id=$1 FOR UPDATE', current['id'])}
+    proposal = await conn.fetchrow('SELECT status,candidate_version,content_hash FROM improvement_proposals WHERE id=$1 FOR UPDATE', current['proposal_id'])
+    if (files != snapshot['files'] or proposal['status'] in {'rejected', 'changes_requested'}
+            or proposal['candidate_version'] != expected['proposal_candidate_version']
+            or proposal['content_hash'] != expected['proposal_content_hash']):
+        raise HTTPException(409, 'Candidate files or proposal authority changed during CI read-back')
+
+
 @router.post("/candidate-builds/{build_id}/attestation")
 async def attest_candidate_build(build_id: str, body: CandidateValidationAttestation):
     settings = get_settings()
@@ -740,7 +909,9 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
     if not body.passed:
         raise HTTPException(422, "A passing trusted CI result is required")
     pool = await get_pool()
+    ci_snapshot = await _candidate_ci_preflight(pool, build_id, body, expected_status='passed')
     async with pool.acquire() as conn, conn.transaction():
+        await _lock_candidate_ci_source(conn, ci_snapshot)
         build = await conn.fetchrow(
             """SELECT b.*,p.candidate_kind,p.candidate_version,p.exact_diff,
                       p.rollback_plan,p.validation_report,p.privacy_report,p.security_report
@@ -749,6 +920,7 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
         )
         if not build or build["status"] != "drafted":
             raise HTTPException(409, "Candidate build is not awaiting trusted CI")
+        await _assert_candidate_ci_snapshot(conn, build, ci_snapshot)
         files = [dict(row) for row in await conn.fetch(
             """SELECT path,change_type,content,result_hash FROM candidate_build_files
                WHERE build_id=$1 ORDER BY path""", build_id,
@@ -761,7 +933,8 @@ async def attest_candidate_build(build_id: str, body: CandidateValidationAttesta
             "suite_version": body.suite_version, "commit_sha": body.commit_sha,
             "tree_sha": body.tree_sha, "workflow": body.workflow,
             "run_id": body.run_id, "log_digest": body.log_digest,
-            "trusted_identity": f"github-actions:{body.repository}:{body.workflow}",
+            "trusted_identity": f"github-actions:{body.repository}:{ci_snapshot['observed']['workflow_path']}",
+            "github_observed": ci_snapshot['observed'],
         }
         digest_files = [
             {"path": item["path"], "change_type": item["change_type"],
@@ -1153,11 +1326,23 @@ async def attest_candidate_deployment(
     if not body.verified or body.smoke_tests.get("passed") is not True:
         raise HTTPException(422, "Verified isolated deployment and smoke tests are required")
     pool = await get_pool()
+    if body.intent_id is None or body.intent_nonce is None:
+        raise HTTPException(409, 'A server-bound single-use deployment claim is required')
+    async with pool.acquire() as conn:
+        digest = await conn.fetchval('SELECT content_hash FROM improvement_proposals WHERE proposal_key=$1', proposal_key)
+    admission = await _prepare_code_admission(pool, proposal_key, digest, expected_status='approved_for_canary')
+    if admission is None:
+        raise HTTPException(409, 'Deployment claims apply only to code candidates')
+    try:
+        provider_observation = await provider_readback.verify_for_intent(pool, body.intent_id,
+            body.model_dump(mode='json', exclude={'intent_nonce'}), proposal=admission['proposal'])
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
     async with pool.acquire() as conn, conn.transaction():
-        proposal = await conn.fetchrow(
-            "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
-            proposal_key,
-        )
+        try:
+            proposal = await ci_admission.lock(conn, admission)
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
         if not proposal or proposal["status"] != "approved_for_canary":
             raise HTTPException(409, "Candidate must have human canary approval")
         if proposal["candidate_version"] != body.candidate_version:
@@ -1207,9 +1392,17 @@ async def attest_candidate_deployment(
             raise HTTPException(
                 409, "Non-frontend candidates must not attest a frontend preview",
             )
+        try:
+            provider_evidence = provider_observation.require_fresh()
+            await deployment_intents.finish(conn, body.intent_id, proposal=proposal, source=admission,
+                run_id=body.run_id, nonce=body.intent_nonce, project=body.project_id,
+                service=body.service_name, surfaces=body.runtime_surfaces)
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
         evidence = {
-            **body.model_dump(),
-            "trusted_identity": f"github-actions:{settings.github_proposal_repository}:{body.workflow}",
+            **body.model_dump(mode='json', exclude={'intent_nonce'}),
+            "trusted_identity": f"github-actions:{settings.github_proposal_repository}:{deployment_intents.WORKFLOW_PATH}",
+            'provider_observed': provider_evidence,
         }
         await conn.execute(
             """UPDATE improvement_proposals SET deployment_evidence=$1::jsonb,
@@ -1490,10 +1683,76 @@ async def improvement(proposal_key: str):
             "SELECT * FROM improvement_evaluations WHERE proposal_id=$1 ORDER BY created_at",
             proposal["id"],
         )
+        intents = await conn.fetch('''SELECT id,state,workflow_run_id,workflow_attempt,created_at,
+          updated_at,expires_at,claimed_at,claim_expires_at,diagnostic
+          FROM candidate_deployment_intents WHERE proposal_id=$1 ORDER BY created_at DESC''', proposal['id'])
     return {
         "proposal": dict(proposal), "evidence": [dict(row) for row in evidence],
         "evaluations": [dict(row) for row in evaluations],
+        "deployment_intents": [dict(row) for row in intents],
     }
+
+
+class CandidateDeploymentClaim(BaseModel):
+    intent_id: UUID
+    run_id: int = Field(gt=0)
+    run_attempt: int = Field(ge=1, le=1)
+    candidate_version: str = Field(pattern=r'^[0-9a-f]{40}$')
+    controller_commit: str = Field(pattern=r'^[0-9a-f]{40}$')
+    project_id: str = Field(min_length=1, max_length=200)
+    service_name: str = Field(min_length=1, max_length=200)
+    runtime_surfaces: list[str] = Field(min_length=1, max_length=4)
+    provider_target: dict[str, str]
+
+
+@router.post('/improvements/{proposal_key}/deployment-claim')
+async def claim_candidate_deployment(proposal_key: str, body: CandidateDeploymentClaim):
+    pool = await get_pool()
+    settings = get_settings()
+    async with pool.acquire() as conn:
+        key = await conn.fetchval("SELECT frozen->>'proposal_key' FROM candidate_deployment_intents WHERE id=$1", body.intent_id)
+    if (key != proposal_key or body.project_id != settings.railway_candidate_project_id
+            or body.service_name != settings.railway_candidate_worker_service):
+        raise HTTPException(409, 'Claim must match the frozen proposal and configured isolated target')
+    try:
+        return await deployment_intents.claim(pool, body.intent_id, run_id=body.run_id,
+            attempt=body.run_attempt, candidate_version=body.candidate_version,
+            controller_commit=body.controller_commit, project=body.project_id,
+            service=body.service_name, surfaces=body.runtime_surfaces, provider_target=body.provider_target)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get('/candidate-deployment-intents/{intent_id}')
+async def candidate_deployment_intent_status(intent_id: UUID):
+    try:
+        return await deployment_intents.status(await get_pool(), intent_id)
+    except CITrustError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post('/candidate-deployment-intents/{intent_id}/reconcile')
+async def reconcile_candidate_deployment_intent(intent_id: UUID):
+    try:
+        return await deployment_intents.reconcile(await get_pool(), intent_id)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+class CandidateDeploymentCancellation(BaseModel):
+    confirmation: str = Field(pattern=r'^CANCEL_UNCLAIMED_DEPLOYMENT$')
+    note: str = Field(min_length=1, max_length=2000)
+
+
+@router.post('/candidate-deployment-intents/{intent_id}/cancel')
+async def cancel_candidate_deployment_intent(intent_id: UUID, body: CandidateDeploymentCancellation, request: Request):
+    if not getattr(request.state, 'is_admin', False):
+        raise HTTPException(403, 'Human administrator approval is required')
+    try:
+        return await deployment_intents.cancel_unclaimed(await get_pool(), intent_id,
+            actor=request.state.user_id, note=body.note)
+    except CITrustError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/improvements/{proposal_key}/okf-publication-decision")
@@ -1547,9 +1806,11 @@ async def decide_candidate_okf(
 @router.post("/improvements/{proposal_key}/canary-decision")
 async def decide_canary(proposal_key: str, body: ImprovementDecision, request: Request):
     pool = await get_pool()
+    deployment_intent = None
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash) if body.decision == 'approved' else None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            proposal = await conn.fetchrow(
+            proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
                 proposal_key,
             )
@@ -1620,10 +1881,10 @@ async def decide_canary(proposal_key: str, body: ImprovementDecision, request: R
                 )
             if body.decision == "changes_requested" and not (body.note or "").strip():
                 raise HTTPException(422, "A change-request note is required")
-            await conn.execute(
+            approval_id = await conn.fetchval(
                 """INSERT INTO improvement_approvals
                    (proposal_id,stage,proposal_hash,decision,decided_by,decision_note)
-                   VALUES($1,'canary',$2,$3,$4,$5)""",
+                   VALUES($1,'canary',$2,$3,$4,$5) RETURNING id""",
                 proposal["id"], body.proposal_hash, body.decision,
                 request.state.user_id, body.note,
             )
@@ -1646,6 +1907,13 @@ async def decide_canary(proposal_key: str, body: ImprovementDecision, request: R
                 )
                 await release_theme_for_proposal(conn, dict(proposal))
             if body.decision == "approved":
+                if proposal['candidate_kind'] == 'code' and not get_settings().allow_dev_auth:
+                    try:
+                        deployment_intent = await deployment_intents.prepare(conn, admission, approval_id,
+                            project=get_settings().railway_candidate_project_id,
+                            service=get_settings().railway_candidate_worker_service)
+                    except CITrustError as exc:
+                        raise HTTPException(409, str(exc)) from exc
                 await conn.execute(
                     """INSERT INTO improvement_canaries
                        (proposal_id,cohort,status,control_version,candidate_version)
@@ -1676,9 +1944,13 @@ async def decide_canary(proposal_key: str, body: ImprovementDecision, request: R
             if get_settings().allow_dev_auth:
                 deployment_dispatch = {"status": "skipped_in_development"}
             else:
-                deployment_dispatch = await dispatch_candidate_deployment(dict(proposal))
+                deployment_dispatch = await deployment_intents.dispatch(pool, deployment_intent['id'],
+                    dispatch_candidate_deployment)
         except Exception as exc:
-            deployment_dispatch = {"status": "not_dispatched", "reason": str(exc)}
+            # The durable intent, not this catch block, determines whether a POST
+            # could have happened. Never label an unknown ACK as not dispatched.
+            deployment_dispatch = {'status': 'review_required', 'reason': 'Inspect the retained deployment intent',
+                'intent_id': str(deployment_intent['id']) if deployment_intent else None}
             async with pool.acquire() as conn:
                 await conn.execute(
                     """INSERT INTO improvement_notifications
@@ -1688,7 +1960,7 @@ async def decide_canary(proposal_key: str, body: ImprovementDecision, request: R
                          status='failed',error_message=excluded.error_message,created_at=now()""",
                     proposal["id"], json.dumps({
                         "proposal_key": proposal_key, "contains_private_evidence": False,
-                    }), str(exc),
+                    }), type(exc).__name__,
                 )
     return {"proposal_key": proposal_key, "status": next_status,
             "deployment_dispatch": deployment_dispatch}
@@ -1700,8 +1972,15 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
     if body.decision != "approved":
         raise HTTPException(422, "Canary activation requires an approved decision")
     pool = await get_pool()
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash, expected_status='approved_for_canary')
+    provider_observation = None
+    if admission:
+        try:
+            provider_observation = await provider_readback.verify_registered(pool, admission['proposal'])
+        except CITrustError as exc:
+            raise HTTPException(409, str(exc)) from exc
     async with pool.acquire() as conn, conn.transaction():
-        proposal = await conn.fetchrow(
+        proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
             "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
             proposal_key,
         )
@@ -1709,6 +1988,15 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
             raise HTTPException(409, "Proposal is not approved for canary")
         if proposal["content_hash"] != body.proposal_hash:
             raise HTTPException(409, "Proposal changed; review the new version")
+        if provider_observation:
+            try:
+                observed = provider_observation.require_fresh()
+                await deployment_intents.require_attested(conn,
+                    _json_object(proposal['deployment_evidence']).get('intent_id'), proposal=proposal, source=admission)
+            except CITrustError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            await conn.execute('''INSERT INTO improvement_evidence(proposal_id,evidence_type,sanitized_payload)
+              VALUES($1,'current_provider_readback',$2::jsonb)''', proposal['id'], json.dumps(observed))
         evidence = proposal["deployment_evidence"] or {}
         if evidence.get("verified") is not True or evidence.get("candidate_version") != proposal["candidate_version"]:
             raise HTTPException(409, "Verified deployment evidence for the frozen candidate is required")
@@ -1754,9 +2042,11 @@ async def activate_canary(proposal_key: str, body: CanaryActivationDecision,
 async def decide_promotion(proposal_key: str, body: ImprovementDecision,
                            request: Request):
     pool = await get_pool()
+    admission = await _prepare_code_admission(pool, proposal_key, body.proposal_hash,
+        expected_status='awaiting_promotion') if body.decision == 'approved' else None
     async with pool.acquire() as conn:
         async with conn.transaction():
-            proposal = await conn.fetchrow(
+            proposal = await _lock_code_admission(conn, admission) if admission else await conn.fetchrow(
                 "SELECT * FROM improvement_proposals WHERE proposal_key=$1 FOR UPDATE",
                 proposal_key,
             )

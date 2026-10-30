@@ -26,7 +26,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Generate and return a frozen draft without production credentials
         env:
-          CODING_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CODING_GROQ_API_KEY: ${{ secrets.CODING_GROQ_API_KEY }}
           CANDIDATE_BUILDER_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
           CANDIDATE_BUILDER_CALLBACK_TOKEN: ${{ secrets.CANDIDATE_BUILDER_CALLBACK_TOKEN }}
           CANDIDATE_BUILD_ID: ${{ inputs.build_id }}

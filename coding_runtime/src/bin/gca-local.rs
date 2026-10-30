@@ -26,7 +26,15 @@ const MAX_DIFF_CHARS: usize = 64_000;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExecutionPlan {
+    #[serde(default)]
+    origin: Option<PlanOrigin>,
     actions: Vec<ToolRequest>,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PlanOrigin {
+    CloudModel,
 }
 
 fn main() {
@@ -55,6 +63,10 @@ fn run() -> Result<(), String> {
                     "model_has_shell": false,
                     "model_has_credentials": false,
                     "writes_require_approval_token": true,
+                    "validation_isolation_required": std::env::var("GCA_REQUIRE_ISOLATED_VALIDATION").as_deref() == Ok("1"),
+                    "validation_launcher_configured": std::env::var_os("GCA_VALIDATION_LAUNCHER").is_some(),
+                    "validation_isolation_verified": false,
+                    "validation_warning": "A copied workspace and cleared environment are not OS isolation; use the managed launcher for untrusted validation.",
                 })
             );
             Ok(())
@@ -114,6 +126,7 @@ fn plan_natural_language_request(arguments: &[String]) -> Result<(), String> {
                 .to_string(),
         );
     }
+    require_isolated_model_validation(&workspace)?;
     let request_path = PathBuf::from(required_value(arguments, "--request-file")?);
     let request_bytes = read_bounded(&request_path, 48_000)?;
     let request = String::from_utf8(request_bytes)
@@ -133,6 +146,8 @@ fn resume_natural_language_request(arguments: &[String]) -> Result<(), String> {
     let workspace = canonical_workspace(required_value(arguments, "--workspace")?)?;
     require_cloud_source_consent(arguments)?;
     let run_id = required_value(arguments, "--run-id")?;
+    local_agent::validate_run_id(run_id)?;
+    require_isolated_model_validation(&workspace)?;
     let state_directory = optional_value(arguments, "--state-dir")?
         .map(PathBuf::from)
         .unwrap_or_else(default_state_directory);
@@ -165,6 +180,8 @@ fn preview_agent_outcome(
         .arg(&outcome.plan_path)
         .env_clear()
         .env("PATH", path)
+        .envs(google_connector_coding_runtime::isolation_environment())
+        .env("GCA_REQUIRE_ISOLATED_VALIDATION", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -211,6 +228,10 @@ fn execute_readonly_broker(arguments: &[String]) -> Result<(), String> {
         ToolRequest::Inventory { .. }
             | ToolRequest::ProjectSummary
             | ToolRequest::FindSymbols { .. }
+            | ToolRequest::LanguageInventory { .. }
+            | ToolRequest::DependencyInventory { .. }
+            | ToolRequest::ComplexityInventory { .. }
+            | ToolRequest::ConversionContract { .. }
             | ToolRequest::SearchLiteral { .. }
             | ToolRequest::ReadLines { .. }
             | ToolRequest::HashFile { .. }
@@ -310,6 +331,36 @@ fn default_state_directory() -> PathBuf {
     home.join(".local/state/gca-local")
 }
 
+fn require_isolated_model_validation(workspace: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    #[cfg(unix)]
+    let owner = fs::metadata(workspace)
+        .map_err(|_| "cannot verify workspace owner for isolation".to_string())?
+        .uid();
+    for key in ["GCA_VALIDATION_LAUNCHER", "GCA_VALIDATION_CONFIG"] {
+        let raw = std::env::var(key)
+            .map_err(|_| format!("{key} is required before cloud-model planning"))?;
+        let path = Path::new(&raw)
+            .canonicalize()
+            .map_err(|_| format!("{key} does not resolve to an installed file"))?;
+        if !path.is_file() || path.starts_with(workspace) {
+            return Err(format!(
+                "{key} must be an operator-owned file outside the workspace"
+            ));
+        }
+        #[cfg(unix)]
+        for component in path.ancestors() {
+            let metadata = fs::metadata(component)
+                .map_err(|_| format!("cannot verify {key} installation ownership"))?;
+            if metadata.mode() & 0o022 != 0 || (metadata.uid() != 0 && metadata.uid() != owner) {
+                return Err(format!("{key} installation is not operator protected"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn execute_plan(arguments: &[String]) -> Result<(), String> {
     let root = canonical_workspace(required_value(arguments, "--workspace")?)?;
     let plan_path = PathBuf::from(required_value(arguments, "--plan")?);
@@ -323,6 +374,9 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
     }
     let plan: ExecutionPlan = serde_json::from_slice(&plan_bytes)
         .map_err(|error| format!("plan violates the typed schema: {error}"))?;
+    if plan.origin == Some(PlanOrigin::CloudModel) {
+        require_isolated_model_validation(&root)?;
+    }
     if plan.actions.is_empty() || plan.actions.len() > MAX_ACTIONS {
         return Err(format!(
             "plan must contain between 1 and {MAX_ACTIONS} actions"
@@ -348,8 +402,12 @@ fn execute_plan(arguments: &[String]) -> Result<(), String> {
 
     let sandbox = TempDir::new().map_err(|error| format!("cannot create sandbox: {error}"))?;
     copy_workspace(&root, sandbox.path())?;
-    let broker = Broker::new_mutable(sandbox.path())
-        .map_err(|error| format!("cannot initialize sandbox broker: {error:?}"))?;
+    let broker = if plan.origin == Some(PlanOrigin::CloudModel) {
+        Broker::new_mutable_isolated(sandbox.path())
+    } else {
+        Broker::new_mutable(sandbox.path())
+    }
+    .map_err(|error| format!("cannot initialize sandbox broker: {error:?}"))?;
     let mut original_hashes = BTreeMap::<String, String>::new();
     let mut action_results = Vec::<Value>::new();
 

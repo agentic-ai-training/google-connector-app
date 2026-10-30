@@ -21,6 +21,14 @@ class ExecutionFailure(RuntimeError):
         self.evidence = evidence or {}
 
 
+class WriteReconciliationRequired(ExecutionFailure):
+    def __init__(self, tool_name: str, receipt_id: str, *, response_saved: bool):
+        super().__init__('A durable write requires reconciliation before another invocation; automatic repetition is blocked.',
+            category='worker_reconciliation', component='tool_invocation', boundary='post_dispatch',
+            evidence={'tool': tool_name, 'receipt_id': receipt_id, 'provider_response_saved': response_saved,
+                      'prior_effects': 'requires_reconciliation'})
+
+
 def is_provider_context_length_error(exc: Exception) -> bool:
     text = str(exc).casefold()
     return (

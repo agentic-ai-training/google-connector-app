@@ -5,8 +5,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sidecar_capacity:
+        description: 'Run only the keyless Alloy/Ollama native capacity experiment'
+        required: false
+        default: false
+        type: boolean
 jobs:
   coding-runtime:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,7 +32,10 @@ jobs:
       - run: cargo test --locked
 
   backend:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -41,17 +51,36 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -r requirements.txt
+      - name: Install pinned optional orchestration adapters for their contract tests
+        run: pip install -r requirements-orchestration.txt
       - name: Compile Python sources before tests
         run: python -m compileall -q app scripts
       - run: alembic upgrade head
-      - run: pytest tests/ -v
+      - run: pytest tests/ -v -W error::pytest.PytestUnraisableExceptionWarning
         env:
           RUN_INTEGRATION_TESTS: '1'
           ALLOW_DEV_AUTH: 'true'
           JWT_SECRET_KEY: automated-test-only-secret-at-least-32-bytes
+          COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+      - name: Prove real local Temporal startup, recovery and offline history replay
+        timeout-minutes: 7
+        run: python scripts/verify_temporal_server_local.py
+        env:
+          COST_LEDGER_TEST_DSN: postgresql://agent_user:agent_pass_2024@127.0.0.1:5432/agent_db
+      - name: Retain synthetic Temporal replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-local-proof
+          path: .gca-local/temporal-proof/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Lint and security-audit Python
         run: |
           pip install flake8 pip-audit bandit
@@ -78,11 +107,13 @@ jobs:
         run: |
           alembic downgrade 002
           alembic upgrade head
-          test "$(alembic current | tail -1)" = "015 (head)"
+          test "$(alembic current)" = "$(alembic heads)"
       - name: Validate Docker Compose model
         run: |
           cp .env.example .env
           docker compose config --quiet
+      - name: Prove synthetic private files cannot enter upload/build contexts
+        run: python -m scripts.verify_deployment_context --docker
       - name: Build the production Rust container stage
         run: docker build --target coding-runtime-builder -f Dockerfile .
       - name: Verify sensitive local files are not tracked or present in history
@@ -95,6 +126,7 @@ jobs:
           fi
 
   web:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -111,6 +143,7 @@ jobs:
       - run: npm run build
 
   flutter:
+    if: github.event_name != 'workflow_dispatch' || !inputs.sidecar_capacity
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -125,3 +158,33 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug
+
+  sidecar-capacity:
+    if: github.event_name == 'workflow_dispatch' && inputs.sidecar_capacity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build exact public sidecar capacity candidates without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-alloy:test -f Dockerfile.alloy .
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-ollama:test -f Dockerfile.ollama-capacity .
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t capacity-sidecar-probe:test -f Dockerfile.sidecar-capacity-probe .
+      - name: Prove real filtered metrics and current embedding batch under exact limits
+        run: python -m scripts.verify_sidecar_capacity --source-commit "$GITHUB_SHA"
+      - name: Retain sanitized capacity measurements after owned cleanup
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-release-capacity
+          path: sidecar-capacity.json
+          if-no-files-found: error
+          retention-days: 7

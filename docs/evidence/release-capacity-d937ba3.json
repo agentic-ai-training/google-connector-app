@@ -1,0 +1,92 @@
+{
+  "cleanup_verified": true,
+  "external_calls_allowed": false,
+  "images": {
+    "api": {
+      "architecture": "amd64",
+      "id": "sha256:85291576ce62f2448d2d18808d655a2d679204124257f31189420bdbc4af411c",
+      "os": "linux",
+      "uncompressed_bytes": 864291138
+    },
+    "builder": {
+      "architecture": "amd64",
+      "id": "sha256:b537770d63d0c3513a52783ad7a38e7b92b59fbfa296bfac7e1ffc7053eb4de1",
+      "os": "linux",
+      "uncompressed_bytes": 858294330
+    },
+    "candidate": {
+      "architecture": "amd64",
+      "id": "sha256:cf86f1c8e2adbd55fe943e1b840e3c09ce1804921258abc2f13e95827c4234c1",
+      "os": "linux",
+      "uncompressed_bytes": 858294330
+    },
+    "worker": {
+      "architecture": "amd64",
+      "id": "sha256:255947d9c00cc43166fdba397a2f75ba6c53a6d53162fe1b8e465fd1708ab0b4",
+      "os": "linux",
+      "uncompressed_bytes": 864291138
+    }
+  },
+  "runtime": {
+    "api": {
+      "configured_memory_bytes": 1000000000,
+      "current_bytes": 131149824,
+      "limit_bytes": 999997440,
+      "oom": 0,
+      "oom_kill": 0,
+      "page_size": 4096,
+      "peak_bytes": 137342976,
+      "pids_current": 10,
+      "pids_max": 1000,
+      "swap_max_bytes": 0,
+      "writable_layer_bytes": 3199070
+    },
+    "builder_idle_only": {
+      "configured_memory_bytes": 1000000000,
+      "current_bytes": 54542336,
+      "limit_bytes": 999997440,
+      "oom": 0,
+      "oom_kill": 0,
+      "page_size": 4096,
+      "peak_bytes": 54542336,
+      "pids_current": 7,
+      "pids_max": 1000,
+      "swap_max_bytes": 0,
+      "writable_layer_bytes": 1210073
+    },
+    "candidate": {
+      "configured_memory_bytes": 1000000000,
+      "current_bytes": 130039808,
+      "limit_bytes": 999997440,
+      "oom": 0,
+      "oom_kill": 0,
+      "page_size": 4096,
+      "peak_bytes": 135958528,
+      "pids_current": 10,
+      "pids_max": 1000,
+      "swap_max_bytes": 0,
+      "writable_layer_bytes": 2974117
+    },
+    "worker": {
+      "configured_memory_bytes": 1000000000,
+      "current_bytes": 107081728,
+      "limit_bytes": 999997440,
+      "oom": 0,
+      "oom_kill": 0,
+      "page_size": 4096,
+      "peak_bytes": 107081728,
+      "pids_current": 8,
+      "pids_max": 1000,
+      "swap_max_bytes": 0,
+      "writable_layer_bytes": 2425071
+    }
+  },
+  "scope": "synthetic_startup_and_deterministic_run_not_live_models_google_rag_or_all_services",
+  "source_commit": "d937ba3216ffcd9c38c337ed3e97b31cb9e3ad72",
+  "status": "passed",
+  "synthetic_durable_run": {
+    "functional_completion": 100,
+    "model_calls": 0,
+    "status": "completed"
+  }
+}

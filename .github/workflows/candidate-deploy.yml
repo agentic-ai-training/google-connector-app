@@ -1,7 +1,11 @@
 name: Deploy governed candidate
+run-name: Deploy governed candidate ${{ inputs.intent_id }}
 on:
   workflow_dispatch:
     inputs:
+      intent_id:
+        description: Single-use server deployment intent created with human approval
+        required: true
       proposal_key:
         description: Frozen proposal key approved for canary
         required: true
@@ -17,76 +21,106 @@ permissions:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: controller
+        shell: bash
+    env:
+      CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+      CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
+      PROPOSAL_KEY: ${{ inputs.proposal_key }}
+      CANDIDATE_INTENT_ID: ${{ inputs.intent_id }}
+      CANDIDATE_SOURCE_ROOT: ${{ github.workspace }}/candidate-source
+      RAILWAY_CANDIDATE_ENVIRONMENT_ID: ${{ secrets.RAILWAY_CANDIDATE_ENVIRONMENT_ID }}
+      RAILWAY_CANDIDATE_SERVICE_ID: ${{ secrets.RAILWAY_CANDIDATE_SERVICE_ID }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout trusted controller, never candidate scripts
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Checkout candidate as inert upload data
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.candidate_version }}
-      - name: Verify immutable candidate commit
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.candidate_version }}"
+          path: candidate-source
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: actions/setup-node@v6
+        with: {node-version: '20'}
+      - name: Install pinned controller tools without deployment credentials
+        run: |
+          set -euo pipefail
+          python -m pip install httpx==0.28.1
+          npm install --global @railway/cli@5.71.0 vercel@65.7.0
+      - name: Verify immutable regular candidate upload tree
+        run: python -I scripts/verify_candidate_deployment_source.py
+      - name: Claim server-bound authority before any provider write
+        env:
+          CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
+          CANDIDATE_DEPLOY_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_DEPLOY_ATTESTATION_TOKEN }}
+          RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
+          RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: python -I scripts/claim_candidate_deployment.py
       - name: Link the isolated candidate Railway project
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
         run: >-
-          npx -y @railway/cli@latest link
-          --project "$RAILWAY_CANDIDATE_PROJECT_ID"
-          --environment production
-          --service "$RAILWAY_CANDIDATE_WORKER_SERVICE"
-          --json >/dev/null
-      - name: Pin candidate runtime and deploy its exact source
-        run: |
-          region="${RAILWAY_CANDIDATE_REGION:-southeast-asia}"
-          printf '%s' '${{ inputs.candidate_version }}' | npx -y @railway/cli@latest variable set EXECUTOR_VERSION --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' '${{ inputs.candidate_version }}' | npx -y @railway/cli@latest variable set DEPLOYMENT_VERSION --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'candidate' | npx -y @railway/cli@latest variable set EXECUTOR_ROLE --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'Dockerfile.candidate' | npx -y @railway/cli@latest variable set RAILWAY_DOCKERFILE_PATH --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'true' | npx -y @railway/cli@latest variable set EMBEDDED_WORKER_ENABLED --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          printf '%s' 'false' | npx -y @railway/cli@latest variable set GOVERNED_IMPROVEMENTS_ENABLED --stdin --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --skip-deploys >/dev/null
-          npx -y @railway/cli@latest up --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" --detach --yes
-          npx -y @railway/cli@latest scale --service "$RAILWAY_CANDIDATE_WORKER_SERVICE" "${region}=1" --json >/dev/null
+          railway link --project "$RAILWAY_CANDIDATE_PROJECT_ID"
+          --environment "$RAILWAY_CANDIDATE_ENVIRONMENT_ID" --service "$RAILWAY_CANDIDATE_SERVICE_ID" --json >/dev/null
+      - name: Pin candidate runtime and upload its exact source without executing it locally
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
+          RAILWAY_CANDIDATE_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
           RAILWAY_CANDIDATE_REGION: ${{ vars.RAILWAY_CANDIDATE_REGION }}
+        run: |
+          set -euo pipefail
+          region="${RAILWAY_CANDIDATE_REGION:-southeast-asia}"
+          printf '%s' "$CANDIDATE_VERSION" | railway variable set EXECUTOR_VERSION --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' "$CANDIDATE_VERSION" | railway variable set DEPLOYMENT_VERSION --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'candidate' | railway variable set EXECUTOR_ROLE --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'Dockerfile.candidate' | railway variable set RAILWAY_DOCKERFILE_PATH --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'true' | railway variable set EMBEDDED_WORKER_ENABLED --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          printf '%s' 'false' | railway variable set GOVERNED_IMPROVEMENTS_ENABLED --stdin --service "$RAILWAY_CANDIDATE_SERVICE_ID" --skip-deploys >/dev/null
+          railway up "$CANDIDATE_SOURCE_ROOT" --path-as-root --project "$RAILWAY_CANDIDATE_PROJECT_ID" --environment "$RAILWAY_CANDIDATE_ENVIRONMENT_ID" --service "$RAILWAY_CANDIDATE_SERVICE_ID" --detach --yes
+          railway scale --service "$RAILWAY_CANDIDATE_SERVICE_ID" "${region}=1" --json >/dev/null
       - name: Restrict candidate networking to its required surfaces
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
-          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
-        run: python scripts/configure_candidate_domain.py
+        run: python -I scripts/configure_candidate_domain.py
       - name: Wait for candidate worker deployment
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_CANDIDATE_TOKEN }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
-          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
-        run: python scripts/wait_candidate_deployment.py
+        run: python -I scripts/wait_candidate_deployment.py
       - name: Deploy immutable candidate frontend preview when required
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
-          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
-          PROPOSAL_KEY: ${{ inputs.proposal_key }}
           CONTROL_FRONTEND_URL: https://google-connector-app.vercel.app
-        run: python scripts/deploy_candidate_frontend.py
+        run: python -I scripts/deploy_candidate_frontend.py
       - name: Verify exact candidate frontend preview when required
-        env:
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
-          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
-        run: python scripts/wait_candidate_frontend.py
+        run: python -I scripts/wait_candidate_frontend.py
       - name: Register trusted deployment evidence
         env:
           CANDIDATE_ATTESTATION_URL: ${{ secrets.CANDIDATE_ATTESTATION_URL }}
           CANDIDATE_DEPLOY_ATTESTATION_TOKEN: ${{ secrets.CANDIDATE_DEPLOY_ATTESTATION_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_CANDIDATE_PROJECT_ID }}
           RAILWAY_CANDIDATE_WORKER_SERVICE: ${{ secrets.RAILWAY_CANDIDATE_WORKER_SERVICE }}
-          PROPOSAL_KEY: ${{ inputs.proposal_key }}
-          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
           WORKFLOW_NAME: ${{ github.workflow }}
           RUN_ID: ${{ github.run_id }}
-          CANDIDATE_RUNTIME_SURFACES: ${{ inputs.runtime_surfaces }}
-        run: python scripts/submit_candidate_deployment.py
+        run: python -I scripts/submit_candidate_deployment.py

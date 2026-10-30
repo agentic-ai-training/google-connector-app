@@ -1,0 +1,15 @@
+*
+!Dockerfile
+!pom.xml
+!seed/
+!seed/main/
+!seed/main/java/
+!seed/main/java/com/
+!seed/main/java/com/example/
+!seed/main/java/com/example/OfflineProofApplication.java
+!seed/test/
+!seed/test/java/
+!seed/test/java/com/
+!seed/test/java/com/example/
+!seed/test/java/com/example/OfflineProofTest.java
+!.dockerignore

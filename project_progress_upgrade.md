@@ -4,6 +4,67 @@ Status: APPROVED FOR IMPLEMENTATION
 Approved: 2026-07-19  
 Execution rule: implement in dependency order, preserve rollback paths, run each sprint's guardrails before promotion, and record deviations/blockers in this file.
 
+September 2026 expansion: Sprints 60–68 below retain the original goal and incorporate
+the complete two-document architecture review. The target and corrections are recorded
+in [the September reconciliation](docs/ARCHITECTURE_RECONCILIATION_2026_09.md).
+Do not treat those target components as already deployed or erase earlier unfinished work.
+
+## Resumed execution checkpoint — 2026-09-20
+
+The user resumed the whole original goal, not a separate VM-only project. This file
+is the execution source of truth: finish all unchecked original requirements and
+Sprints 60–68 using the reconciled architecture and latest budget/model decisions.
+Do not reset completed work, create duplicate infrastructure or claim the entire
+goal is complete because a VM is running. The user cleared the old blocked goal and
+explicitly requested its replacement. A new full-scope native goal was created and
+is active as of 2026-09-20, linked to this execution contract and current checkpoint.
+
+Current focus, in dependency order:
+
+1. Finish secure Delhi hosting: same existing VM, SSH over IAP, pinned host key,
+   protected Coolify setup, scoped deployment access, finite backups and restore proof.
+2. Finish durable target/cost reservations and isolated Rust-broker execution for
+   user coding and candidate builds; preserve local private/non-Git operation.
+3. Wire and test the typed deployment flow (React, Spring Boot, private PostgreSQL,
+   immutable release, functional verification, authorized Chat URL delivery).
+4. Complete staged orchestration/retrieval/knowledge/observability integrations:
+   Kafka/outbox, Temporal, bounded CrewAI/LangGraph, private Langflow, LlamaIndex,
+   RedisVL, versioned embeddings/pgvector and OKF, OTel/Alloy/Grafana, LangSmith/Langfuse.
+   Do not deploy extra paid persistent services before their placement/cost is approved.
+5. Complete free Gemini role routing/privacy/quota checks and supported Vertex
+   learning/evaluation/inference within INR 8,500. Preserve distinct SFT, preference/
+   AI-feedback and verifiable-reward objectives; do not substitute unsupported training.
+6. Complete original guardrails, recovery/security/load/restore tests, actual candidate
+   lifecycle proof, governed rollout, documentation/teaching, and report evidence blockers.
+
+Credit discipline: reuse tool results and versioned checkpoints; bounded log excerpts;
+targeted tests before full suites; no repeated model probes, automatic training, duplicate
+VMs, unnecessary agents or unconstrained repair loops. No paid model call was made in
+the VM provisioning work. Cloud running costs are separate from assistant usage.
+Record each real external resource and its stop/cleanup policy before moving on.
+
+Verified checkpoint: VM `gca-coolify-delhi-01`, ID `822115653245959101`, RUNNING;
+creation `2026-09-19T17:24:34.872Z`, fixed STOP `2026-10-19T17:24:32Z`.
+Delhi e2-standard-4 / 100 GiB balanced disk, no attached service account, Shielded VM,
+isolated VPC and IAP-only SSH. SSH host key verified against authenticated serial output;
+administrator login and sudo tested. Budget alert ID `449fc995-ee51-4a11-9755-42d9f4208999`.
+User reconfirmed unspent INR 28,694 trial balance before creation; this is user-console
+evidence, not an API-read balance. It is no longer a statement of zero usage after creation.
+Coolify installation completed successfully as durable `gca-coolify-install.service`;
+Coolify 4.3.23, PostgreSQL, Redis, realtime, proxy and sentinel containers are healthy.
+Private dashboard HTTP returns 302; admin was created using the normal registration
+flow and registration is now disabled. Bootstrap DB dump restored successfully into
+a disposable database (one user verified), then that probe DB was removed. An off-VM
+local backup and admin credentials are ignored, owner-readable files. Public SSH/admin/
+DB ports are unreachable; IAP/SSH works. On 2026-09-21 IST, scoped read-only API access
+was verified over IAP: team 0, server `frdwr0tdglbolht3kqtokzqa`, reported reachable
+and usable. Token 1 has only `read` and expires 2026-09-27T20:04:48Z; its value is in
+an ignored owner-only local credential file, never in source. The bounded inventory
+transport projects only nonsensitive fields and rejects redirects, wrong teams and
+oversized responses. All 72 coding tests pass, including real local PostgreSQL cost
+tests. Write/deploy controller integration, recurring backup policy, public app
+TLS/domain and live generated-app proof remain unfinished.
+
 ## 1. Target outcome
 
 Every user request becomes a durable, user-scoped run that can answer:
@@ -1968,8 +2029,15 @@ vulnerabilities. Dependency audit evidence remains separate from candidate corre
   durable coding runtime; linked builds cannot be claimed or retried by the legacy builder.
 - [x] Add authenticated administrator-pilot coding-run APIs/frontend progress without
   exposing raw terminal authority.
-- [ ] Move the application runtime away from Groq so only the isolated coding/candidate
-  service receives a dedicated coding Groq credential.
+- [x] Replace ordinary Workspace/composition and offline RAG evaluation model construction
+  with a fail-closed Gemini runtime provider using `RUNTIME_API_KEY`; retain legacy stored
+  route-name compatibility without importing or authenticating a Groq runtime client.
+- [x] Remove `langchain-groq`, general `GROQ_API_KEY` configuration, and the shared GitHub
+  secret name from application/runtime surfaces. Groq remains only behind
+  `CODING_GROQ_API_KEY` in the isolated coding/candidate control plane.
+- [ ] Seal a distinct `RUNTIME_API_KEY` in the API/worker and GitHub RAG-evaluation
+  environments, live-probe tool calling, then delete the legacy `GROQ_API_KEY` Railway and
+  GitHub secrets before releasing this provider migration.
 
 Implementation evidence (2026-08-22): Rust format and Clippy with warnings denied pass;
 12 Rust unit/security tests and seven CLI integration tests pass. The full Python suite
@@ -1980,6 +2048,28 @@ allocation-DP, dual-worker, Grafana validation, Docker Compose rendering, secret
 checks, and the migration 002 -> 015 downgrade/forward-repair cycle all pass. The project
 has been migrated to the new Railway workspace owned by `achintya17407`; deployment of
 this branch remains part of the governed release step rather than an expired-trial block.
+
+Provider-migration evidence (2026-08-22): the runtime router now constructs only
+`ChatGoogleGenerativeAI` with stable Gemini 2.5 model IDs, rejects any non-Gemini runtime
+provider and shared runtime/coding credential, and preserves old in-flight route labels as
+data-only compatibility. The weekly evaluator uses the same provider boundary. Focused
+runtime/planner/tool tests pass 229/229 and Flake8 passes. Production is deliberately not
+switched until a distinct Gemini credential can be live-probed; this avoids converting a
+security migration into an availability regression.
+
+Grafana publication evidence (2026-08-22): the Editor-scoped service-account credential
+published and read back `google-connector-agent` version 6 and
+`google-connector-session-operations` version 3. The publisher now tolerates Grafana
+Cloud's bounded `503 Loading` cold-start state (and only retry-safe 429/502/503/504
+responses) while authentication, authorization, and validation failures remain terminal.
+Regression tests prove both transient recovery and immediate 403 failure.
+
+Railway release-boundary correction (2026-08-22): the production workflow now consumes
+only `RAILWAY_TOKEN_17407`, explicitly links project
+`db6865d1-da2c-4640-ab95-090d8b73bf98` and environment
+`568a6180-3144-482a-a02a-8a4091f1ab05`, and verifies the project identity before variable
+mutation, deployment, log inspection, or attestation. This prevents a stale checked-out
+CLI link or the expired 17408 token from selecting production implicitly.
 
 ### Epic 57.3 — Candidate read-boundary adoption
 
@@ -2080,6 +2170,10 @@ guardrails pass under candidate tool policy v19.
   atomic application, and rollback.
 - [x] Add separate process/log/migration, PostgreSQL schema, and Compose/image inspection
   brokers. Credentials remain outside model inputs and database transactions are read-only.
+- [x] Add Rust language, bounded lexical dependency, and bounded lexical complexity
+  inventories plus a hash-bound source-to-target conversion contract. Mark incomplete
+  static graphs, Big-O/cyclomatic non-proofs, and semantic-equivalence non-proofs
+  explicitly so analysis evidence cannot be mistaken for verification.
 - [x] Preload a deterministic project summary, cap model-visible tool output, reduce turns,
   and stop before the coding planner's 10,000-token cumulative provider budget.
 
@@ -2107,3 +2201,1802 @@ passes locally. A Docker image rebuild was attempted but Docker Desktop was not 
 the Dockerfile/Compose model remains validated and the trusted Railway/CI build is the
 release authority. Governed release and the real lifecycle exercise remain before these
 changes become production evidence.
+
+## Sprint 60 — September source reconciliation and provider boundaries
+
+- [x] Read both supplied conversations to EOF, record hashes and final decisions, and
+  separate core-platform improvements from explicitly requested user-app deployments.
+- [x] Record every requested framework/model/data/telemetry/deployment layer with one
+  authoritative owner per responsibility and corrections to unsupported provider claims.
+- [x] Add explicit Developer API versus Vertex runtime construction; prevent ambient
+  SDK settings from silently changing the billing backend; keep Groq coding-only.
+- [x] Add role selectors for coding-supervisor and failure-intelligence models, regional
+  endpoint checks, ADC support and an explicit paid-runtime activation gate. These are
+  provider primitives, not proof that either new agent role has been integrated.
+- [x] Resolve the requested free AI Studio SFT path: use the user's accepted free base
+  model alternative for those roles, not nonexistent free tuned endpoints. Separate
+  unbilled project `gca-free-models-454922895512` created with approval; restricted
+  key stored locally, and Gemini 3.5 Flash-Lite tool calling verified on 2026-09-19.
+  Full per-role routing, new-project quotas and private-data eligibility remain pending;
+  do not silently move those roles to paid Vertex or claim they are tuned.
+- [ ] Register verified tuned endpoints, provenance, evaluation results and per-role
+  providers; live-probe structured tool calling before production activation.
+- [ ] Reconcile this expansion with PR #139 and release only verified migrations,
+  preserving the existing production rollback path and user-owned architecture edits.
+
+## Sprint 61 — Credit authority, GCP target and isolated execution foundation
+
+- [x] Record the 2026-09-19 explicit approval: initial 30-day Delhi e2-standard-4
+  hosting planning ceiling INR 14,000 (up to INR 3,000 from the original cloud reserve),
+  INR 6,000 remaining reserve, INR 8,500 Vertex unchanged; total INR 28,500. Expected
+  reserve draw INR 2,850.56 including the variable allowance; reconcile actual usage
+  and return any unused earmark. These are not provider-enforced billing caps.
+- [x] Verify target/billing/region/service prerequisites; user reconfirmed trial balance
+  INR 28,694 before creation on 2026-09-19, expiry 21 November. Billing API independently
+  verified open INR account and link, not promotional balance or trial status.
+- [x] Receive target identifiers from the user: project
+  `project-ee0c1944-144c-4364-ad4`, organization `342585805923`, billing account
+  `01C9EC-FBE657-88466A`. CLI authentication, project number `454922895512`, parent
+  and billing linkage verified. Balance INR 28,694/expiry 21 November 2026 remain
+  user-console evidence, not a current API balance. E2 quota is zero in Mumbai and
+  24 in Delhi/Iowa; catalog-backed Delhi estimates are recorded in
+  `docs/GCP_PREFLIGHT_2026_09.md`. Standard pricing rechecked 2026-09-19 and the
+  shortfall is now explicitly funded only from the reserve as above. VM provisioned
+  with fixed STOP deadline and separate budget alert; see the execution checkpoint.
+- [ ] Add durable cost reservations/reconciliation across hosting, disk/IP/network,
+  training and inference. Never spend the future reserve or upgrade billing implicitly.
+  Local foundation added 2026-09-20: migration 016, project-wide transactional row
+  locking, owner/idempotency binding, single dispatch authorization, retained uncertain
+  liabilities, actual-cost reconciliation and fixed hosting deadline. Real local
+  PostgreSQL concurrency and transaction-failure tests pass: 55 coding tests passed
+  with the local ledger database enabled; targeted Flake8, Bandit and compilation
+  checks also passed. Production migration, audited import of the
+  existing VM obligation, and deployment/provider adapter integration remain pending;
+  see `docs/CLOUD_COST_LEDGER.md`. This item is intentionally not marked complete.
+  On 2026-10-01, read-only Cloud Billing API inventory proved the account has
+  exactly one linked project, and Compute inventory found only the approved VM,
+  100-GiB disk and no snapshots. The import model now accepts the exact
+  ₹28,693.88 initial credit from the later report rather than the rounded
+  ₹28,694 pre-creation confirmation. September service totals still lack a
+  current SKU-level breakdown, so no production ledger import occurred.
+  On 7 October the operator supplied all sixteen SKU rows for 19 September–5 October:
+  INR 6,791.47 usage, INR 21,610.67 remaining trial balance, and INR 291.74 of the
+  all-time decrease not explained by the selected period. CPU/RAM both imply
+  397.5875 VM-hours. The observed-rate thirty-day compute/disk/network projection
+  is INR 12,298.82; it is not a guaranteed bill or new spending authority. The six
+  missing rows are no longer outstanding. Cost coverage/freshness, production
+  migration/backup and funded controller enrollment remain incomplete. Preserve
+  Vertex/reserve/STOP; see `docs/DELHI_BILLING_RECONCILIATION_2026_10_07.md`.
+  2026-09-27: added cumulative charge accrual without double-counting refreshed credit,
+  and migration 018 for apps sharing the existing host's funded CPU/RAM/storage pool.
+  Admission/dispatch, uncertainty and cleanup are tested in local PostgreSQL; 103
+  coding tests pass. Live host obligation import, actual runtime limit enforcement
+  and production controller activation remain open.
+- [x] Add a pure, no-network preflight for the three integer-paise envelopes with
+  project binding, fresh credit evidence, workload/credit expiry checks and locked reserve.
+  Revised to protect the other category's unspent funds and limit hosting to 30 days;
+  17 budget tests pass. Added `docs/GCP_DELHI_HOSTING.md` provisioning/security runbook.
+  This does not substitute for the unchecked persistent reservation/executor integration.
+- [ ] Build an approved Linux execution target with OS-level isolation, separate
+  credentials, restricted network, no host/Docker socket mounts and resource deadlines.
+  2026-09-27: installed pinned gVisor release-20260921.0 on the existing Delhi VM;
+  preserved Docker's default runtime and all six healthy Coolify containers. The
+  14-check host probe passed. A keyless typed-profile launcher passed live valid/invalid
+  Python compilation with source copied into sandbox-internal tmpfs, no network or host
+  mounts, bounded resources/output and verified cleanup. Rust/hosted-worker fail-closed
+  integration is local; production activation, toolchains, crash reaping and capacity
+  integration remain open. See `docs/ISOLATED_VALIDATION.md`.
+  Validation evidence: 139 Python coding tests passed with the disposable local
+  PostgreSQL ledger fixture; 26 Rust tests passed. Targeted Flake8, Bandit, shell syntax
+  and `git diff --check` passed. These results do not replace production activation,
+  crash/restart reconciliation, all-language toolchain or generated-app deployment proof.
+  2026-09-28 IST: durable host validation journal and scoped reaper implemented. Live
+  abrupt-controller-exit proof passed: intent survived, unresolved work retained the
+  slot, exact expired container was removed, and subsequent compilation succeeded.
+  The scheduled reaper is installed/enabled and its initial service run passed.
+  Central funded-capacity/run identity binding, host reboot recovery and broader
+  toolchains remain open; this does not activate hosted production coding.
+  Final evidence for this checkpoint: 153 coding tests passed, including real local
+  PostgreSQL fixtures; targeted Flake8/Bandit and diff checks passed. The final live
+  crash probe and reaper service passed again after identity-check hardening. Automatic
+  timer execution was observed at 2026-09-27 19:39:38 UTC; Coolify remained healthy.
+  Central validation-capacity implementation added in migration 019: tenant/run/step
+  binding, fixed launcher resources, shared deployment/validation admission, one dispatch,
+  retained uncertain claims and identity-bound cleanup. Local PostgreSQL race/revocation
+  tests and full Alembic upgrade/downgrade/upgrade passed. Authenticated host transport,
+  real host financial enrollment and production migration remain pending; see
+  `docs/VALIDATION_CAPACITY.md`. No production capacity claim has been dispatched.
+  Policy-v3 host dispatch now binds the exact claim/source/image/profile/host/deadline;
+  durable claim consumption prevents reruns after cleanup. Central reconciliation
+  verifies claim/envelope hashes and retains unknown outcomes. A synthetic live gVisor
+  proof passed on the existing VM; production enrollment/worker transport remain open.
+  Final local regression evidence: 195 coding tests passed, including disposable local
+  PostgreSQL admission/reconciliation tests; targeted Flake8, Bandit and diff checks
+  passed. No paid provider call, new VM, production model switch or migration occurred.
+  Fixed-command IAP/SSH validation transport is implemented with exact host-key pinning,
+  bounded framing, no source extraction on the host and read-only cleanup observation.
+  The host now enforces policy v3. Synthetic end-to-end transport and replay-denial
+  proof passed; 219 local coding tests passed. Worker/ledger production integration,
+  fresh financial enrollment and durable result/lease recovery remain incomplete.
+  Local migration 020 and the trusted controller now separate worker lease, test result
+  and cleanup. Encrypted result retention, immediate scrubbing on hard user deletion,
+  immutable evidence, single dispatch, unknown-outcome recovery and rollback guards
+  are covered by disposable PostgreSQL tests. The controller is not yet connected to
+  the actual Rust broker/hosted worker; no production claim has been issued.
+  2026-10-03: source-bound React/Spring build-output inspection and private bounded
+  artifact retention were added before cleanup; the controller requires an exact
+  claim/source/profile/job/digest/expiry reference. The two-file stdlib bundle was
+  installed on the existing VM with an idle-journal/import check. A missing synthetic
+  Python pin was replaced by a verified immutable official AMD64 image only after
+  valid/invalid sandbox compilation proofs. The image was archived privately;
+  controlled removal and exact offline reload passed, followed by bound transport,
+  replay-denial and cleanup proof. Docker containerd manifest/config identity handling
+  is explicitly checked. All 380 coding tests passed with disposable local PostgreSQL
+  schemas; targeted Flake8, Bandit and diff checks passed. Node/Java offline toolchains,
+  live generated artifacts, trusted image packaging/signing, authenticated artifact
+  consumption and production ledger/worker activation remain open. No new VM,
+  production migration, paid model call or generated app was started; keep unchecked.
+  The next local component now connects tenant-authorized private artifact transfer
+  to operator-pinned non-executing OCI image assembly. It binds real output bytes to
+  claim/source/job/file-set evidence, verifies base blob/diff-ID identities, rejects
+  layer whiteouts and known Java-version incompatibility, and rechecks deletion,
+  revocation and expiry around transfer/assembly. The fixed gateway has bounded binary
+  framing and holds its slot during transfer. See `docs/OCI_PACKAGING.md`. Dedicated
+  keyless build-job execution, actual runtime bases, registry publication, signer,
+  worker/Rust integration and live generated-app proof remain open.
+  Local verification of this retrieval/OCI checkpoint: 426 coding tests passed
+  against disposable loopback PostgreSQL schemas; targeted Flake8/Bandit and diff
+  checks passed. Existing model-router edits remain user-owned and uncommitted.
+  On 2026-10-03, durable image-build ownership was added locally in migration 021:
+  exact validation/artifact/source/target/base-policy binding, shared funded capacity,
+  atomic one-time dispatch, immutable encrypted receipts, old-receipt recovery by a
+  replacement leased controller, and separate CPU/memory versus retained-output disk
+  release. Lost workers never become blindly redispatchable. Deletion preserves
+  cleanup obligations and suppresses private receipts. Actual keyless host execution,
+  durable OCI output storage, authenticated cleanup, publication/signing and production
+  activation still need implementation/proof; keep the overall story unchecked.
+  This checkpoint passed all 465 coding tests with real loopback PostgreSQL (no
+  skips), the full disposable Alembic 021 -> 002 -> 021 round trip, targeted
+  Flake8/Bandit and diff checks. No production schema, model call, resource, public
+  port or deployment was changed. These results do not prove live worker execution.
+  The next local checkpoint adds an actual owner-private, bounded, fsync/SQLite-backed
+  OCI output store and fixed assembly/observation worker logic. Central dispatch
+  emits its source/artifact/policy/base/target/server/project/timeout envelope. Reads
+  rehash the complete OCI blob graph; interrupted writes stay allocated and cannot
+  be overwritten; cleanup refuses untracked data and does not claim process cleanup.
+  The standalone CLI rejects missing Linux/keyless/cgroup/network/read-only-root
+  prerequisites. Authenticated host-journal consumption, actual gVisor launch,
+  cancellation/reaping, receipt transport, production activation and live generated
+  app proof still remain open; do not mark this story complete.
+  Local verification: all 501 coding tests passed with real loopback PostgreSQL and
+  no skips; targeted Flake8/Bandit and diff checks passed. No production schema,
+  host bundle, service, resource or model-provider call was changed in this checkpoint.
+  The following local checkpoint unifies validation/packaging host intent in one
+  SQLite journal/slot and purpose-aware identity/reaper. Legacy journal rows keep
+  validation meaning; consumed claims cannot be replayed across purposes. Migration
+  022 records immutable packaging host identity and sanitized observation evidence.
+  Registered-target/pinned-IAP cleanup-only recovery reconstructs the original job
+  binding and remains possible after deletion/revocation/expiry. Worker removal frees
+  CPU/memory, not retained-output disk; late execution reopens resource obligations
+  without a second dispatch. Actual gVisor packaging launch/per-job mounts, image
+  receipt transfer, publication/signing and production activation are still open;
+  keep this overall story unchecked. No production migration or VM bundle update
+  has occurred for this checkpoint.
+  Verification: 537 coding tests passed with real loopback PostgreSQL and no skips;
+  the full disposable Alembic 022 -> 002 -> 022 round trip, targeted Flake8/Bandit
+  and diff checks passed. Existing user-owned model/configuration/architecture edits
+  were preserved and not included in this checkpoint.
+  The next local checkpoint implements `isolated_packaging` and the pinned
+  `image_build_transport`/`image_build_controller`: fixed protected seven-file bundle,
+  shared journal intent before private reads, private bounded filesystem and exact
+  gVisor mount/resource inspection, aggregate controller-plus-worker limits, actual
+  OCI rehashing, same-dispatch recovery and explicit authenticated storage cleanup.
+  Local tests use real PostgreSQL/SQLite/artifacts but simulated Docker, mounts,
+  cgroups and host responses. The VM still has the old two-file validation bundle;
+  production activation, actual runtime/toolchain approval, registry/signing and
+  end-to-end behavior/Chat proof remain incomplete. Keep this story unchecked.
+  Verification: 601 coding tests passed with real loopback PostgreSQL and no skips;
+  targeted Flake8/Bandit and diff checks passed. No migration SQL changed from the
+  prior round-tripped 022 revision. The user-provided September billing report was
+  recorded without treating credit offsets as free resource usage or current October
+  accrued charges. Existing user-owned edits were preserved.
+  On 2026-10-04, the protected seven-file bundle was installed on the existing VM
+  via a crash-recoverable operator transaction and independently read-back verified.
+  The old complete tree is preserved; local tests prove abrupt-process-death recovery
+  after both directory renames and reject unsafe/obsolete rollback. All 620 coding
+  tests passed with real loopback PostgreSQL and no skips; Flake8/Bandit/diff checks
+  passed. Live nonsensitive validation/replay/cleanup passed, six Coolify containers
+  remained healthy, and the reaper reported success/0 with no validation leftovers.
+  No new cloud resource, model call, production migration, funded activation or app
+  deployment occurred. Packaging policy/cgroup preparation, runtime/toolchain approval,
+  full image pipeline and generated-app/Chat proof remain open; keep this story unchecked.
+  The next live nonsensitive environment probe found a concrete runtime-contract
+  mismatch: the 16-task sandbox failed before Python startup; a 64-task comparison
+  ran, but guest cgroup files were unavailable and virtual Seccomp was 0. Both
+  probes had verified cleanup; the worker's current enforcement function rejected
+  the real guest. This is NOT a successful packaging proof. Implement live native
+  host process/cgroup verification plus a bounded, readonly, exact-dispatch readiness
+  handshake before guest private-input consumption. Keep model assertions, missing
+  files and Docker configuration alone insufficient. Do not activate a weakened
+  guard. The fixed diagnostic script has separate negative/startup/connection-loss
+  regression cases. See `docs/OCI_PACKAGING.md` for observations and acceptance gates.
+  All 624 local coding tests passed with real loopback PostgreSQL and no skips;
+  targeted Flake8/Bandit/diff checks passed. Probe results explicitly deny native
+  enforcement verification and production activation. No host bundle, production
+  policy or task limit was changed by this diagnostic checkpoint.
+  The following local checkpoint implements a trusted on-start native-kernel
+  verifier and bounded readonly exact-dispatch readiness barrier before artifact
+  consumption. Native PID/start-time/pidfd, seccomp/privileges, resource limits and
+  runsc helper membership are checked under a fixed topology. Cleanup persists
+  container identity before removal and requires native helper/group termination;
+  unknown identity and late helper observations retain/reopen resource obligations.
+  The local worker/aggregate task limits are 64/128 after the measured startup
+  failure; CPU/memory/swap remain one CPU/3 GiB/zero. This new revision is NOT
+  installed or activated on the VM. Native topology/group preparation, actual
+  readiness/termination, toolchain/runtime approval and complete image/deployment
+  proof remain open. Keep the overall story unchecked.
+  Verification of this native-readiness checkpoint: all 669 coding tests passed
+  with real loopback PostgreSQL and no skips; targeted Flake8 and Bandit passed.
+  The suite includes preserved user-owned provider work, which is not part of this
+  implementation commit. No production schema, VM bundle, policy, resource or
+  model-provider call was changed by this local checkpoint.
+  The next live checkpoint installed commit `88e1ff7` on the existing host with
+  independent full-bundle read-back and prepared the fixed aggregate group under
+  an idle-journal/exact-snapshot operator gate. Kernel read-back confirmed one CPU,
+  3 GiB, no swap and 128 tasks. The nonsensitive native probe ran and cleaned up,
+  but native CapEff was 000000000008001f (seccomp 2, no-new-privileges 1); the
+  current zero-capability guard rejected it. Native namespace/role/capability and
+  helper-profile verification is the next prerequisite, not an unchecked mask
+  bypass. Six Coolify containers remained healthy, with no unresolved host jobs
+  or validation leftovers. Private admission, runtime approvals, funded deployment
+  and generated-app/Chat proof remain open. The VM size/deadline and protected
+  Vertex/reserve budgets were not changed; keep this overall story unchecked.
+  Local verification of group preparation/native diagnostics: all 688 coding tests
+  passed with real loopback PostgreSQL and no skips; 19 new targeted operator/probe
+  tests, Flake8, Bandit and diff checks passed. Runtime/systemd decisions are
+  simulated locally; the negative native-capability observation and actual kernel
+  group read-back above are separately live. Source/documentation updates preserve
+  that distinction and do not claim end-to-end packaging success.
+  The post-install fixed-ID synthetic transport probe passed compilation, replay
+  rejection and bound cleanup. Earlier rejected CLI input forms were corrected
+  only after an independent idle-journal observation; they do not supply runtime
+  evidence or authorize replay of an uncertain consumed claim.
+  The subsequent source-grounded native profile pins the split Sentry/Gofer
+  binaries and verifies Systrap ancestry, namespaces/mappings, role privileges,
+  complete scope inventory and live process identities. A missing scope occupant
+  proved to be the optional unfiltered FD-parking sidecar, not a transient startup
+  race. A fixed operator-only, exact-hash, idle-journal, crash-reconcilable transition
+  retained this optional binary but made it non-executable. The pinned upstream
+  runtime tolerates its absence; no mandatory application/runtime security check
+  was weakened. Readiness independently rechecks exclusion against package/mode
+  drift. Unknown occupants and unscoped known sidecars prevent false cleanup.
+  Latest protected bundle installation/read-back and a positive nonsensitive
+  native sleeper proof are recorded in `docs/HOST_BUNDLE_OPERATIONS.md`. All 731
+  coding tests passed with real loopback PostgreSQL and no skips; targeted Flake8
+  and Bandit passed. The complete private artifact/barrier and image pipeline,
+  approved Node/Java toolchains/runtime bases, funded production enrollment,
+  publication/signing and generated-app/Chat proof remain open. Keep the overall
+  story unchecked. No production migration, new cloud resource, model call, VM
+  sizing/deadline change or budget expansion occurred.
+  On 2026-10-05 the actual fixed synthetic packaging pipeline passed the verified
+  host readiness barrier, guest checks, OCI assembly, durable output storage,
+  independent archive rehash, native cleanup and normal ext4 job-volume removal.
+  This followed an evidence-driven correction for absent guest network sysfs:
+  matching proc/socket loopback-only observations are mandatory; host network
+  isolation and native worker sysfs checks are unchanged. The operator installer
+  now supports explicit audited retirement of obsolete code copies under fresh
+  active/retention fingerprints, preserving the latest predecessor and all data.
+  Abrupt process-death retirement recovery is tested. Independent live health found
+  zero unresolved jobs/containers/staging and six healthy Coolify containers.
+  The synthetic base contains no executable runtime. Real Node/Java offline builds,
+  approved runtime bases, funded production enrollment, authenticated dispatch,
+  publication/signing and generated-app behavior/Chat proof remain open. Keep the
+  overall story unchecked; no production schema, model call, cloud resource,
+  budget expansion or deadline change occurred. Evidence: `HOST_BUNDLE_OPERATIONS.md`.
+  Verification for this checkpoint: 766 coding tests passed using real loopback
+  PostgreSQL with no skips; targeted Flake8/Bandit and diff checks passed. Production
+  migrations remain unapplied. This subsystem result is not full goal completion.
+  Final checkpoint: 232 coding tests passed; full disposable Alembic upgrade to 020,
+  downgrade to 002 and re-upgrade to 020 passed. Targeted Flake8, Bandit and diff checks
+  passed. No production migration, private-source remote run or paid model call occurred.
+  Existing-host audited enrollment is now implemented locally, with a fixed-target
+  read-only GCE instance/disk/STOP identity probe performed outside database locks,
+  historical accrued liability, immutable idempotent replay and underfunded fail-closed
+  state. A live read-only GCE identity probe passed. The full coding suite passed
+  243 tests on 2026-09-28; production import remains unperformed until fresh
+  promotional-balance and attributable charge evidence is obtained. Production
+  migration and worker/provider integration are still open; this checkbox remains
+  intentionally unchecked.
+  A subsequent local PostgreSQL integration proof now connects that imported VM
+  obligation to funded host capacity and an approved deployment without a second
+  financial reservation. An underfunded import cannot back a pool; replay cannot
+  dispatch a second write. The coding suite passed 245 tests. No real Coolify
+  deployment or production account import was performed.
+- [ ] Keep local private/non-Git coding usable; require source-egress consent for remote
+  models, and report when secure execution prerequisites are unavailable.
+  On 2026-10-01, the local Groq planning/resume path was hardened to require
+  the isolated launcher and config before a provider call. Frozen model-authored
+  plans carry an origin marker in the approval hash; preview and approved replay
+  cannot fall back to host validation. Explicitly authored offline plans retain
+  the labelled `host_not_isolated` compatibility path. Local Rust tests pass;
+  secure macOS/Docker Desktop operation and hosted end-to-end coding remain open.
+- [ ] Provision Coolify on the approved GCP target with verified SSH host keys,
+  scoped access, protected admin UI, TLS/domain ownership and backup/restore procedure.
+- [ ] Verify generated workloads cannot read core secrets, core DB, another app's
+  storage, another user's logs or deployment credentials.
+
+## Sprint 62 — Durable orchestration and concurrency migration
+
+- [ ] Add tenant-scoped immutable event contracts and transactional outbox; Kafka uses
+  bounded partitions/retention/payloads, acknowledgements and deduplicating consumers.
+  Local 22-October checkpoint: migration 023 atomically captures Workspace events
+  only when explicitly enabled (default off). Immutable metadata envelopes, pending
+  capacity, per-run order, fenced leases, typed broker ACKs, SQL inbox transactions,
+  erasure and published-event retention are implemented. The pinned optional Kafka
+  adapter checks an existing three-partition/three-replica topic; no broker or
+  production migration was started. The subsequent local migration-024 consumer
+  checkpoint implements manual offsets, explicit new-group bootstrap, rebalance
+  cancellation, SQL projections and exact-digest erasure handling. Migration 025
+  now locally bridges coding events with a separate default-off flag and explicit
+  kind/version identity while preserving Workspace keys/bytes. Real mixed-source
+  broker/rebalance/lag proof, approved resource placement and live
+  failure/load proof remain open.
+  See `docs/WORKFLOW_EVENT_OUTBOX.md`; this item stays unchecked.
+- [ ] Introduce Temporal deterministic workflows and typed activities, explicit business
+  ledger projections, retries, timers, signals, cancellation and compensation.
+  Local schema-028 checkpoint now implements the first Workspace SDK workflow,
+  typed reference-only activities and real existing step-executor/verifier bridge.
+  A write-ahead activity journal rejects repeated uncertain effects; finalization
+  preserves truthful completion and existing incident/evaluation facts. Local SDK
+  sandbox/activity and full-schema SQL tests pass. Coding workflow, authenticated
+  signal delivery, reconciliation generations, server history replay and live
+  rollout remain open; this item stays unchecked. See
+  `docs/WORKSPACE_TEMPORAL_EXECUTION.md`.
+  The subsequent 25-October completion checkpoint adds SQL-only live-owner fences,
+  atomic step/artifact/event/journal outcomes and bounded metadata-only PostgreSQL
+  completion retries. Saved receipts survive restarts without re-executing tools.
+  This closes local completion-record races, not remote exactly-once effects or
+  the still-open retry generations, partial-composite receipts and server/replay
+  proof. See `docs/ATOMIC_WORKFLOW_COMPLETION.md`; this item stays unchecked.
+  Schema 031 then adds bounded encrypted per-tool write-ahead/response receipts,
+  integrated with the actual authenticated readback/resume flow. Saved responses
+  survive later composite/step failures, and unresolved writes block repetition.
+  This is evidence retention, not automatic unfinished-composite continuation or
+  safe retry generations. See `docs/DURABLE_TOOL_RECEIPTS.md`.
+  Schema 032 subsequently implements the read-only portion of safe retry
+  generations through authenticated Resume, expiring source-bound permits, current
+  typed read contracts, quiescence and persisted retry budgets. Old uncertainty
+  remains, and stale deliveries cannot alter newer generations. Write retries,
+  unfinished-composite execution, compensation and real server/replay proof remain
+  open. See `docs/TEMPORAL_READ_RETRY_GENERATIONS.md`; this story stays unchecked.
+  Five real loopback Temporal server scenarios now cover startup ACK loss,
+  worker/read-generation resume, cancellation, erasure and clean persistent SQLite
+  restart. All five saved histories also replayed in a fresh offline process;
+  an incompatible command was rejected. This is tested local Workspace evidence,
+  not real writes, abrupt-crash/HA/load or production/cross-version rollout proof.
+  See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`; this story remains unchecked.
+  Schema 033 adds the PostgreSQL half of ordered-prefix continuation: actual
+  authenticated Resume verifies fresh receipts/readback, issues a bounded
+  source-bound single-use grant, and the shared tool boundary reuses exactly the
+  proven prefix while invoking only the never-attempted suffix. Actual Sheet and
+  Chat helper tests cover reuse and full readback. Temporal write generations,
+  uncertain/attempted suffix recovery and compensation remain open. See
+  `docs/VERIFIED_PREFIX_CONTINUATION.md`; this story remains unchecked.
+  Schema 034 adds independently guarded Temporal write-prefix generations with
+  fresh exact receipts/readback, positive prior quiescence, current approval,
+  monotone budgets and new activity/nonces. The old read-only SQL guard is
+  retained. Unknown writes and post-response failures cannot invite model retry.
+  Seven real loopback server cases now include prefix worker restart/Resume and
+  an unknown synthetic send that is never repeated; all seven histories replay
+  offline in a fresh process. General unknown-write lookup, compensation, coding
+  workflows and live/crash/HA/load evidence remain open. See
+  `docs/TEMPORAL_WRITE_PREFIX_GENERATIONS.md`; this story stays unchecked.
+- [ ] Pin each run to exactly one executor; old PostgreSQL workers and Temporal must
+  never both execute it. Prove replay, crash recovery and migration rollback.
+  Local 24-October checkpoint: migration 026 adds immutable business-owner bindings,
+  default-off scoped/expiring Temporal admission constraints and old-worker lease
+  rejection. Both real PostgreSQL claimers filter owner and both entrypoints recheck
+  live tenant/version/lease before credentials. Rollback disables new admission,
+  never transfers an existing run, and downgrade refuses retained Temporal rows.
+  Temporal dispatch/workflows/activities/replay and live migration remain open;
+  this item stays unchecked. See `docs/WORKFLOW_OWNERSHIP.md`.
+  The following migration-027 checkpoint adds actual business-insert start intents,
+  immutable reference envelopes, bounded fenced delivery, start/describe SDK policy,
+  lost-response recovery and independent default-off transport. Local SQL and SDK
+  contract tests are not real Temporal startup/replay proof. See
+  `docs/TEMPORAL_START_DELIVERY.md`; business workflows/activities and live migration
+  remain unfinished.
+- [ ] Add per-user/app/global capacity admission, fair queuing, model quotas and
+  backpressure. Load-test rather than claim unlimited asynchronous users.
+- [ ] Integrate CrewAI bounded role collaboration and existing LangGraph domain behavior
+  through adapters, with no competing durable loops or shared tenant memory.
+- [ ] Keep Langflow private and design-time; validate/version its exported graphs through
+  a supported adapter before allowing any production policy change.
+
+## Sprint 63 — Shared coding and Gemini supervisor lifecycle
+
+- [ ] Localize source/tests, generate typed Groq patch operations, stage into isolated
+  workspaces and run real keyless compile/unit/integration/security checks.
+  On 27 October, the existing hosted PostgreSQL coding phases gained live
+  tenant/lease/version/source and current frozen-plan approval checks before
+  provider/process/publication boundaries and atomic run/step/artifact/event
+  commits. The CLI is now an owned cancellable POSIX process group with bounded
+  streams, private cwd/HOME and strict planning-key pairing. Private evidence
+  reads reject symlinks/hardlinks/FIFOs/escapes and hosted write paths cannot alias
+  protected infrastructure or forge governed candidate manifests. SQL caches
+  participate in the protected transaction with non-fatal savepoints. This is a
+  prerequisite, not an implemented coding Temporal bridge or exactly-once
+  publication. A subsequent 28 October schema-035 checkpoint adds encrypted frozen
+  publication receipts, exact GET-only GitHub tree/draft read-back, late-outcome
+  preservation and owner-requested reconciliation without renewing approval.
+  Unknown partial effects still prohibit repeated writes; real GitHub crash proof
+  and the frontend reconciliation action remain open. See
+  `docs/CODING_PUBLICATION_RECOVERY.md`. Phase journals, trusted CI identity, planner checkpoints and live
+  keyless compile/deploy evidence remain open. See `docs/CODING_EXECUTION_FENCES.md`;
+  this story stays unchecked.
+- Local 28-October schema-036 follow-up: exact workflow/run/attempt/required-job/
+  step/frozen-file read-back replaces arbitrary GitHub checks in hosted CI and
+  posted passing flags in candidate callbacks. Human-reviewed immutable policy
+  publication/revocation, transaction advisory fencing, source/publication locks,
+  read-only App credentials and trusted-default-branch inert reporting are local.
+  No production trust policy is seeded. Live CI/supply-chain proof, frontend trust
+  controls, deployment-controller/post-merge trust consumption and the complete
+  candidate lifecycle stay open. See `docs/CODING_CI_TRUST.md`; this progress note
+  does not complete the enclosing Sprint 63 requirements.
+- 29-October code-gate follow-up: canary approval, activation and promotion review
+  now reverify current GitHub policy/run/attempt and authentic frozen build/files
+  before a shared-order SQL source/policy fence; admission evidence commits with
+  the human effect. Rejection/change requests remain available without CI. This
+  does not finish durable external dispatch, deployment-controller credential
+  separation, post-merge evidence or automatic active-routing revocation.
+- [ ] Add Gemini semantic review of intent, lineage and test evidence; model approval
+  cannot fabricate test success, override tool policy or grant deployment access.
+- [ ] Bound corrective rounds by progress, tokens, time and distinct failure fingerprints;
+  carry resumable evidence and preserve all actual model-chain usage.
+- [ ] Extend verified tool profiles for generated Java/Spring Boot, React/TypeScript,
+  PostgreSQL migrations, Compose and cross-language repositories without arbitrary host shell.
+  On 2026-09-30, fixed offline React test/build and Spring test/package profiles
+  were added to the keyless launcher, with archive preconditions, one shared command
+  deadline and generated-artifact postconditions. Local tests exercise command order,
+  absent source, offline dependency failure and false-success output rejection. The
+  Spring postcheck now reads bounded Surefire XML through the keyless container stream
+  and rejects zero-test, all-skipped, failed, malformed or oversized reports; a nonempty
+  XML file alone no longer counts as test success. This is structural evidence only:
+  generated code could forge reports and behavioral/source-to-image proof is still needed.
+  VM operator policy still approves only the Python synthetic toolchain; Node/Java
+  cache/image provision, live gVisor execution and PostgreSQL/cross-language profiles
+  remain unproven. A subsequent local admission change requires four distinct,
+  same-source/run/tenant/target passing proofs for `react_spring_postgres` releases
+  and rejects multi-service Compose presented as `single_service`. These claims
+  still need trusted live Node/Java toolchain execution and source-to-image build
+  provenance before start. Low-level deployment dispatch now defaults to requiring
+  passing validation; an explicit bypass remains only for isolated ledger tests.
+  This item stays unchecked.
+  On 2026-10-06, reviewed fixed public React/Node and Spring/Java dependency recipes
+  passed actual local AMD64 Docker offline tests/build/package and deliberate failing
+  tests. Maven's missing dynamic JUnit provider was reproduced and seeded using only
+  a fixed public fixture. The source launcher fixes implicit tmpfs noexec for
+  sandbox-local binaries/JNI while retaining all other restrictions and packaging's
+  noexec storage. Catalog guards reject executable/duplicate/unreviewed dependency
+  authority. 804 coding tests passed against local PostgreSQL, without skips.
+  The corrected launcher was subsequently VM-installed/read-back verified via the
+  protected seven-file transaction. Bound synthetic Python regression, mismatch/
+  unbound/replay rejection and cleanup passed; a separate field-projected health
+  check verified six healthy Coolify containers and no scoped sandbox leftovers.
+  This is not Node/Java Linux/gVisor proof, central funded approval or
+  generated login-app proof. Protected image export/enrollment, runtime bases,
+  complete host proofs and cross-language/database scope remain open. See
+  `docs/OFFLINE_TOOLCHAINS.md`; this item remains unchecked.
+  A subsequent 2026-10-06 checkpoint verified both real tagless Docker-save archives
+  as bounded streams without a large local archive file: 108,749,312 React bytes and
+  509,887,488 Spring bytes, with stable repeated full-stream hashes. It verifies all
+  blobs/descriptors/reachability and distinct index/platform/config identity, rejecting
+  extended tar headers before allocation, unsafe paths, unreferenced blobs and tag
+  overrides. This is operator-only custody inspection, not image import, build
+  provenance, role approval or host execution. Protected durable import/enrollment
+  and the four-profile live gVisor proof are still required; nothing is marked complete.
+  The next 2026-10-06 checkpoint adds a local crash-persistent toolchain import
+  reservation to the existing flock/SQLite host journal. Validation and packaging
+  share its exclusion; importer death, expired allocation or ambiguous load does not
+  clear the reservation. Pre-load cancellation, exact-idempotent observations,
+  fingerprint/phase corruption rejection, bounded retention and read-only bundle
+  inspection are covered by real SQLite/flock and process-death tests. Bundle
+  mutation is blocked during maintenance and old-launcher rollback after import
+  history requires review. This is not an actual image transfer/load, publication
+  controller, role approval or Node/Java host proof. The reserved proof-pending
+  phase deliberately has no release API yet. All those live requirements remain
+  unchecked, and no maintenance reservation was created on the VM.
+  A subsequent checkpoint adds protected archive staging under that same journal,
+  with bounded streaming, complete OCI inspection, persisted-file read-back/fsync,
+  receipt-to-journal custody, exact-prefix control-write repair, and explicit hash-bound
+  quarantine retaining failed transfers. 916 coding tests passed without skips;
+  five additional fault cases were then added and all 52 final staging tests passed.
+  Real process-death tests cover promotion, receipt/journal publication and quarantine.
+  This library is local and not yet connected to the trusted VM transfer controller.
+  Separately, the journal barrier itself was installed/read-back verified as bundle
+  `a457b819dec51ee6d83f7c70f3d86908e60b38a0e4926dad3d698f2d0a74b241`;
+  live bound Python/replay/cleanup checks passed, with six healthy Coolify containers,
+  zero scoped sandbox leftovers and no import reservation. Only an audited obsolete
+  code backup was retired. No actual Node/Java transfer/load, approval or production
+  activation happened. The complete host proofs and deployment requirement remain open.
+  The next 2026-10-06 checkpoint installs the complete eleven-file fixed-target
+  custody gateway: bundle `529bc18bc56ed8f7b2a9c63aeb15cabc12d5ec10af7ee326605f9d27ec0bbe4e`,
+  independent snapshot `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+  Exact seven-file historical transaction compatibility is tested without accepting
+  arbitrary subsets, invalid metadata or changed transaction identity. 967 local
+  coding tests passed without skips; Flake8/Bandit/diff checks passed. The installed
+  gateway verifies public VM identity, source closure and fresh unchanged policy/
+  registry under the existing slot. Bound Python/replay/cleanup passed again.
+  Custody may transfer/reconcile and cancel a never-started load while retaining
+  bytes; it cannot load, approve, publish, deploy or grant funded capacity. Actual
+  Node/Java load/proof, registry approval and full application/Chat proof remain open.
+  The actual React/Spring public archives then transferred through that gateway and
+  passed separate no-stream persisted-file re-verification. Both never-started loads
+  were explicitly cancelled retaining custody/audit, and the main journal is idle.
+  Final projections verified six healthy Coolify containers, zero scoped leftovers
+  and unchanged policy/registry. This closes custody transport evidence, not image
+  load/enrollment, Linux/gVisor profile proof, central approval or the complete item.
+  A subsequent local checkpoint adds a fixed durable systemd load unit, empty worker
+  environment, same-journal exact-custody reopening, process/invocation/limit read-back,
+  pre-RPC durable claims and terminal-receipt reconciliation without repeated loading.
+  Lost/partial claims and uncertain RPCs keep the host reserved. Real process-death
+  tests exercise mocked pre-RPC and post-receipt boundaries. The complete new source
+  closure is twelve files; the wire cap stays 256,000 with a separate bounded 384,000
+  decoded compressed-apply format. The VM remains on the eleven-file custody release.
+  This is not live loading, Node/Java execution, publication or final app proof;
+  the full requirement is still unchecked.
+  The next local checkpoint adds explicit forward recovery of the exact recorded
+  twelve-file candidate after an interrupted bundle install. Full source hashes,
+  original tree hash, predecessor custody and actual staged/current trees are
+  reverified under the existing journal flock. Cancelled import/cleaned packaging
+  history survives; pending jobs/imports still deny mutation. No new release,
+  changed policy, hidden rollback or journal deletion is authorized. Tests include
+  actual child-process death after both directory renames, partial staging and
+  lost phase writes. The VM remains on the eleven-file custody release; complete
+  Node/Java sandbox proofs, publication and application deployment remain open.
+  The 2026-10-07 local checkpoint adds an operator-only fixed-fixture proof controller
+  and expands the reviewed source closure to thirteen files. Exact public fixture
+  bytes, same-journal durable attempts, positive load/read-back, unchanged controller
+  bindings, native runtime limits and guest privileges are prerequisites. Checks run
+  before fixture extraction; container removal plus native termination are required
+  before retaining a result. Fixed positive/deliberate-negative cases have bounded
+  retries and cannot grant image approval. Process-death and forged-receipt tests
+  preserve uncertainty; normal workload admission remains closed during proof.
+  The VM still runs the eleven-file custody release. No live load, host profile
+  execution, publication, approval or generated application deployment happened.
+  The verified publication controller and complete live proofs remain unfinished.
+  Final local verification: 1,114 coding tests passed without skips against disposable
+  local PostgreSQL schemas; targeted Flake8/Bandit and whitespace checks passed.
+  This does not close trusted CI, live enrollment or the enclosing unchecked item.
+  The next local checkpoint completes immutable publication preparation and explicit
+  two-file forward publication/recovery. Registry v2 preserves Python provenance and
+  binds operator-built images to actual archive/index/platform/config/recipe/proof
+  identities without fabricated repository digests. `publishing` keeps the shared
+  slot reserved until actual policy/registry bytes, a deterministic receipt and the
+  multi-role publication chain verify. Role approval cannot be inferred from an
+  `enrolled` phase alone; missing operator images never silently reload. Real process
+  death is tested at reservation, both replacements and completion. Full coding suite:
+  1,187 local tests passed without skips; targeted Flake8/Bandit/diff checks passed.
+  Reviewed closure: fourteen files; actual VM: eleven-file custody release with two
+  cancelled retained imports. Live publication and central funded enrollment are not
+  claimed. Review the failed-host-proof recovery route before actual loading; complete
+  Node/Java host tests, signing, deployment and Chat delivery remain unchecked.
+  Installer compatibility additionally reads completed publication evidence through
+  protected current/exact-predecessor source and read-only SQLite under its existing
+  flock. Invalid or unreadable enrollment stays pending; no old-source rollback is
+  granted. A fresh read-only VM probe still shows eleven files and snapshot
+  `c39a8d73ee88a66e096cee7f42497f056d9e6e2744f752f1b8260ad9439a449d`.
+  The following recovery checkpoint adds explicit rejection for definitely completed
+  unpublished loads only. It preserves image/archive/proofs, verifies native cleanup
+  and retained receipts before releasing maintenance, and rejects phase-only claims.
+  Ambiguous loads and partial publication remain reserved. New v2 intents bind the
+  reviewed source bundle; bounded ID-only terminal custody reuse avoids re-upload
+  without a hard link, Docker action or deletion. Real process-death tests cover the
+  receipt-before-CAS and completed-lost-response boundaries. These are local recovery
+  changes, not completion of live host proofs, funded enrollment or generated-app
+  deployment. A fresh live read-only probe confirmed journal idle and no pending
+  import, with the same eleven-file snapshot; the VM deadline/resources are unchanged.
+  Final local recovery verification: 1,254 coding tests passed without skips against
+  disposable local PostgreSQL schemas; 255 focused recovery/staging/gateway/installer/
+  transport tests and Flake8/Bandit/whitespace checks passed. These results do not
+  substitute for the pending live toolchain, deployment or original scope acceptance.
+  Live 8 October rollout installed fourteen files from `c312172`, independent snapshot
+  `512d6bfc80bab82c64902b98a41e00c95fd3e203b0f1d2b2347617330c6700f4`, preserving data,
+  policy and latest predecessor. Python transport/replay/cleanup and six-container
+  health passed. React import `341dd8fd9ee3cc0ab781027bf705300f27c72fee97f1b62909097371738d4e50`
+  reused its retained archive and positively completed Docker loading, but remains
+  `load_uncertain` after optional-Entrypoint template failure. The local projection
+  correction is not installed. Finish audited same-import/source-bound readback
+  repair without replaying load or bypassing maintenance before fixtures/publication.
+  The next local checkpoint supplies a separate exact-c312172 operator-only transient
+  repair controller. It binds original execution provenance separately from corrected
+  verifier/validator/controller hashes in a bounded write-ahead audit; reconciliation
+  invokes no new load and remains reserved. Explicit negative retirement is separate
+  from approval. Forty-seven local tests include process death after audit, receipt,
+  loaded CAS and rejection, with systemd/Docker mocked. Live repair remains unproven
+  until the fixed host operation and retained audit are independently inspected.
+  Final local preparation verification: 1,301 coding tests passed without skips
+  against disposable loopback PostgreSQL; Flake8, Bandit and whitespace checks
+  passed. These are not live native-toolchain or generated-application acceptance.
+  8 October follow-up: the first repair stopped before audit because protected
+  public 0644 source was incorrectly read through the private custody reader. A
+  separate fixed-path/hash/inode-verified reader now handles source without weakening
+  archive/receipt privacy (16 new tests). Fresh host checks then found the reviewed
+  React and Python images absent. Coolify's successful midnight cleanup execution
+  18 contains both exact IDs; installed code prunes unused/tagless images and forced
+  daily cleanup was enabled. An audited operator-only guard changed only forced
+  cleanup to threshold-based cleanup (80%), retaining volume/network protections and
+  application image retention. Independent readback verified its immutable plan,
+  six healthy Coolify containers, unchanged source/policy/registry and retained
+  `load_uncertain` import. React archive custody still verifies. No image restoration,
+  second load, role approval or deployment occurred. Separately audited restoration
+  and cleanup/execution-owner coordination remain required before live fixtures;
+  the ordinary pending-import barrier is not bypassed. All 1,338 coding tests passed
+  without skips on disposable loopback PostgreSQL; style/security/diff checks passed.
+  Later 8 October live recovery: a distinct write-ahead restoration plan and
+  single-use systemd claim restored the retained React archive once, independently
+  confirming daemon completion, current image metadata and worker exit. The exact
+  historical controller is content-addressed locally. A separately reviewed
+  readback audit now binds both original and restoration provenance; independent
+  verification confirmed no configuration/approval change. Explicit terminal
+  rejection closed the old unpublished import and a fresh read-only probe verified
+  maintenance available, retained custody, unchanged fourteen-file source/policy/
+  registry, VM identity/deadline and six healthy infrastructure containers. Repair
+  and rejection invoked no Docker load. All 182 focused restoration/readback/cleanup
+  tests passed, including real process-death tests with mocked host dependencies;
+  all 1,436 coding tests also passed without skips using disposable loopback
+  PostgreSQL schemas (one existing Vertex SDK deprecation warning).
+  Style/security/diff checks passed. New-source adoption, Python recovery, native
+  React/Spring fixtures, verified role publication and full app/Chat proof remain
+  unchecked; this evidence does not complete the original scope.
+  Cross-source handover preparation: local `load_adopt` now binds exact current
+  image metadata, both v2 source bindings/custody hashes, terminal source rejection,
+  positive completion and auxiliary repair/restoration history in an immutable
+  adoption plan. It uses the separate crash-recoverable `adopting` state, creates
+  no fake Docker worker/receipt and preserves native proof/publication gates.
+  All 332 focused loader/adoption/recovery/publication tests passed; style/security/
+  diff checks passed. Initial full regression was refused at 319 MiB free disk;
+  after headroom recovered to about 1.6 GiB, all 1,492 coding tests passed without
+  skips on disposable loopback PostgreSQL. Independent Python recovery preflight
+  rehashed its approved 46,237,696-byte archive and confirmed exact image absence
+  and available maintenance, without loading/changing configuration.
+  This new closure is not installed, no VM adoption
+  or native fixture proof is claimed, and the checklist remains unchecked.
+  Subsequent live progress, 8 October (gateway rechecked 11 October): the complete
+  ca86020 closure was installed/read back as snapshot
+  `8b032cb82bfe249c8390c0b22860fbe1ef53790e2489eb07de6dd1a8fbfa40ed`.
+  React's new v2 intent reused retained custody and adopted the definitely completed
+  restored image without another Docker load. Native positive test/build and fixed
+  deliberate-failure cases all passed expected outcomes with verified cleanup.
+  Independently reviewed plan
+  `bc206f5ab1869f202569e8a424859c45f954e2812c9867b8a115162c01be90b3`
+  enrolled only React test/build profiles; independent readback checked provenance,
+  exact image, all receipts/cleanup, available maintenance and six healthy Coolify
+  containers. This closes React toolchain enrollment, not the broader unchecked
+  multi-language/profile/deployment requirement. Spring, audited Python recovery,
+  runtime bases, funded controller integration and generated-app/Chat proof remain.
+  11 October: new source-bound Spring custody reuse and one audited load completed
+  with positive daemon/current-image/terminal-worker evidence. Its first native
+  positive test failed (exit 1), with cleanup verified, so Spring was not approved.
+  The import was explicitly rejected, retaining all custody/image/audit evidence.
+  The existing receipt retained a full-result hash but no test output; its exact
+  compiler/test cause remains unknown. Local diagnostic retention now atomically
+  binds bounded fixed-fixture output to its receipt and exposes a separate read-only
+  operation, preserving existing publication hashes. Validate/install this closure
+  and use a new provenance-bound intent before the next diagnostic native attempt.
+  The diagnostic closure passed 334 focused tests and all 1,530 coding tests without
+  skips on disposable loopback PostgreSQL, plus style/security/diff checks. One
+  existing Vertex SDK deprecation warning remained. No Spring success or production
+  activation is inferred from these local tests.
+  The complete be3a641 diagnostic closure was installed/read back as snapshot
+  `1ed9ac7575dd2ffe613538bdb2c1e00055af4bf50b115e66ee3398b848b12307`,
+  with unchanged policy/registry and existing React enrollment. It executed no
+  workload. One verified obsolete code backup was retired while preserving the
+  latest predecessor and all data. A fresh Spring intent is required for diagnostic
+  execution; the old failed result is not rewritten.
+  The first instrumented native retry retained the exact Maven/Javac error:
+  `json-path-2.10.0.jar: Too many open files`. Cleanup and result/native lineage were
+  verified and the unpublished import rejected. A new reviewed change keeps all
+  resource/security boundaries while raising only Spring's bounded per-process
+  soft/hard descriptor limit from 256 to 1,024, with guest readback before execution.
+  This is not yet native success or broader goal completion.
+  The descriptor correction passed 330 focused tests and all 1,554 coding tests
+  without skips against disposable loopback PostgreSQL, plus style/security/diff
+  checks. One existing Vertex SDK deprecation warning remained.
+  The descriptor-corrected 2f3ba14 closure was installed/read back as snapshot
+  `c893a53f8ce2564ee8e2adf3da6313209fc16a61ef090565893a8d259eb1a95d`.
+  A fresh Spring v2 reservation adopted its retained completed-image lineage without
+  another Docker load; native positive/negative/package proofs remain required.
+  Final 11 October follow-up: all three native Spring cases passed expected outcomes
+  with cleanup verified. Independent result/receipt readback checked actual guest
+  limits and retained enforcement. Reviewed publication plan
+  `a28e45a6f3642cd268d7c74e6f76ca4cfb1e538fcc87d93579372caea1ceef4e`
+  enrolled only Spring test/package plus provenance, preserving React/Python entries
+  and STOP. Independent post-publication readback verified both React and Spring
+  enrolled, exact images, all six retained passing receipts, native cleanup, available
+  maintenance and six healthy infrastructure containers. Python recovery, runtime
+  bases, funded integration, PostgreSQL/cross-language profiles and complete
+  generated-app/Chat proof remain open; this broad checklist item is not marked done.
+  Fresh post-publication Python preflight confirmed exact image absence, retained
+  archive/hash/size and available maintenance, with no load. Complete audited
+  legacy-image recovery before treating Python validation as currently ready.
+- [ ] Support repository creation through scoped GitHub App authority and private local
+  source bundles. Publish only requested content, without secrets or raw user data.
+- [ ] Preserve two release origins: authorized user-service operations and separately
+  governed core-platform candidates with trusted CI/canary/promotion gates.
+
+## Sprint 64 — Single-request generated application deployment
+
+- [ ] Plan the full example as a dependency DAG: requirements -> source -> tests ->
+  immutable release -> deployment -> behavior verification -> Google Chat URL delivery.
+- [ ] Add typed Coolify adapter with target registry, secret references, safe SSH/SFTP
+  bootstrap where needed, bounded polling, error taxonomy and stable resource identities.
+  2026-09-21 local progress: migration 017 and deployment-admission component bind
+  immutable tenant targets, exact release/Compose/validation hashes, expiring grants,
+  atomic cost reservations and single dispatch claims. Ambiguous provider results
+  remain reserved and can reconcile after revocation; submission never means verified.
+  Local PostgreSQL tests cover concurrency, ownership constraints and migration
+  round-trip. Live read-only inventory access is verified. Provider writes, actual
+  validation-attestation/approval integration and live capacity enforcement are still
+  pending. Capacity admission was added locally on 2026-09-27; see
+  `docs/DEPLOYMENT_ADMISSION.md`. Keep this item unchecked.
+  2026-09-29 local extension: a typed, single-dispatch Coolify Service creation
+  adapter and exact-byte Compose policy were added. The write path requires a real,
+  unexpired passing validation claim bound to the same user/run/target/source;
+  provider create uses `instant_deploy=false` and records only submission or
+  uncertainty. Concurrent replay, false validation, wrong team and provider error
+  tests use mocked HTTP with disposable PostgreSQL. Initial suite: 267 passed.
+  No live Coolify write, image build, secret setup, Service start, URL verification,
+  Chat delivery or production migration was performed. Installed-version API proof,
+  source-to-image build attestation, scoped credentials, staged writes and recovery
+  remain required; this item stays unchecked.
+  Local read-only recovery checks the deterministic Service name, approved Compose
+  SHA-256 marker, parsed Compose content and provider target identity; absent or
+  conflicting inventory stays uncertain and does not repost. Installed Coolify
+  4.3.23 source inspection showed that it normalizes YAML before storage and hides
+  raw Compose from ordinary read tokens. Reconciliation therefore needs reviewed
+  sensitive-read authority; the target/adapter now use a distinct recovery credential
+  reference, list metadata with ordinary inventory authority, then read only the
+  one candidate with sensitive authority. Token issuance/rotation and authenticated
+  live proof remain. The
+  same installed source confirms `instant_deploy=false` avoids the start dispatch.
+  Target enrollment now requires an operator-verified destination UUID, provider
+  numeric ID and type. Creation sends the UUID; reconciliation checks the ID/type.
+  The public destination API omits numeric IDs, so a trusted enrollment proof is
+  still needed; the adapter never guesses from provider ordering.
+  Installed-VM read-only database evidence on 2026-09-29 found server/destination
+  numeric IDs of `0` and no project/environment. The target schema now accepts ID
+  zero, but project/environment/API-token setup and authenticated API proof
+  remain; no live Service was created.
+  On 2026-09-30 a read-only target preflight was added before the write claim.
+  Missing project, mismatched environment or wrong destination server/type now
+  leave the claim reserved with no provider POST in local PostgreSQL/mock tests.
+  The VM's sole Docker destination is the shared `coolify` network. Target schema
+  and API preflight now require a dedicated `gca-app-*` network name and reject
+  `coolify`; actual network creation and isolation tests remain incomplete.
+  Provider-mock/loopback-PostgreSQL regressions passed; this is not a live create or
+  recovery proof.
+  On 2026-09-30, Compose admission began recomputing the immutable release identity
+  from the passing validation's source hash, exact Compose hash and every pinned
+  image reference. An unrelated approved `release_hash` is denied before credentials
+  or provider access; 36 targeted Compose/provider tests passed with local PostgreSQL.
+  This is identity binding only: it does not prove that those image digests were
+  built from the source. Trusted keyless build provenance and start admission remain
+  unchecked.
+  A later local Compose check requires the generated Spring/PostgreSQL services to
+  declare matching database URL, name, user and secret reference, persistent
+  Postgres data-path volume, and no database command/authentication override.
+  Local tests reject mismatched or unsafe declarations; actual secret provisioning,
+  database connection, restart persistence and private-network behavior are still
+  unverified.
+  A later local gate pins a builder public key in each immutable target and verifies
+  an Ed25519-signed run/tenant/source/release/Compose/image statement before create
+  and again in the dispatch transaction. Missing, altered and expired statements
+  fail closed in PostgreSQL/provider-mock tests. The signer and actual image-build
+  measurement are **not** implemented or activated on the VM; the third-party
+  PostgreSQL image still requires provenance/scanning. Signature checks alone are
+  not production build proof and this story remains unchecked.
+  The generated stack now also requires the external PostgreSQL digest to match
+  the immutable operator target. An unpinned or changed digest is rejected; this
+  is approval pinning, not a vulnerability scan. Read-only reconciliation of an
+  already-dispatched create remains possible after statement expiry, while a new
+  dispatch is denied. Both paths passed local PostgreSQL/provider-mock tests.
+  On 2026-09-30, four owner/team-scoped Coolify API tokens were issued with
+  inventory, configuration, deploy-only and sensitive-recovery authority; each
+  expires at the fixed VM STOP deadline. The three read-capable roles passed a
+  private IAP team/server probe. The deploy-only role and sensitive Compose
+  readback remain untested because no approved Service exists. At that checkpoint
+  the VM had zero Coolify projects and no generated-app Docker network.
+  A subsequent one-shot private API bootstrap created pilot Coolify project
+  `mnv84tsssicw2y7dtogvbmwr` and environment `pi3o2fpjo2ituxrppav8izj4`;
+  read-only replay verified both without a second POST. No private per-app
+  destination, Service, network, domain or application was created. Target
+  enrollment, durable credential resolution/rotation and live deployment remain
+  open.
+  Installed Coolify 4.3.23 source also shows a Service's resource-specific Compose
+  network is separate from its predefined destination network. The create adapter
+  now explicitly sets `connect_to_docker_network=false`; sensitive readback must
+  confirm false before an uncertain create can be adopted. This prevents silent
+  shared-network attachment in local tests, not a live east-west isolation proof.
+  The operator then created pilot destination `2rxr0cpp0x91g47o9flwcbzk`
+  (`gca-app-login-pilot-20260930`) on the approved Coolify server. The private
+  Coolify database bound it to standalone ID `1` and server ID `0`; Docker
+  reported an attachable bridge with zero containers. Read-only replay issued no
+  second POST. This is not a running app or tenant-isolation proof. Cost import,
+  build/signing evidence, secret provisioning and start admission remain open.
+  On 2026-10-01, a live read-only controller preflight exposed that installed
+  Coolify omits numeric `id` from its server-detail API. The target now pins the
+  separately verified server ID `0` as well as destination ID `1`, and rejects
+  any conflicting API ID. The corrected live preflight verified the team,
+  server, project, environment and destination together without a provider write.
+  A subsequent operator-only secret resolver now maps registered references to
+  private file or environment credentials, rejects unsafe file permissions,
+  symlinks, unknown references and expired tokens, and is exercised by the
+  read-only inventory probe. A live IAP probe initially found single-quoted
+  bootstrap values and returned 401; strict quote parsing corrected this, and
+  the second probe verified team/server/project/environment/destination with
+  no provider write. The IAP tunnel was closed. This does not connect a
+  production controller or start an app.
+- [ ] Validate generated Compose/image policy; provision private per-app network,
+  persistent database, secrets and domain. Never reuse the core Neon owner connection.
+- [ ] Support React/Nginx, Spring Boot with embedded Tomcat or an appropriate WAR runtime,
+  internal PostgreSQL and explicitly requested isolated external Neon destinations.
+- [ ] Reconcile timeout-after-success before retry; do not duplicate repositories,
+  databases, apps, deployments, invitations or Chat messages.
+- [ ] Verify login success, invalid-login rejection, password/session security, database
+  persistence, frontend/backend connectivity, TLS, expected artifacts and target URL.
+- [ ] Deliver the exact verified URL to the authorized Google Chat recipient; display
+  deployed and shared evidence separately and preserve partial successes truthfully.
+
+## Sprint 65 — Retrieval, cache and operational knowledge integration
+
+- [ ] Integrate LlamaIndex adapters with existing source-aware chunks/parents, typed
+  live-data lookup, hybrid retrieval, selective agentic retrieval and graph traversal.
+- [ ] Enforce tenant/ACL checks on graph nodes AND edges, exact source lineage,
+  deletion/tombstones, embedding version/dimension validation and incremental indexing.
+- [ ] Introduce RedisVL acceleration behind entity-specific policies; never cache writes
+  as completion evidence or use semantic similarity as mutation idempotency.
+- [ ] Keep exact recent conversational references separate from knowledge RAG, with
+  per-step evidence of why retrieval/context was selected and what was actually used.
+- [ ] Extend human-published OKF for deployment recipes, model/training contracts,
+  recovery and source policies; pin versions without making documents executable authority.
+- [ ] Replay baseline versus proposed retrieval/cache/OKF strategies and retain original
+  evaluation obligations; no permanent winner without measured evidence.
+
+## Sprint 66 — Unified core and generated-app MELT
+
+- [ ] Correlate tenant/session/run/app/release/tool/model/policy/OKF identities without
+  unbounded Prometheus labels; isolate user/admin access to logs and traces.
+- [ ] Instrument core and generated services with supported OTel/OpenInference adapters;
+  Alloy routes metrics to Prometheus/Mimir, logs to Loki, traces to configured backends.
+- [ ] Preserve LangSmith and existing Grafana dashboards; add requested Langfuse with its
+  real storage dependencies and budget. Phoenix is optional, not an implicit duplicate.
+- [ ] Show deployment/build logs, current app health, database health, functional probes,
+  tokens, latency, costs, failure cause, created artifacts and actionable recovery.
+- [ ] Sign/deduplicate failure notifications; bound observability exports, redact secrets,
+  enforce retention/consent and test telemetry outage independently of task execution.
+
+## Sprint 67 — Training, inference evaluation and safe improvement
+
+- [ ] Build consented sanitized SFT and preference/critique datasets from verified
+  corrections with train/validation/test separation and dataset/model version lineage.
+- [ ] Use supported Vertex tuning methods for the selected roles; separate SFT, RLAIF
+  preference creation/evaluation and actual weight updates. Groq base weights remain unchanged.
+- [ ] Estimate token/epoch tuning charges and evaluation/inference spend before each job;
+  admit only within the dedicated INR 8,500 envelope and remaining trial period.
+- [ ] Do not launch RL/GRPO from unverified tutorial snippets or equate compilation with
+  task correctness. No raw private logs exported to Kaggle or other unapproved training hosts.
+- [ ] Record actual tuned endpoint, base model, dataset, job, region, metrics, costs and
+  rollback model. Apply offline regression/security gates before a governed rollout.
+- [ ] Complete the outstanding fresh candidate lifecycle proof with source-grounded code,
+  trusted CI remediation, isolated deployment, measurements and promotion/rollback.
+
+## Sprint 68 — Recovery, rollout, documentation and final proof
+
+- [ ] Add scoped generated-app failure intelligence with bounded fix/retest/redeploy;
+  honor separately authorized maintenance scope and never modify the core from app incidents.
+- [ ] Roll back to verified immutable releases where available; for first-deploy failures
+  preserve required data and compensate safe resources instead of inventing a prior release.
+- [ ] Fault-inject at every activity boundary: provider 429/403, queue duplicate/replay,
+  worker death, SSH/certificate failure, image failure, migration failure, partial write,
+  proxy disconnect, unhealthy app, credit expiry and revoked permissions.
+- [ ] Update architecture, operations/security/deployment guides, API/CLI usage, diagrams,
+  the teaching guide and DSA/agentic dictionary after each real integration.
+- [ ] Run original guardrails plus new adapter/contract/replay/load/restore/security tests;
+  record commands and distinguish mocked, local integration and live production evidence.
+- [ ] Complete the single-request login-app demonstration and verified Chat delivery on
+  authorized infrastructure; report every incomplete capability and external dependency.
+
+Progress 2026-09-13: source reconciliation written; optional explicit Vertex provider
+boundary, role selection and no-network credit preflight implemented. All 201 coding
+and core unit tests pass; changed Python files pass Flake8, Compileall and Bandit;
+`git diff --check` passes. See `docs/SEPTEMBER_CLOUD_ACCESS_CHECKLIST.md` for the exact
+account information needed. No Vertex model has been trained or live-probed,
+no GCP resource has been provisioned and no new framework has been deployed. The free
+AI Studio SFT claim remains contradicted by official documentation and needs a feasible
+replacement decision. The user's existing `docs/ARCHITECTURE.md` edits are preserved.
+
+Progress 2026-10-12: the user-cleared Mac disk blocker was rechecked (6.1 GiB free
+initially), and the coding regressions were resumed against verified loopback
+PostgreSQL. Sources `5944088` and `7703dee` remove implicit legacy reload, add
+bounded single-claim operator restoration and its same-journal workload/installer
+barriers, and verify the real registry-reader contract. The full fourteen-file
+barrier was installed/read back as snapshot
+`deb340f2f45957b7ec4420224727d7128567e9a1debc93855a10f2e4b5723481`.
+One actual legacy Python load was positively completed and explicitly reconciled;
+native valid/invalid compilation, replay rejection and cleanup passed. Fresh root
+readback confirmed exact Python image, React/Spring enrollment, available host
+ownership and six healthy infrastructure containers. Policy/registry, STOP, cloud
+resources and spending/model authority were unchanged. See the bounded receipts in
+`docs/HOST_BUNDLE_OPERATIONS.md`. This closes audited legacy-image recovery only;
+unchecked runtime-base, funded-controller, full generated-app/Chat, framework,
+candidate lifecycle, training and production-evidence requirements remain open.
+Final corrected-source verification: 1,578 coding regressions passed without
+skips against loopback PostgreSQL (68.73 seconds); coding lint, medium/high severity
+Bandit checks and whitespace validation passed. One existing SDK warning remains.
+
+Progress 2026-10-13: fixed public runtime acquisition now retains exact Nginx and
+Temurin Java 17 candidates on the existing GCP host. Independent read-only probing
+rehashed index/platform/config/layers/rootfs, verified non-approving receipts and
+preserved the original failed plan through source-linked history. A measured schema
+correction accepts bounded standard OCI annotations, not executable or approval
+fields. The complete corrected host closure is snapshot
+`b84b3c9da1c21220fb9027de4be1d8cee7c4c6b8811705c54230c61b3a2d08bd`.
+Policy/registry, VM resources, STOP and spending authority were unchanged. Actual
+Python/React/Spring readiness, available journal and six healthy infrastructure
+containers were rechecked. All 1,617 coding tests passed without skips (67.67 s),
+plus 136 focused tests and lint/security/whitespace checks. One SDK warning remains.
+No scan, runtime approval, Docker image load, application deployment, production
+migration, paid model call or new cloud resource is claimed. Current balance/cost
+refresh is requested before funded enrollment. Full original acceptance, scan/
+approval, deployment/signing/Chat, frameworks, learning and candidate evidence
+remain unchecked. Evidence: `docs/RUNTIME_BASE_CANDIDATES.md`.
+
+Progress 2026-10-13, billing follow-up: the user authorized conservative estimated
+planning while unavailable to refresh the portal. Read-only connected GCP calls
+confirmed the expected billing link/open account, but did not expose promotional
+balance; project BigQuery metadata contained no export datasets. Added a distinct
+integer-only, non-authorizing credit-scenario module and CLI, using the last report,
+an explicitly assumed earlier debit anchor, INR 500/day and INR 500 uncertainty.
+Current rounded planning figure is INR 17,000, not a verified balance. Its stressed
+STOP projection is below the protected INR 14,500 allocations, so it cannot unlock
+new liability. Existing balance-evidence freshness/admission gates, INR 14,000
+hosting ceiling, INR 8,500 Vertex, INR 6,000 reserve and fixed VM STOP are unchanged.
+Non-spending preparation continues; the full goal remains active. See
+`docs/DELHI_BILLING_RECONCILIATION_2026_10_07.md` for assumptions and limitations.
+Verification: 35 focused planning/budget tests and all 1,635 coding regressions
+passed without skips against loopback PostgreSQL (66.19 s). New-source lint,
+medium/high security checks and whitespace validation passed; one existing SDK
+deprecation warning remains. No cloud ledger enrollment or paid activation occurred.
+
+Progress 2026-10-13, runtime scan prerequisite: actual immutable Trivy v0.75.0
+release assets passed bounded acquisition, exact Sigstore workflow/issuer
+verification and independent byte/permission readback. Added operator-only public
+asset acquisition/verification code and CLI plus a 31-wheel, separate macOS ARM64
+verifier lock; production dependencies are unchanged. The exact 172,765,344-byte
+Linux binary is retained as non-executable data. A Homebrew protection mismatch
+and measured release-size mismatch were corrected without weakening shared
+permissions or disabling bounds. No scanner execution, vulnerability database,
+runtime/base approval, Docker load, host installation, funded deployment or model
+call is claimed. Scan execution/coverage, remediation and the full goal remain
+unchecked. Evidence: `docs/RUNTIME_SCANNER_PREPARATION.md`.
+Verification: 54 focused tests plus 1,659 complete coding regressions passed
+without skips against local PostgreSQL (66.84 s); new-source lint/security and
+whitespace checks passed, with one existing Google SDK warning.
+
+Progress 2026-10-13, newer billing evidence: received all 17 SKU rows for
+19 September–12 October and INR 19,247.60 reported remaining credit. Displayed
+rows sum to INR 9,446.62 versus headline INR 9,446.64; all-time credit decrease
+is INR 9,446.28. Differences are retained, not fabricated away or re-added from
+the older report. Updated measured 30-day planning total is INR 12,300.18, not
+a guaranteed bill. Full remaining hosting-ceiling reservation would leave only
+INR 194.24 beyond the protected INR 14,500 allocations. The user confirmed it was
+copied just now for this project; receipt time and operator attestation are recorded
+separately from provider-export provenance. The newer
+report supersedes the INR 17,000 scenario; no ledger enrollment, budget change,
+resource expansion, paid activation or completion claim follows automatically.
+Evidence: `docs/DELHI_BILLING_RECONCILIATION_2026_10_13.md`.
+
+Progress 2026-10-13, scanner databases: both pinned public vulnerability/Java OCI
+data artifacts were acquired and independently rehashed on the existing Delhi
+VM. Actual expanded hashes, preserved publisher metadata and current freshness
+passed. The shared operator slot, existing 1-CPU/3-GiB/no-swap aggregate, 270-second
+deadline, 12-GiB disk headroom and 8-GiB data-store cap were enforced. Staged bytes:
+4,276,265,923. No archive path extraction, extension-body allocation, database
+execution, Docker image load, new cloud resource, paid model call, source bundle
+installation or runtime approval is claimed. Current GCE shape/disk/STOP matched
+the approved target. All 1,680 coding tests passed without skips (66.82 s), plus
+80 focused tests and lint/security/whitespace checks. Scanner execution, coverage,
+cleanup/remediation, PostgreSQL input and full deployment remain unchecked.
+Evidence: `docs/SCANNER_DATABASE_PREPARATION.md`.
+
+Progress 2026-10-13, scanner custody: added fixed source-reviewed IAP streaming of
+the genuine signature-bound 172,765,344-byte scanner to the same VM. Pre-transfer
+probe found no store; the actual transfer returned the exact full hash and retained
+private non-executable data; independent read-only rehash/receipt checks passed.
+Prefix-bound continuation, completed-partial recovery,
+link/permission/size guards and false scan/approval rejection are tested. Shared
+host ownership, one CPU/3 GiB/no swap/128 tasks and STOP are unchanged. Full coding
+regressions passed: 1,697 tests without skips against loopback PostgreSQL (68.19 s);
+lint/security/whitespace checks passed. See `docs/SCANNER_BINARY_CUSTODY.md` and the
+expanded teaching dictionary. No scan, runtime approval, production migration,
+deployment, model call or full-goal completion is inferred from this prerequisite.
+
+Progress 2026-10-13, current Railway access: the user's separate saved 17407 token
+passed a read-only projectToken check for the exact existing production environment.
+An explicit operator client identifier resolved the initial request's HTTP 403;
+the previous account token is untouched. Live service/domain/status queries show
+old failed API/worker/candidate deployments and no latest Alloy/Ollama deployment;
+the API /health returns 404. Retained build logs establish missing OpenSSL during
+Rust openssl-sys compilation at old commit ac3340b6. Current Dockerfile already
+contains the build dependency correction, but no production release was started.
+See `docs/RAILWAY_PRODUCTION_ACCESS_2026_10_13.md`. No billing upgrade, redeploy,
+secret export, migration, model call or Workspace mutation occurred.
+
+Progress 2026-10-13, durable scan execution prerequisite: fixed operator-only scan
+profiles now share the existing SQLite/flock slot and identity-safe native reaper.
+Business-key tombstones survive changed deadlines; closed pins, typed inventory
+lineage and bounded history reject replay or fabricated cleanup-to-success claims.
+All 1,719 coding tests pass without skips (69.06 s); 135 focused tests and lint/
+security/whitespace pass. One audited obsolete seven-file source copy was retired
+without changing data or active/immediate rollback source. The tested fourteen-file
+bundle was installed and independently rehashed as snapshot
+0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49.
+Host slot is idle, with no pending import/retirement; policy, toolchains, limits,
+budgets and STOP are unchanged. No scanner workload was launched: native launch,
+coverage/output proof, PostgreSQL runtime input, runtime approval and the full
+funded generated-app/Chat/framework/training/candidate upgrade remain unchecked.
+See `docs/RUNTIME_SCAN_JOURNAL.md` and the expanded teaching dictionary.
+
+Progress 2026-10-13, fixed keyless scanner worker: local standalone two-stage worker
+now checks closed artifact/proof pins, exact OCI/SBOM lineage, temporal freshness,
+private cache/report bytes, bounded child streams/deadline and typed coverage/findings.
+One private database copy avoids overflowing existing storage; post-execution rehash
+rejects changed cache evidence. Its descriptor limit stays at inherited 64:64 rather
+than attempting an impossible unprivileged expansion. All 1,755 coding tests passed
+without skips against loopback PostgreSQL (67.92 s); 36 worker tests, syntax, lint,
+medium/high security and whitespace checks passed. Native observations are mocked
+in those tests; toy subprocesses never invoke Trivy on the Mac. The installed VM
+source remains 0d06e31b5b8b07faccdebc46bc0b508ad9aea3542a925de75f4597e755bb1a49.
+Actual host launch/staging/output custody, full two-stage scan/native cleanup/vendor
+coverage, PostgreSQL runtime input, remediation/approval and funded app deployment
+remain unchecked. No resource, hosting term, budget, production model or data changed.
+See `docs/RUNTIME_SCAN_WORKER.md` and teaching dictionary. Separately, the operator
+reports 17407's Railway trial expired; actual preserved-token readback of 17408 shows
+mixed HOBBY/trial labels, not verified remaining credit. No paid restart or additional
+personal trial account was created. Core Railway funding/eligibility remains pending.
+
+Progress 2026-10-22, resumed host-launcher implementation and expired-term checks:
+the fixed local scanner host now stages pinned inputs into one private cache under
+the existing shared eight-volume allowance, inspects exact container/native limits,
+preserves the original proof binding, persists a write-ahead create boundary, and
+reconciles cleanup/output custody without replay. A lost response can recover the
+same retained report; unknown creates/helpers remain uncertain. No public/model
+shell surface or runtime approval was added. Expired authority is rejected before
+host admission, image lookup or input reads. Positive historical fixtures now use
+explicit logical clocks; new negative tests verify that fresh credit/proofs cannot
+extend the fixed term. Production STOP/pins remain unchanged.
+
+Independent read-only GCE checks confirm the exact VM is TERMINATED, last stop
+19 October 17:25:32.869 UTC, with one retained 100-GiB balanced disk and no reserved
+addresses or snapshots returned. The last VM source remains the historical 13-Oct
+snapshot; the new host module is local/uninstalled. The operator now reports
+₹16,375.42 credit and an administrator-verification banner. ₹1,875.42 above protected
+Vertex/reserve allocations is not restart authority or guaranteed available funds.
+No restart, SSH, deletion, source installation, new resource, paid-tier activation,
+model call or protected-budget transfer occurred. Current finance provenance/actions
+are in `docs/HOSTING_TERM_STATUS_2026_10_22.md`; local integration and outstanding
+live proof are in `docs/RUNTIME_SCAN_HOST.md`. Full original/60–68 goal remains active
+and incomplete; live work needs verified eligibility and separately approved renewal.
+Final local verification for this checkpoint: 1,785 coding tests passed without
+skips against loopback PostgreSQL (69.79 seconds), with one warning; targeted lint,
+medium/high security and whitespace checks passed. Historical clock simulation is
+test-only and is explicitly not cloud execution, current provider evidence or renewal.
+
+Progress 2026-10-22, transactional event-delivery checkpoint: added migration 023
+with opt-in Workspace capture (off by default), immutable reference-only envelopes,
+tenant/global admission counters, per-run ordering, fenced leases, bounded retry/
+dead-letter barriers, broker ACK evidence and transactional SQL inbox deduplication.
+Hard/soft erasure invalidates retained delivery references; published metadata has
+bounded retention. The optional aiokafka 0.14.0 adapter and operator-only publisher
+verify an existing fixed topic and use TLS/SASL outside loopback. No cloud broker,
+production migration, capture activation or service start occurred. Coding events,
+actual Kafka consumer/offset/rebalance behavior, capacity/failure-domain approval,
+live delivery/load proof and Temporal single-owner migration are still open.
+
+Local evidence: 1,821 coding tests passed without skips against loopback PostgreSQL
+(70.82 seconds; one existing Google SDK deprecation warning). The real disposable
+database passed upgrade-to-023, downgrade-to-002, upgrade-to-023 and full-schema
+empty-data retention integration. Offline imports/constructors were checked against
+the actual pinned SDK; mocked transport tests are not live broker proof. Targeted
+lint, medium/high security and whitespace checks passed. User-owned model/settings/
+architecture edits were preserved separately. See `docs/WORKFLOW_EVENT_OUTBOX.md`
+and the expanded teaching dictionary. The original goal and Sprint 62 remain active
+and incomplete; stopped hosting and protected budgets are unchanged.
+
+Progress 2026-10-22, bounded SQL consumer checkpoint: migration 024 adds the
+registered event-visibility projection, exact short-lived erasure-digest tombstones
+and a capped sanitized poison-record ledger. The operator-started Kafka consumer
+uses manual partition offsets after committed SQL, explicit missing-group bootstrap,
+assignment epochs/cancellation and fail-closed unknown/modified records. It never
+executes Google/deployment tools or chooses workflow ownership. A lost broker commit
+response safely replays through the inbox; a rebalance-crossing fetched batch stops
+instead of silently skipping uncommitted work. SIGTERM leaves unprocessed records
+uncommitted. Topic profile now also bounds segment-roll time to one hour.
+
+Verification: 1,851 coding tests passed without skips against loopback PostgreSQL
+(71.32 seconds, one existing SDK deprecation warning), including real SQL rollback
+during simulated rebalance and duplicate suppression after simulated ACK loss.
+The real pinned SDK consumer constructor/listener accepted the exact options offline;
+it was not started. Disposable full-schema upgrade-to-024/downgrade-to-002/upgrade-
+to-024 and retention checks passed. No production migration, broker, consumer service,
+capture activation, model/provider call, VM restart or budget change occurred.
+Live multi-member broker/rebalance/load/lag evidence, coding-event capture, Temporal
+single-owner migration and the remainder of the full original goal remain open.
+See `docs/WORKFLOW_CONSUMER.md`, architecture reconciliation and teaching dictionary.
+
+Progress 2026-10-22, shared coding-event bridge: migration 025 connects the existing
+coding repository event inserts to the same outbox through a separately default-off
+flag. Explicit v2 workflow kind, composite source/run identity, generated real-parent
+foreign keys and per-kind head-of-line ordering prevent equal BIGSERIAL IDs or run
+UUIDs from merging streams. Historical Workspace v1 bytes/keys/leases survive.
+Tenant/privacy cleanup spans both business ledgers without erasing the other kind;
+consumers verify current ownership and require an actual SQL projection row.
+No new execution owner, provider call, publication or production activation was added.
+
+Final local evidence: 1,867 coding tests passed without skips (75.95 seconds, one
+existing SDK deprecation warning), including mixed-source collision/privacy and
+rollback cases. The final five focused workflow modules passed 82 tests. Full
+disposable Alembic upgrade-to-025/downgrade-to-002/upgrade-to-025 plus retention
+passed; targeted lint/security/whitespace checks passed. See
+`docs/WORKFLOW_CODING_EVENTS.md` and the expanded teaching dictionary. Real Kafka,
+lag/alerts, Temporal ownership, funded hosting and the full original goal remain open.
+
+Separately, the operator saved a new isolated Railway token. Read-only resource
+queries succeeded with zero projects, while the personal identity query was denied;
+the intended workspace identity, trial/network eligibility and funding remain
+unverified pending its non-secret workspace ID/Settings URL. Existing credentials
+were preserved and no deployments/mutations occurred. Railway's one-account-per-
+person policy is not bypassed. See `docs/RAILWAY_NEW_WORKSPACE_PREFLIGHT_2026_10_22.md`.
+
+Progress 2026-10-24, deployment context boundary and scoped trial evidence:
+the later token-context workspace query resolved the exact intended workspace;
+explicit workspace listing returned zero projects. The operator confirmed Trial
+Plan, $5 available and $0 usage. These observations supersede the missing-workspace
+paragraph above, without proving network reachability or production capacity.
+See the updated preflight and `docs/RAILWAY_TRIAL_RELEASE_PLAN.md` for arithmetic,
+migration hazards, release/rollback gates and unchanged funding boundaries.
+
+Root/nested `.env*`, operator/provider state, private knowledge and backups are now
+excluded from Docker and Railway contexts. The synthetic audit passed real Git
+ignore semantics for 30 private/10 public paths; eight focused tests passed. CI now
+requests an actual scratch-only Docker export but has not been published/run.
+Final context-checkpoint coding regression: 1,875 passed without skips (58.73
+seconds, one existing SDK deprecation warning), using explicitly loaded pytest
+asyncio and loopback PostgreSQL. An initial misconfigured invocation omitted the
+async plugin and was stopped; its errors are not passing application evidence. See
+`docs/DEPLOYMENT_CONTEXT_BOUNDARY.md` for exact limitations. No historical leak,
+real-engine proof, production start, migration, provider call or VM restart is
+claimed. Cache-only cleanup restored about 4 GiB free; large builds remain deferred.
+Temporal ownership and all outstanding original/60–68 acceptance remain open.
+
+Progress 2026-10-24, single-owner migration foundation: migration 026 now pins each
+Workspace/coding run to one owner and a typed Temporal identity/version binding.
+Admission stays off; current intake remains PostgreSQL. Actual existing worker
+claim queries exclude Temporal rows, DB triggers reject old-worker leases, and
+entrypoint fencing occurs before Google/provider access. Disabling admission cannot
+move in-flight work back to PostgreSQL. Scoped policy audit survives downgrade;
+schema rollback refuses retained Temporal history. Eighteen focused tests pass on
+local disposable PostgreSQL schemas. See `docs/WORKFLOW_OWNERSHIP.md` for exact
+evidence and limitations. Temporal dispatch, deterministic workflows/activities,
+replay/recovery/signals and real migration proof remain unfinished, not replaced by
+this metadata fence. No live migration, worker/service start, cloud/model call,
+VM restart or budget transfer occurred. The full original goal remains active.
+Final owner-fence checkpoint: 1,893 coding tests passed without skips in 54.09
+seconds (one existing Google SDK deprecation warning). Disposable full-schema
+upgrade-to-026/downgrade-to-002/upgrade-to-026 and empty-data retention passed;
+targeted lint/security/whitespace checks passed. These are local proofs, not
+Temporal server replay, real broker operation or live rollout evidence.
+
+Progress 2026-10-24, transactional Temporal startup delivery: migration 027 captures
+bounded reference-only intents with actual new Temporal business inserts, in the
+same transaction, under a shared unfinished-intent ceiling. Independent transport
+stays off. The controller writes uncertainty before RPC, uses immutable IDs and
+current nonces, caps attempts and preserves unresolved obligations. The optional
+pinned SDK adapter describes/validates actual identity/memo before acknowledging;
+it rejects duplicate reuse and never terminates or replaces another workflow.
+Missing/cancelled/deleted parents, paused transport and expiry cannot authorize new
+starts. Hard erasure retains no private run body, only a non-rebindable reference.
+Thirteen focused local tests passed; SQL upgrade-to-027/downgrade-to-002/upgrade-to-027
+and empty-data retention passed. These are local SQL/SDK-double contracts, not a
+live server or implemented business-workflow proof. No production/model/cloud RPC,
+service start, VM restart, funding transfer or Temporal admission activation occurred.
+See `docs/TEMPORAL_START_DELIVERY.md`. The full original goal remains active.
+Final local evidence: all 1,906 coding tests passed without skips (52.49 seconds,
+one existing Google SDK deprecation warning), plus targeted lint/security/whitespace
+checks. The optional SDK was installed locally without provider extras and pinned
+for CI contract tests; no Temporal service was connected or started.
+
+Progress 2026-10-24, actual Workspace Temporal control flow: schema 028 and typed
+SDK workflow/activities now bridge to the existing `_execute_step`, tool contracts,
+LangGraph fallback and postcondition verifier rather than a toy parallel executor.
+History carries only references/state. Current binding/first-execution/approval
+checks precede credentials. The write-ahead journal prevents redelivery from
+repeating an uncertain effect; late success cannot overwrite uncertainty or create
+false 100%. Timers, bounded metadata retries/lifecycle, refresh hints, cancellation,
+model-usage summaries and idempotent failure/evaluation projection are implemented.
+Existing clarification/approval preserves immutable Temporal version pins while
+retaining old PostgreSQL behavior. Twelve focused local tests passed through the
+actual SDK sandbox/activity environment and full disposable schema; migration
+upgrade-to-028/downgrade-to-002/upgrade-to-028 plus empty-data retention passed.
+These are not real server/replay/Google mutation proofs. Coding activities, API
+signal delivery, reconciliation/retry generations, compensation and all outstanding
+live/capacity/privacy gates remain open. No provider call, live worker, transport
+activation, production migration, VM restart or budget change occurred. See
+`docs/WORKSPACE_TEMPORAL_EXECUTION.md`. The original goal remains active.
+Checkpoint recorded 2026-10-25: the final full coding suite passed 1,918 tests
+without skips (55.85 seconds; seven warnings). Six warnings concern existing
+process-death probes using fork after multithreaded SDK initialization; one is the
+existing Google SDK deprecation. No hang occurred, but process-isolating those
+probes remains test hardening. Targeted lint/security/whitespace checks passed.
+
+Progress 2026-10-25, durable refresh delivery: schema 029 atomically captures
+relevant actual Workspace changes (including the existing authenticated approval
+transaction) into bounded metadata-only generations. Independent capture is off.
+Changes during a leased send survive an older ACK; stale nonces cannot consume
+current work. Lost responses repeat only a hint. SDK checks pin first execution
+and cannot start/replace closed or foreign workflows. Hard private-data erasure
+still succeeds, retaining only a wake reference. Eleven focused and 54 combined
+Temporal tests passed; full disposable upgrade-to-029/downgrade-to-002/upgrade-to-
+029 plus retention passed. Targeted lint/security/whitespace passed. The previous
+1,918-test full suite predates this diff; no new full result is claimed while disk
+is low. No live signal/publisher/worker, provider call, production migration, VM
+restart or budget change occurred. Operator deployment/alerts, real server/replay,
+reconciliation/retry generations, coding workflows and remaining original/60–68
+requirements remain open. See `docs/TEMPORAL_REFRESH_DELIVERY.md`. Goal stays active.
+
+Progress 2026-10-25, verified-completion recovery: schema 030 appends expiring,
+source-bound proof without overwriting journal uncertainty. The actual resume
+helper invokes deterministic readback, then rechecks tenant/source/plan/quiescence/
+prior approval in its transaction. Temporal/canary versions stay pinned; control
+PostgreSQL behavior remains compatible. Verified receipts replace stale error
+prose. A created-but-unpopulated Sheet no longer satisfies create-and-populate,
+including on the PostgreSQL path. Existing Temporal journals still need explicit
+retry generations before repetition; the API returns a manual gate instead of a
+false retry. 82 targeted tests, disposable upgrade-to-030/downgrade-to-002/upgrade-
+to-030, empty-data retention and targeted lint/security/whitespace passed. No new
+full-suite result is claimed; disk fell to 750 MB. No real provider/model call,
+production migration, activation, VM restart or budget change occurred. See
+`docs/TEMPORAL_VERIFIED_RECOVERY.md`. Retry generations, compensation, coding
+workflows and all remaining original/60–68/live requirements stay active.
+
+Progress 2026-10-25, live per-tool admission: trusted worker/activity context is now
+checked against current tenant/run/step/owner/version, lease or journal token and
+deadline before invoking the existing shared tools. Model state cannot grant that
+context. Cancellation remains cancelled; stale executions do not finalize another
+owner's run, and denials are not fictional provider/tool failures. Fifteen small
+admission tests and the selected 245-test core/context/lineage suite passed, with
+targeted lint/security/whitespace checks. No new production, cloud/model call,
+publisher/worker activation, VM restart or funding change occurred. This does not
+cover atomic late-completion fences, durable partial-composite receipts, safe retry
+generations or real server/replay/load proof; those remain open alongside all
+original/60–68 work. See `docs/LIVE_TOOL_ADMISSION.md`. Goal remains active.
+
+The fresh disk check subsequently showed 5.8 GiB free, allowing a complete coding
+regression: 1,954 passed without skips (96.90 seconds, seven previously described
+SDK/multithreaded-fork warnings). This verifies the current coding regression scope,
+not live provider behavior, rollback traffic or completion of the original goal.
+
+Progress 2026-10-25, atomic completion: current run/step/Temporal-journal authority
+is rechecked under short SQL-only locks before persisting outcomes. Step output,
+artifacts, verification/completion events and Temporal journal outcome share a
+transaction; PostgreSQL run summaries/retry/terminal events do likewise. Metadata-
+only completion retry is durably capped at three and never repeats a completed
+write or loads its Google credentials. Output includes all saved completed-step
+receipts after resume. Thirty-six focused SQL/SDK tests and 224 selected unit tests
+passed; complete coding regression passed 1,963 without skips in 82.58 seconds.
+Thirteen warnings concern the existing Google SDK deprecation and twelve existing
+multithreaded-fork process-death probes; those probes still need isolation. Targeted
+lint, medium-confidence/medium-severity security and whitespace checks passed.
+Bandit's broader low-confidence check still flags the pre-existing static SQL
+owner-predicate substitution; no user input enters that substitution. No live
+provider/model call, production change, cloud restart or budget change occurred.
+See `docs/ATOMIC_WORKFLOW_COMPLETION.md`. All other original/60–68 requirements,
+including live evidence and data-dependent learning, retain their existing scope.
+The full unit suite also passed 281 tests in 6.07 seconds (one existing SDK warning).
+
+Progress 2026-10-25, per-tool receipts: schema 031 and the actual shared Workspace
+tool wrapper reserve invocation evidence before RPC and encrypt returned responses
+before projection/logging/next operation. Bounded count/size/TTL, immutable binding,
+unknown-acceptance markers, tenant erasure and restricted raw-table access are
+implemented locally. Authenticated resume uses ordered private receipts, rechecks
+its snapshot, requires full write/readback contracts, restores verified artifacts
+and preserves Temporal uncertainty with a source-bound proof. A fresh subprocess
+commits a synthetic effect/receipt and dies before step completion; actual recovery
+leaves the effect counter at one. Incomplete composites stay incomplete and are not
+blindly repeated. Twenty focused receipt cases are included in the final 2,264
+coding/unit tests passed without skips (92.15 seconds; thirteen existing SDK/fork
+warnings). The final selected 347-test suite, full upgrade-to-031/downgrade-to-002/
+upgrade-to-031 plus empty-data retention, targeted lint/security/whitespace passed.
+No real Google/model/server call, production migration, cloud restart or spending
+change occurred. See `docs/DURABLE_TOOL_RECEIPTS.md`. Remote-effect-before-response
+reconciliation, safe retry generations, unfinished-composite continuation,
+compensation, real replay/load and all remaining original/60–68 requirements remain
+open. The original goal stays active, not complete or narrowed to this checkpoint.
+
+Progress 2026-10-26, read-only Temporal retry generations: schema 032 preserves
+prior journal rows and appends new source-bound permits/generations through the
+actual authenticated Resume flow. A new generation requires current typed read
+contracts, explicit tool classification, new-policy provenance, prior quiescence,
+no historical write evidence and the persisted attempt budget. Expiry/renewal,
+eight-permit lifetime cap, generation bounds, current approval and independent SQL
+admission are enforced. Old deliveries cannot fail or complete a newer step;
+callbacks/completion checks are token/generation-specific. The shared invocation
+gate also denies write/unclassified tools in read-only PostgreSQL/Temporal steps.
+Nineteen focused generation cases are included in 2,285 coding/unit tests passed
+without skips (64.18 seconds; thirteen existing SDK/fork warnings). All 44 golden
+plans and 16 no-network workflow fixtures passed. Full disposable upgrade-to-032/
+downgrade-to-002/upgrade-to-032 plus retention and targeted lint/security/whitespace
+passed. No production migration, worker/transport activation, provider/model call,
+VM restart or budget change occurred. Write retry generations, partial-composite
+continuation, compensation, coding workflows and actual server/history replay,
+load/rollout and all other original/60–68 work remain open. See
+`docs/TEMPORAL_READ_RETRY_GENERATIONS.md`. The full original goal remains active.
+
+Progress 2026-10-26, actual local Temporal proof: a sanitized runner now starts
+pinned CLI 1.9.1/Server 1.32.0 on loopback, drives real SDK 1.34.0 startup/refresh,
+Workspace workflow/activities and disposable migrated PostgreSQL, then shuts down
+and verifies listeners/process groups. Five scenarios passed: lost start ACK,
+worker restart/read-generation resume, cancellation, erasure and clean SQLite
+server restart retaining first execution. All five saved content-checked histories
+also passed fresh-process offline replay; an intentionally incompatible command
+was rejected. Final server run: 5 passed in 5.18 seconds. Final coding/unit run:
+2,294 passed without skips in 66.15 seconds (thirteen existing SDK/fork warnings),
+including nine harness environment/artifact/owned-process cleanup checks. Targeted
+lint/security, CI YAML and whitespace checks passed. Backend CI has a read-only,
+no-persisted-checkout-credential server-proof step and narrowly scoped seven-day
+synthetic artifact retention; it has not been dispatched remotely. No production
+migration, publisher/admission activation, model/Google call, VM restart or paid
+allocation occurred. See `docs/LOCAL_TEMPORAL_SERVER_PROOF.md`. Production rollout,
+real writes, abrupt crashes/HA/load, cross-version replay, coding workflows and all
+other unchecked original/60–68 requirements remain open. The goal stays active.
+
+Progress 2026-10-26, verified-prefix continuation: schema 033 and the actual
+authenticated Resume/PostgreSQL executor now recover an exact ordered write
+prefix without repeating its provider call. Fresh private receipts, deterministic
+readback, a rechecked source/plan/dependency snapshot and current approval issue
+an expiring single-use lease-bound grant. The real Sheet and Chat helpers consume
+that grant, reuse the prior result, enforce resource lineage and invoke only the
+never-attempted suffix. Unknown/attempted suffixes and Temporal write generations
+stay blocked. Prefix artifacts are retained only after readback; ordinary failed
+step results no longer become falsely verified/safe-to-delete artifacts. Grant,
+queue and reconciliation event changes commit atomically. Twenty-seven focused
+prefix/artifact cases are included in the final 2,321 coding/unit tests passed
+without skips (94.87 seconds; thirteen existing SDK/fork warnings). All 44 golden
+plans, 16 no-network replay fixtures, disposable upgrade-to-033/downgrade-to-002/
+upgrade-to-033 plus retention, targeted lint/security/whitespace passed. Five
+actual local Temporal server cases passed in 6.53 seconds and all five histories
+replayed offline in a fresh process; these remain read/info/restart proofs, not
+write-generation evidence. No production/cloud restart, provider/model call or
+new spending occurred. See `docs/VERIFIED_PREFIX_CONTINUATION.md`. Temporal write
+generations, uncertain/attempted suffix reconciliation, compensation, coding
+workflows, production/load/restore proof and all other original/60–68 requirements
+remain open. The original goal stays active, not complete or paused.
+
+Progress 2026-10-27, Temporal write-prefix generations: schema 034 connects the
+existing authenticated Resume, positive prior activity quiescence, readback-proven
+prefix grants and a separate immutable generation/token/actor/source permit to
+the real activity/step executor. Schema 032's complete read-only SQL guard is
+retained, and disjoint constraints/triggers prevent read/write permit substitution.
+Unused/expired grants renew only through fresh bounded authorization; same-number
+old permit deliveries cannot poison the replacement journal. Actual Sheet and
+Chat activity paths reuse the original resource/result, invoke only the
+never-attempted suffix and verify exact dependency content. Durable write response
+loss and later projection/logging errors raise reconciliation failures instead of
+model-facing retry invitations; unresolved write receipt markers independently
+block false success. Final coding/unit regression: 2,345 passed without skips in
+104.39 seconds (thirteen existing SDK/fork warnings), including 22 new
+Temporal-prefix and two new durable-write error cases. Seven real local server
+scenarios passed in 8.66 seconds and seven histories replayed in a fresh offline
+process, now including unused-permit renewal and an unknown synthetic send that
+is never repeated. A stale-query observation race in the proof helper was fixed;
+the passing dev server also emitted transient queue-reader shard-status errors,
+retained as a production-readiness caveat. Full disposable schema-034 upgrade/
+downgrade/upgrade plus retention, all 44 golden plans, 16 no-network workflow
+replay fixtures and targeted lint/security/whitespace passed.
+No production migration, model/Google call, VM restart or new cloud spending
+occurred. See `docs/TEMPORAL_WRITE_PREFIX_GENERATIONS.md`. Unknown-write lookup,
+general write retries, compensation, coding workflows, real provider/crash/HA/
+load/restore/rollout evidence and all other original/60–68 scope remain open.
+The original goal stays active, not complete or narrowed to this checkpoint.
+
+Progress 2026-10-28, coding-worker prerequisites: the existing PostgreSQL coding
+phases now check live tenant/lease/version/input/approval authority at repository,
+process and publication boundaries and before atomic SQL outcomes. Async owned
+POSIX process groups replace uncancellable threaded subprocess calls; bounded
+streams, clean HOME/cwd, fixed command/key pairing, repeated/spawn-time
+cancellation cleanup and confined evidence reads are covered. Hosted path aliases
+cannot bypass the infrastructure/governed-manifest restrictions. Observation
+caches now use savepoints inside the protected business transaction, with actual
+tenant-erasure/race proof. Final coding/unit run: 2,389 passed without skips in
+110.91 seconds, including 44 new cases; thirteen existing SDK/fork warnings remain.
+Targeted lint, medium-confidence security and whitespace checks passed; existing
+archive-annotation scanner warnings remain documented. The actual native CLI's
+non-Git doctor invocation passed through the new wrapper and explicitly did NOT
+claim verified isolation. No real model/GitHub call, production change or paid
+cloud activation occurred. See `docs/CODING_EXECUTION_FENCES.md`. Coding Temporal
+phase journals/adapters, durable publication reconciliation, trusted CI identity,
+planner checkpoints, live sandbox/generated-app/deployment proof and the entire
+remaining original/60–68 scope stay open. The goal remains active, not complete.
+
+### 28 October — source-bound hosted coding publication receipts
+
+Migration 035 now freezes private validated publication files before dispatch,
+retains late acknowledgements without overriding cancellation, and reuses frozen
+evidence after an expired lease rather than rerunning the planner/CLI/publication.
+GET-only recovery compares the complete base/head Git tree delta and exact open
+draft PR identity; uncertain remote effects enter `reconciling` and cannot silently
+repeat writes. A failed dispatch transaction that demonstrably leaves `prepared`
+may use the existing bounded retry. An authenticated owner-scoped reconciliation
+API accepts only an already-dispatched source under the same unexpired approval;
+it does not renew approval, revive cancelled runs or transfer Temporal ownership.
+Private expiry/erasure, raw reporting denial and safe lifecycle events are included.
+
+Evidence: 2,428 coding/unit tests passed without skips in 118.59s at the broader
+checkpoint; the final pre-dispatch retry correction then passed all 40 focused
+publication cases in 3.51s (overlapping tests, not additive unique coverage).
+Schema 035 passed upgrade/downgrade-002/upgrade and full-schema empty retention.
+Targeted lint, medium-severity/medium-confidence security and whitespace checks
+passed; existing SDK/fork and archive annotation warnings are retained. All
+provider/process effects in these publication tests are synthetic; no real GitHub
+publication, production migration, VM restart, model spend or deployment occurred.
+See `docs/CODING_PUBLICATION_RECOVERY.md`, the architecture reconciliation and the
+expanded teaching dictionary. Real publication/crash proof, a frontend recovery
+action, coding Temporal phase journals, trusted CI attestation, funded activation,
+application/Chat proof and all remaining original/Sprints 60–68 requirements remain
+open. This is a concrete implementation checkpoint, not goal completion.
+
+### 28 October — reviewed CI identity, exact attempts and separated reporting
+
+Schema 036 adds immutable, human-reviewed, expiring CI policies and immediate
+append-only revocation. Hosted coding and governed candidate callbacks now verify
+actual GitHub workflow/run/attempt, required successful jobs/steps, current PR and
+frozen-file hashes. Candidate completion rechecks source/proposal/file identity;
+SQL advisory fencing prevents an in-flight success from committing under a policy
+that was replaced or revoked. CI obtains a separate explicitly read-only GitHub
+App token and never falls back to a write-capable PAT. Test jobs no longer carry
+callback secrets; a trusted-default-branch reporter handles only bounded inert
+data and does not execute candidate content or download its artifacts. The
+obsolete hard-coded migration-head check is replaced by disposable migration proof.
+An owner-scoped API permits CI read-back only after trust configuration is repaired,
+without reopening execution/publication or renewing approval.
+
+Final coding/unit worktree verification: 2,487 passed without skips in 85.34s,
+with thirteen existing SDK/fork warnings. The 115 focused cases passed previously
+and overlap this broader suite. Schema 036 passed upgrade/downgrade-002/upgrade
+and empty full-schema retention. Targeted lint, medium-severity/medium-confidence
+security and whitespace checks passed; existing archive annotation warnings remain.
+GitHub/token/reporter effects are synthetic in these tests. No production trust
+policy, CI dispatch, migration, account modification, VM restart, paid deployment
+or model spending was performed. See `docs/CODING_CI_TRUST.md` for exact API and
+proof boundaries. Live CI and supply-chain proof, frontend trust/recovery controls,
+current-trust consumption at downstream deployment/promotion gates, coding Temporal
+integration, the full fresh-candidate canary lifecycle and the remaining original
+and Sprints 60–68 requirements remain open. The original goal remains active.
+
+### 28 October — real Docker Desktop private-context proof
+
+The exact local Docker Desktop socket is available without a reset or prune. The
+initial scratch-export audit exposed a harness defect: its credential-free config
+hid Buildx, selecting the legacy builder and rejecting `--builder`. A bounded Mac
+bundle-path configuration now exposes the installed plugin without copying saved
+credentials, contexts or proxy configuration. Actual scratch-only engine export
+passed all 30 private/10 public canaries; all 14 focused tests, targeted lint and
+medium-severity/medium-confidence security checks passed. No real production
+context, image pull, RUN step, migration, model request or cloud write occurred.
+This closes only the local synthetic engine boundary; it is not an AMD64 image,
+Railway upload/startup/load or production deployment proof. See
+`docs/DEPLOYMENT_CONTEXT_BOUNDARY.md`. The original goal remains active.
+
+### 28 October — actual PR CI failure, fail-fast gates and pipe ownership
+
+Account-scoped publication through ACHT17406 updated existing PR #139 to
+`126f1cd477b60b1c7ef39850027c8ce86c4dd66a`, preserving both older GitHub logins,
+public organization/repository ownership and main. No merge/deployment occurred.
+Main CI 40715706533 failed backend (18 failed, 2,507 passed, seven skipped);
+candidate validation 40715706489 falsely reported green despite 18 failed,
+2,462 passed and 52 skipped. Raw job logs prove Bash stopped its piped brace group
+at pytest, while successful `tee` masked that failure; later checks/images never
+ran. That result must not be used as release/CI acceptance evidence.
+
+Candidate backend/web/mobile now explicitly enable Bash `set -euo pipefail`.
+Fault-injection executes each gate's shell structure with inert replacements,
+proving every failing command stops later commands and remains failed through
+`tee`; a negative control reproduces the old false green. Candidate backend now
+enables main's API integration suite. Both workflows make unraisable subprocess
+exceptions fatal. The 18 custody failures were Linux fixtures incorrectly placed
+under shared `/tmp`: tests now use private home ancestry, while a new negative
+test proves writable ancestors remain rejected by the unchanged production guard.
+Short diagnostic case IDs avoid huge parameter strings truncating verbose logs.
+The builder Dockerfile now installs the same `pkg-config libssl-dev` prerequisites
+as the other Rust stages; its previous missing dependencies were identified from
+the actual native-TLS Cargo dependency, not a claim of a successful image build.
+
+Owned coding CLI execution now uses public asyncio subprocess transports with
+bounded protocol buffers and explicit joined pipe closure, including output
+flood, timeout, cancellation and spawn cancellation. This addresses the real Linux
+unclosed-transport warnings rather than suppressing them. Focused real-child
+tests passed; coding/unit worktree suite passed 2,528 tests in 111.02s, followed
+by the additional negative-control/recipe checks. A separate hermetic run applied
+schema 036 and passed all 45 API integration tests in an invocation-owned local
+database, then removed only that database; no saved provider/production settings
+were loaded. The full worktree suite includes the user's uncommitted Vertex tests
+and is not by itself proof of the exact release tree. Corrected native Linux CI,
+current image/memory/capacity evidence, production CI policy enrollment, release
+admission at downstream gates, funded activation and the full original scope
+remain open. See `docs/CODING_CI_TRUST.md`. The original goal remains active.
+
+### 29 October — exact-tree proof and newly visible release blockers
+
+The committed `7f794eb` tree, without the user's unrelated uncommitted changes,
+passed 2,565 backend tests with seven opt-in Temporal-server skips in 123.38s.
+Its first temporary checkout under shared `/tmp` was correctly rejected by the
+packaging custody bootstrap; moving that owned checkout beneath private home
+ancestry corrected the harness, not the production guard. The invocation-owned
+local database was removed afterward; existing databases/settings were untouched.
+Candidate Linux backend independently passed the same 2,565 cases, with no
+unraisable subprocess warnings. Rust/mobile jobs passed in both new workflows.
+The fail-fast gate then truthfully exposed dependency-audit and reviewed static
+SQL-fragment findings, while main's separate real Temporal proof exposed a fresh
+CLI download 404. Those workflows are failed, not production release evidence.
+
+Both SDK local-server entry points now use the actual upstream `v1.9.1` release
+tag, with a regression covering both. The four fixed-fragment Bandit findings
+have individually reasoned B608 annotations, without lowering security thresholds
+or permitting any input-based SQL. Next/ESLint 16.4.3 and Sharp 0.35.5 plus compatible
+transitive lockfile updates remove the reported frontend audit findings (zero
+reported vulnerabilities at verification time). No production dependency rollout
+is claimed. Updated CI evidence and teaching dictionary explain pipeline exit-code
+aggregation, transport closure and cache-hidden download errors. Subsequent native
+CI/images, production activation and the full original objective remain open.
+
+### 29 October — authentic current CI at code review/activation/promotion
+
+The real canary approval, activation and promotion approval endpoints now reverify
+current GitHub evidence, not just a stored trusted-identity string. One authentic
+validated build/checkpoint/attestation, matching frozen files/digest and retained
+coding source are required. GitHub reads precede SQL locks; shared-order policy/
+source locks, bounded waits and observation freshness prevent stale admission.
+Sanitized `current_ci_admission` evidence commits with the human effect. Failed,
+missing, forged, changed or contended evidence cannot approve, activate or merge.
+Rejections remain independent of current CI availability. Twenty-one focused
+real-PostgreSQL/actual-route tests passed with read-only synthetic GitHub and no
+real external writes. Non-code OKF/registry governance is unchanged.
+
+At published commit `5076686`, Linux main CI passed 2,566 backend tests and then
+the fresh seven-case Temporal server proof plus seven independent offline replays;
+candidate/main jobs correctly stopped at the now-visible Python dependency audit.
+Patched dependency pins and their compatible checkpoint/YARL/OTel constraints now
+resolve; the resolved 150-package requirements audit reports zero known
+vulnerabilities and local `pip check` passes. Existing optional local FastAPI/ASGI
+instrumentors were updated to the matching OTel version without adding them as
+new runtime requirements. No blanket vulnerability ignore or weaker audit gate
+was introduced. Whole-release regression/native CI, image/capacity proof, durable
+external deployment/merge dispatch, trusted deployment-controller credential
+separation, post-merge evidence and active-canary revocation remain open. The full
+original goal remains active; no production policy, merge, canary, hosting restart
+or paid allocation was performed.
+
+Final local proof for committed code `fe57211`: the exact isolated checkout with
+the patched dependency graph passed **2,587 tests**, seven intentionally separate
+Temporal-server skips, in 96.11s. Fourteen existing SDK/TestClient/fork deprecation
+warnings remain; no unraisable subprocess exception occurred. Schema 036 applied
+to an invocation-owned database, which was removed afterward. Targeted lint,
+security, whitespace and redacted commit secret scan passed. The read-only Railway
+refresh still reports an empty workspace with five services/project, 1-GB/container
+and 4-GB/image ceilings; no resource or credit was consumed. Native release CI and
+image/memory measurements remain required, not inferred from these local results.
+
+### 29 October — trusted controller source, inert candidate uploads
+
+Main native CI 40820194741 at `4a68a2f` passed all four jobs, including full
+backend/security/evaluation/Temporal/context checks and the production Rust build
+stage. Candidate run 40820194962 failed at retention inside its migration harness
+(`ModuleNotFoundError: app`), after its migrations and audit had passed. Switching
+that command to `python -m scripts.verify_cloud_migrations_local` preserves the
+repository import root; the actual module invocation locally passed the complete
+upgrade/downgrade-002/upgrade-036 and empty retention proof. It was not a schema
+or provider failure, and no failed candidate run is called green.
+
+The deployment workflow now separates a trusted main-SHA controller from inert
+candidate source, uses isolated Python, keeps dispatch inputs out of shell code,
+installs pinned vendor CLIs before credentials, and explicitly uploads only the
+candidate archive root. Source custody requires exact Git identity/origin, clean
+regular files, no untracked content/links and resource bounds. Vercel confirms the
+existing project before its write and uses the shared owned-process lifecycle;
+failures do not print credential-bearing argv or provider output. Eighty focused
+tests passed, including actual Git, poisoned-import isolation, inode checks,
+readback failure cases and real process cleanup. Actual `4a68a2f` source custody
+passed for 686 files/6,253,373 bytes without execution or upload. Targeted lint,
+security and whitespace checks passed.
+
+No deployment workflow, cloud write or new spending was started. This checkpoint
+does not close the server-bound single-use deployment/merge dispatch journal,
+manual-dispatch authorization binding, independent provider/attestation/provenance,
+active-canary revocation, funded rollout, image/capacity or full lifecycle proof.
+The original goal is active. See `docs/CANDIDATE_DEPLOYMENT_CONTROLLER.md`.
+
+### 29 October — atomic release intent and one-use controller claim (local)
+
+Exact parent `b24491a` passed both native main CI 40858373770 and candidate
+validation 40858373780, all four jobs, including the corrected migration harness.
+That green result is not assigned to later journal edits or a production release.
+
+Migration 037 and the real code-canary approval/dispatch/claim/attestation routes
+now implement a write-ahead intent bound to the human approval, immutable source,
+build, current CI policy, controller commit, target and surfaces. The SQL commit
+precedes the dispatch POST; lost ACK/cancellation preserves uncertainty and cannot
+automatically retry. The workflow must claim its exact independently observed
+main-branch run/attempt before provider credentials. Claims are single-use,
+time-bounded and saved in a private exclusive receipt; retained evidence excludes
+the nonce. Status/history, bounded read-only Actions reconciliation and explicit
+human cancellation of unclaimed intents are available through admin APIs. After
+claim, cancellation does not falsely assert remote rollback.
+
+The actual empty disposable migration round trip upgraded to 037, downgraded to
+002 and upgraded to 037, including full-schema retention integration. Focused
+real-PostgreSQL and inert-provider tests cover concurrency, source/approval/policy
+changes, lost responses, one-use claims, exact Actions identity, receipt privacy,
+reconciliation ambiguity and no false retry/cancellation. Source-bound CI for this
+new change, provider-independent attestation, post-claim revocation, merge and
+promotion journaling, real isolated deployment/canary lifecycle and the rest of the
+original Sprints 0–68 remain open. No cloud write, resource/credit consumption,
+merge, production migration or hosting extension was performed.
+
+The combined focused run passed **141 tests** in 19.27s with unraisable subprocess
+warnings treated as failures. Targeted Flake8, Bandit and whitespace checks passed.
+Full exact-tree regression and native CI for this journal are still pending.
+
+Subsequent exact-tree proof: committed code `ef71fb347db3ecf96030c0109feb233ee2ce0287`
+passed **2,659 tests**, seven separately gated Temporal-server skips and 14 existing
+deprecation warnings in 163.10s. Unraisable subprocess warnings were fatal and none
+occurred. The clean checkout used synthetic credentials and only invocation-owned
+local databases; cleanup completed. The actual attempted downgrade of a separate
+occupied schema-037 journal correctly failed while preserving schema version,
+intent and transition history. Redacted commit secret scan found no leaks.
+Native CI for the new source and all previously listed live-proof tasks remain open.
+
+### 29 October — independent candidate-provider evidence (local)
+
+Parent `50c76dc` passed both native CI 40861535320 and candidate validation
+40861535426, all four jobs. Independent server-side provider verification is now
+wired into candidate attestation and repeated before human traffic activation.
+It binds immutable environment/service and optional frontend project/team IDs to
+the approved intent; direct scoped provider reads verify exact target, creation
+time, image, running/active instances, bounded readiness logs, domain ownership,
+Vercel preview metadata and credential-free version health. Callback flags alone
+cannot grant deployment verification or traffic. SQL rechecks retained attested
+intent/source/policy/current human approval after fresh observation. The pinned
+Railway CLI's actual query was inspected to confirm its service/environment ID
+fields. This adds no model calls or provider writes.
+
+See `docs/CANDIDATE_PROVIDER_READBACK.md` for explicit server/GitHub configuration,
+timeouts/bounds and strict domain/privacy contracts. No existing account token is
+silently reused as a server credential, and user-owned `.env.example`/settings/
+main-architecture changes remain untouched. Live credential/config enrollment,
+real provider/application lifecycle proof, provenance/security/capacity tests,
+continuous active-canary revocation, merge/promotion journaling and the remainder
+of the original goal are still open; local synthetic-provider tests are not live
+deployment evidence.
+
+The combined provider/journal/CI focused suite passed **181 tests** (19.79s),
+including synthetic no-secret HTTP and actual SQL/route failures that cannot
+activate traffic. Exact service/environment ID CLI selection has a regression;
+wrong-environment status with the same mutable service name is rejected. Targeted
+lint/security/whitespace checks passed. Full exact-tree/native evidence for this
+newer readback source is still pending.
+
+Subsequent exact-tree regression at code `6b2517b` passed **2,699 tests**, seven
+separately gated Temporal-server skips and 14 existing deprecation warnings in
+141.93s, with no unraisable subprocess exception. Only synthetic credentials and
+invocation-owned loopback databases were used; cleanup and the redacted secret
+scan passed. Native CI/live proof remain pending. The Mac currently has about
+6 GiB available, so a large local multi-image build was not started; image-size/
+architecture/memory proof will use the existing native Linux CI path rather than
+delete user data or risk exhausting local storage. No capacity-fit claim is made.
+
+### 29 October — native image/cgroup capacity gate (implementation, proof pending)
+
+The existing secret-free Linux candidate job now builds all four actual Python/
+Rust role images with exact PR-source labels and measures native AMD64 image size.
+A uniquely owned internal-network/tmpfs-PostgreSQL fixture starts actual API,
+worker, candidate and idle builder under the observed memory/CPU/PID limits. It
+checks cgroup peaks/OOM/swap and writable bytes, runs authenticated durable
+capability completion with no model calls, and verifies owned cleanup before
+writing a small seven-day capacity artifact. Existing image build/test/audit gates
+remain fail-fast; no larger runner or cloud resource is selected. Mac disk
+pressure is not worked around by deleting private/user data.
+
+Local contract/process/fail-fast tests passed **86 cases** (6.22s), including the
+unacknowledged-create absence regression; this is mechanism evidence,
+not an actual native image or live Railway capacity result. The new workflow must
+run at its own exact head. Ollama/Alloy, model/tool workloads, real networking/
+credits/placement, provider accounting, security/load/restore and the rest of the
+original goal remain unverified. See `docs/RELEASE_CAPACITY_PROOF.md`.
+
+First exact native result at `1d31927`: main CI 40915805974 passed all four jobs.
+Candidate run 40915806058 passed 2,727 tests/seven separately gated skips, audits,
+migrations and four native image builds, then failed the new capacity harness.
+API/worker startup had occurred without observed OOM, but measurement/whole-proof
+completion was not reached. The assertion incorrectly compared serialized
+NUMERIC `"100.00"` to an integer; cleanup also failed to recognize Docker's exact
+`network <name> not found` response after deletion. A read-only actual Docker
+probe confirmed that response. Corrections normalize only finite 100% values,
+preserve nonempty verified-step/zero-call requirements, and recognize only exact
+resource absence—not daemon/socket failure or another resource. Builder idle
+readiness requires two actual pool connections. Fresh corrected native evidence
+is required; the failed run is not relabelled as a pass.
+
+The corrected capacity/process/fail-fast suite passed **106 tests**; targeted
+lint/security/whitespace checks passed. Owned deletion now pins immutable Docker
+IDs after label verification and verifies absence of that same ID. No production
+runtime behavior or resource limit was weakened; only the new harness boundary
+was corrected. A source-changing CI run, not an unchanged retry, must prove it.
+
+Second exact native result at `cad63a7`: main CI 40918113090 passed all four jobs.
+Candidate validation 40918113076 passed 2,747 tests/seven separate skips, completed
+the synthetic request and reached all five running fixture containers, but failed
+the combined cgroup guard; cleanup completed and no passed report was produced.
+A network-isolated, read-only local Linux probe independently returned page size
+4,096 and `memory.max=999997440` for the unchanged one-billion-byte Docker ceiling;
+its temporary container was verified absent. Kernel page accounting invalidates
+the verifier's exact byte-equality assumption. The correction accepts only the
+downward aligned limit, keeps zero swap/OOM/PID restrictions, and calculates the
+same 20% headroom from the true limit. Numeric failure diagnostics and isolated
+probe imports were added. Native values were not previously retained, so an
+additional genuine memory/headroom miss remains unexcluded until the next run.
+
+The updated capacity/process/fail-fast suite passed **116 tests**, with targeted
+lint/security/whitespace checks passing. Over-limit memory, extra swap, missing
+headroom, OOMs, wrong PID limits, invalid page size and incorrect rounding still
+fail. No real credential or provider write was used in this correction.
+
+### 30 October — native Python-role capacity experiment verified
+
+- [x] Exact `d937ba3` passed main CI 40998185737 and candidate validation
+  40998185739, all four jobs each. Candidate backend: 2,757 passed, seven
+  separately gated Temporal-server skips, one existing warning; actual images/
+  constrained runtime and owned cleanup then passed.
+- [x] Download and independently validate the exact inert JSON report; retain a
+  sanitized version-controlled copy in `docs/evidence/release-capacity-d937ba3.json`.
+  Full digest and exact measurements are in `docs/RELEASE_CAPACITY_PROOF.md`.
+
+Image sizes were 864,291,138 bytes for API/worker and 858,294,330 bytes for candidate/
+builder. Peak measured cgroup memory was API 137,342,976; worker 107,081,728;
+candidate 135,958,528; idle builder 54,542,336 bytes, with zero swap/OOMs and verified
+limits. Actual authenticated durable capability completion used no model calls.
+The proof is synthetic startup/request scope only. It does not close live Railway
+deployment/cost/placement, Ollama/Alloy, actual model/RAG/tool load, generated-app
+deployment, production backups/migrations, promotion journaling, security/load/
+restore, learning evidence or any other unfinished original requirement. No cloud
+service was started and no hosting or protected budget was changed.
+
+### 30 October — separate telemetry/embedding capacity fixture prepared
+
+- [x] Implement source-labelled, keyless, opt-in native sidecar experiment in
+  existing CI, without replacing any required PR job or candidate trust policy.
+- [x] Pin current Alloy v1.16.1 and verify actual metric-family filtering,
+  six private-label removals and authenticated remote-write through an isolated
+  synthetic sink. Add a separate CPU-only Ollama candidate with verified official
+  release and exact Nomic model blobs, preserving the current service and index.
+- [x] Add bounded artifact/archive/measurement/redaction/embedding regressions;
+  focused capacity/process/workflow suite: 143 passed, targeted lint/security pass.
+- [ ] Run this exact source natively, inspect actual image/cgroup/OOM/writable-layer
+  measurements and accept only genuine current-batch success plus owned cleanup.
+- [ ] Decide actual funded service placement and embedding-runtime compatibility
+  before any production switch; retain all original live rollout/evidence gates.
+
+The embedding probe uses all eight current 6,000-character inputs with truncation
+disabled and requires 768 finite nonzero dimensions. Neither the model family nor
+existing corpus is changed. No local large-image download, model call to a paid
+provider, cloud resource, production variable or protected budget was touched.

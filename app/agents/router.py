@@ -8,43 +8,50 @@ async def route_model_node(state):
     if contract.get("requested"):
         return {
             "model_to_use": (
-                "groq_reasoning"
+                "runtime_reasoning"
                 if contract.get("complexity") in {"medium", "high"}
-                else "groq_fast"
+                else "runtime_fast"
             )
         }
     text=state.get("message","").lower()
     return {
-        "model_to_use": "groq_reasoning"
+        "model_to_use": "runtime_reasoning"
         if any(term in text for term in DEEP_TERMS)
-        else "groq_fast"
+        else "runtime_fast"
     }
-def get_llm(model_choice, *, fallback=False, max_tokens=None):
+def get_llm(
+    model_choice, *, fallback=False, max_tokens=None, temperature=.3,
+    rate_limiter=None,
+):
     settings=get_settings()
-    if not settings.groq_api_key or "your_" in settings.groq_api_key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-    from langchain_groq import ChatGroq
-    model = settings.groq_fallback_model if fallback else (
-        settings.groq_reasoning_model
-        if model_choice == "groq_reasoning"
-        else settings.groq_fast_model
+    provider = settings.runtime_model_provider.strip().casefold()
+    if provider != "gemini":
+        raise RuntimeError(f"Unsupported runtime model provider: {provider or 'empty'}")
+    if not settings.runtime_api_key or "your_" in settings.runtime_api_key:
+        raise RuntimeError("RUNTIME_API_KEY is not configured")
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    model = settings.runtime_fallback_model if fallback else (
+        settings.runtime_reasoning_model
+        if model_choice in {"runtime_reasoning", "groq_reasoning"}
+        else settings.runtime_fast_model
     )
-    return ChatGroq(
+    return ChatGoogleGenerativeAI(
         model=model,
-        api_key=settings.groq_api_key,
-        temperature=.3,
-        timeout=45,
-        max_retries=1,
-        max_tokens=max_tokens or settings.groq_max_tokens,
+        api_key=settings.runtime_api_key,
+        temperature=temperature,
+        request_timeout=45,
+        retries=1,
+        max_tokens=max_tokens or settings.runtime_max_tokens,
+        rate_limiter=rate_limiter,
     )
 
 
 def get_model_name(model_choice, *, fallback=False):
     settings = get_settings()
     if fallback:
-        return settings.groq_fallback_model
+        return settings.runtime_fallback_model
     return (
-        settings.groq_reasoning_model
-        if model_choice == "groq_reasoning"
-        else settings.groq_fast_model
+        settings.runtime_reasoning_model
+        if model_choice in {"runtime_reasoning", "groq_reasoning"}
+        else settings.runtime_fast_model
     )

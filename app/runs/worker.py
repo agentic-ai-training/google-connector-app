@@ -20,7 +20,13 @@ from app.runs.incident import build_incident, completion_from_steps
 from app.runs.planner import calendar_create_arguments, resolve_timezone
 from app.runs.reconciliation import reconcile_failed_step
 from app.runs.request_analysis import analyze_request_statement
-from app.runs.repository import append_event
+from app.runs.repository import append_event, append_event_conn
+from app.runs.tool_admission import (
+    ExecutionAuthority, ToolAdmissionDenied, execution_authority, fenced_postgres_commit, fenced_step_commit,
+)
+from app.runs.workflow_ownership import (
+    WorkflowOwnershipError, postgres_claim_predicate, require_postgres_lease,
+)
 from app.runs.typed_execution import (
     contains_unresolved_placeholder,
     decide_typed_execution,
@@ -76,16 +82,19 @@ async def claim_run(pool, owner: str):
     while True:
         terminal_recovery = None
         async with pool.acquire() as conn, conn.transaction():
+            ownership = await postgres_claim_predicate(conn)
+            # Only a fixed schema-version predicate is interpolated; all values remain bound.
             row = await conn.fetchrow(
-                """SELECT * FROM agent_runs
-                   WHERE (status='queued' OR
+                "SELECT * FROM agent_runs "  # nosec B608
+                """WHERE (status='queued' OR
                          (status='running' AND lease_expires_at < now()))
+                     AND __WORKFLOW_OWNER__
                      AND (($2='candidate' AND executor_version=$1
                            AND cohort_assignment='candidate')
                           OR ($2='control' AND executor_version=$1))
                      AND deleted_at IS NULL
                    ORDER BY queued_at
-                   FOR UPDATE SKIP LOCKED LIMIT 1""",
+                   FOR UPDATE SKIP LOCKED LIMIT 1""".replace('__WORKFLOW_OWNER__', ownership),
                 executor_version, executor_role,
             )
             if not row:
@@ -497,7 +506,7 @@ async def _dependency_context(conn, step):
         if recent_senders:
             envelope = project_tool_result(
                 "list_recent_gmail_senders", recent_senders.get("result") or {},
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             value["output_data"] = {
                 "output": output.get("output", ""),
@@ -515,7 +524,7 @@ async def _dependency_context(conn, step):
         elif gmail_message:
             envelope = project_tool_result(
                 "get_gmail_message", gmail_message.get("result") or {},
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             original_projection = gmail_message.get("projection") or {}
             value["output_data"] = {
@@ -539,7 +548,7 @@ async def _dependency_context(conn, step):
         else:
             envelope = project_tool_result(
                 "dependency_output", output,
-                max_tokens=get_settings().groq_tool_result_max_tokens,
+                max_tokens=get_settings().runtime_tool_result_max_tokens,
             )
             value["output_data"] = envelope.compact_result
             value["projection"] = envelope.metadata()
@@ -1250,23 +1259,24 @@ async def _create_deterministic_calendar_event(pool, run, step):
     }
 
 
-async def _store_artifacts(conn, run, step, artifacts):
+async def _store_artifacts(conn, run, step, artifacts, *, verified=False):
     for index, artifact in enumerate(artifacts):
         external_id = artifact.get("external_id") or f"url-{index}"
         await conn.execute(
             """INSERT INTO agent_artifacts
                (run_id,step_id,user_id,artifact_type,external_id,url,metadata,
                 verification_status,verified_at,safe_to_delete)
-               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'verified',now(),$8)
+               VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$9,CASE WHEN $9='verified' THEN now() END,$8)
                ON CONFLICT(run_id,artifact_type,external_id) DO UPDATE SET
                  url=COALESCE(EXCLUDED.url,agent_artifacts.url),
                  metadata=agent_artifacts.metadata||EXCLUDED.metadata,
-                 safe_to_delete=agent_artifacts.safe_to_delete OR EXCLUDED.safe_to_delete,
-                 verification_status='verified',verified_at=now()""",
+                 safe_to_delete=CASE WHEN EXCLUDED.verification_status='verified'
+                   THEN agent_artifacts.safe_to_delete OR EXCLUDED.safe_to_delete ELSE FALSE END,
+                 verification_status=EXCLUDED.verification_status,verified_at=EXCLUDED.verified_at""",
             run["id"], step["id"], run["user_id"], step["service"] or "google_resource",
             external_id, artifact.get("url"),
             json.dumps({"source": "tool_result", **artifact.get("metadata", {})}),
-            bool(artifact.get("safe_to_delete")),
+            bool(verified and artifact.get("safe_to_delete")), 'verified' if verified else 'unverified',
         )
 
 
@@ -1298,7 +1308,7 @@ async def _reconcile_verified_failed_siblings(pool, run) -> int:
         decision = await reconcile_failed_step(run, step, artifacts)
         if decision.state != "already_completed":
             continue
-        async with pool.acquire() as conn:
+        async with fenced_postgres_commit(pool, run) as conn:
             result = await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',
                    error_category=NULL,error_message=NULL,
@@ -1306,23 +1316,25 @@ async def _reconcile_verified_failed_siblings(pool, run) -> int:
                    WHERE id=$1 AND run_id=$2 AND status='failed'""",
                 step["id"], run["id"],
             )
-        if result != "UPDATE 1":
-            continue
-        reconciled += 1
-        await append_event(
-            pool, run["id"], run["user_id"], "step_reconciled",
-            step_id=step["id"], phase="reconciliation",
-            message="Previously completed write passed deterministic readback",
-            payload={
-                "state": decision.state,
-                "reason_code": decision.reason_code,
-                "automatic_retry": False,
-            },
-        )
+            if result == "UPDATE 1":
+                await append_event_conn(
+                    conn, run["id"], run["user_id"], "step_reconciled",
+                    step_id=step["id"], phase="reconciliation",
+                    message="Previously completed write passed deterministic readback",
+                    payload={"state": decision.state, "reason_code": decision.reason_code,
+                             "automatic_retry": False},
+                )
+                reconciled += 1
     return reconciled
 
 
 async def _execute_step(app, pool, run, step, dependencies):
+    from app.runs.prefix_continuation import continuation_scope
+    async with continuation_scope(pool, run, step):
+        return await _execute_step_body(app, pool, run, step, dependencies)
+
+
+async def _execute_step_body(app, pool, run, step, dependencies):
     run_id = run["id"]
     user_id = run["user_id"]
     await append_event(pool, run_id, user_id, "step_started", step_id=step["id"],
@@ -1373,7 +1385,7 @@ async def _execute_step(app, pool, run, step, dependencies):
             )
         elapsed_ms = int((time.perf_counter() - step_started) * 1000)
         evidence = "Trusted product-information postconditions passed"
-        async with pool.acquire() as conn:
+        async with fenced_step_commit(pool, run, step, succeeded=True) as conn:
             await conn.execute(
                 """UPDATE agent_run_steps SET status='completed',output_data=$1::jsonb,
                    duration_ms=$2,completed_at=now(),error_category=NULL,error_message=NULL
@@ -1389,17 +1401,17 @@ async def _execute_step(app, pool, run, step, dependencies):
                 }),
                 elapsed_ms, step["id"],
             )
-        await append_event(
-            pool, run_id, user_id, "verification_succeeded", step_id=step["id"],
-            phase="verification", message=evidence,
-            payload={"source": "registered_capability_catalog", "model_calls": 0,
-                     "tool_calls": 0, "rag_mode": "none"},
-        )
-        await append_event(
-            pool, run_id, user_id, "step_completed", step_id=step["id"],
-            phase="execution", message=output,
-            payload={"artifact_count": 0, "model_calls": 0, "tool_calls": 0},
-        )
+            await append_event_conn(
+                conn, run_id, user_id, "verification_succeeded", step_id=step["id"],
+                phase="verification", message=evidence,
+                payload={"source": "registered_capability_catalog", "model_calls": 0,
+                         "tool_calls": 0, "rag_mode": "none"},
+            )
+            await append_event_conn(
+                conn, run_id, user_id, "step_completed", step_id=step["id"],
+                phase="execution", message=output,
+                payload={"artifact_count": 0, "model_calls": 0, "tool_calls": 0},
+            )
         return output
     if step.get("operation") in {"recent_senders", "sender_count", "message_count"}:
         await append_event(
@@ -1639,10 +1651,10 @@ async def _execute_step(app, pool, run, step, dependencies):
             int(
                 (input_data.get("content_contract") or {}).get(
                     "visible_output_budget",
-                    get_settings().groq_max_tokens,
+                    get_settings().runtime_max_tokens,
                 )
             ),
-            get_settings().groq_composition_max_tokens,
+            get_settings().runtime_composition_max_tokens,
         ),
         "risk_level": run["risk_level"],
         "allow_small_fallback": (
@@ -1744,6 +1756,8 @@ async def _execute_step(app, pool, run, step, dependencies):
     if not verified and error_category:
         evidence = result.get("error") or evidence
     if verified:
+        from app.runs.prefix_continuation import require_complete_prefix
+        require_complete_prefix()
         output = _verified_terminal_output(step, output, result)
     content_lineage = None
     if verified and step.get("operation") == "compose":
@@ -1760,7 +1774,7 @@ async def _execute_step(app, pool, run, step, dependencies):
                 contract_value.get("prospective_artifact")
             ),
         }
-    async with pool.acquire() as conn:
+    async with fenced_step_commit(pool, run, step, succeeded=verified) as conn:
         await conn.execute(
             """UPDATE agent_run_steps SET status=$1,output_data=$2::jsonb,
                duration_ms=$3,completed_at=now(),error_category=$4,error_message=$5
@@ -1775,13 +1789,16 @@ async def _execute_step(app, pool, run, step, dependencies):
             elapsed_ms, None if verified else (error_category or "verification"),
             None if verified else evidence, step["id"],
         )
-        await _store_artifacts(conn, run, step, artifacts)
-    await append_event(
-        pool, run_id, user_id,
-        "verification_succeeded" if verified else "verification_failed",
-        step_id=step["id"], phase="verification", message=evidence,
-        payload={"artifacts": len(artifacts)},
-    )
+        await _store_artifacts(conn, run, step, artifacts, verified=verified)
+        await append_event_conn(
+            conn, run_id, user_id,
+            "verification_succeeded" if verified else "verification_failed",
+            step_id=step["id"], phase="verification", message=evidence,
+            payload={"artifacts": len(artifacts)},
+        )
+        if verified:
+            await append_event_conn(conn, run_id, user_id, "step_completed", step_id=step["id"],
+                phase="execution", message=output, payload={"artifact_count": len(artifacts)})
     if not verified:
         raise ExecutionFailure(
             evidence,
@@ -1796,32 +1813,21 @@ async def _execute_step(app, pool, run, step, dependencies):
                 }
             ),
         )
-    await append_event(pool, run_id, user_id, "step_completed", step_id=step["id"],
-                       phase="execution", message=output,
-                       payload={"artifact_count": len(artifacts)})
     return output
 
 
 async def execute_run(app, pool, run):
+    await require_postgres_lease(pool, 'workspace', run)
+    authority_token = execution_authority.set(ExecutionAuthority(
+        'postgres', run['id'], run['user_id'], run['executor_version'], run['lease_owner']))
     run_id = run["id"]
     user_id = run["user_id"]
     heartbeat = asyncio.create_task(_heartbeat(pool, run_id, run["lease_owner"]))
     credential_token = None
     started = time.perf_counter()
     try:
-        plan_steps = (run.get("plan") or {}).get("steps", [])
-        informational_only = bool(plan_steps) and all(
-            step.get("operation") in {"answer_information", "answer_workspace_chat"}
-            for step in plan_steps
-        )
-        if not informational_only:
-            credentials = await load_google_credentials(pool, user_id)
-            if credentials is None and not get_settings().allow_dev_auth:
-                raise RuntimeError("Google credentials are not connected")
-            credential_token = request_google_credentials.set(credentials)
-        final_outputs = []
         while True:
-            async with pool.acquire() as conn:
+            async with fenced_postgres_commit(pool, run) as conn:
                 current_status = await conn.fetchval(
                     "SELECT status FROM agent_runs WHERE id=$1", run_id
                 )
@@ -1847,13 +1853,18 @@ async def execute_run(app, pool, run):
                     "UPDATE agent_runs SET current_step_id=$1,heartbeat_at=now() WHERE id=$2",
                     ready[0][0]["id"], run_id,
                 )
+            if credential_token is None and any(
+                step.get("operation") not in {"answer_information", "answer_workspace_chat"}
+                for step, _ in ready
+            ):
+                credentials = await load_google_credentials(pool, user_id)
+                if credentials is None and not get_settings().allow_dev_auth:
+                    raise RuntimeError("Google credentials are not connected")
+                credential_token = request_google_credentials.set(credentials)
             batch_results = await asyncio.gather(*(
                 _execute_step(app, pool, run, step, dependencies)
                 for step, dependencies in ready
             ), return_exceptions=True)
-            final_outputs.extend(
-                result for result in batch_results if isinstance(result, str)
-            )
             failure = next(
                 (result for result in batch_results if isinstance(result, BaseException)), None
             )
@@ -1861,11 +1872,16 @@ async def execute_run(app, pool, run):
                 raise failure
 
         await _reconcile_verified_failed_siblings(pool, run)
-        final_output = "\n\n".join(output for output in final_outputs if output)
-        async with pool.acquire() as conn:
+        async with fenced_postgres_commit(pool, run) as conn:
             steps = [dict(row) for row in await conn.fetch(
                 "SELECT * FROM agent_run_steps WHERE run_id=$1 ORDER BY sequence_no", run_id
             )]
+            # Include earlier committed receipts after a restart/resume. Never
+            # rerun tools simply because the final summary transaction failed.
+            final_output = "\n\n".join(
+                str((step.get("output_data") or {}).get("output") or "")
+                for step in steps if step["status"] == "completed"
+            ).strip()
             completion = completion_from_steps(steps)
             usage = await conn.fetchrow(
                 """SELECT coalesce(array_agg(DISTINCT model) FILTER(WHERE model IS NOT NULL),'{}') AS models,
@@ -1918,30 +1934,68 @@ async def execute_run(app, pool, run):
                     completion["side_effect_integrity"], usage["models"],
                     usage["input_tokens"], usage["output_tokens"], run_id,
                 )
+            await append_event_conn(conn, run_id, user_id, 'run_partial' if partial else 'run_completed',
+                phase='partial' if partial else 'completed', message=partial[1] if partial else final_output,
+                payload={'category': partial[0]} if partial else {'task_complete': True})
         if partial:
-            await append_event(
-                pool, run_id, user_id, "run_partial", phase="partial",
-                message=partial[1], payload={"category": partial[0]},
-            )
             await record_run_evaluation(pool, run_id)
             run_transitions.labels("partial").inc()
             run_duration.labels("partial").observe(time.perf_counter() - started)
             return
-        await append_event(pool, run_id, user_id, "run_completed", phase="completed",
-                           message=final_output, payload={"task_complete": True})
         await record_run_evaluation(pool, run_id)
         run_transitions.labels("completed").inc()
         run_duration.labels("completed").observe(time.perf_counter() - started)
     except Exception as exc:
         category = classify_error(exc)
+        if category in {'cancelled', 'execution_fenced'}:
+            # A stale execution must not finalize another owner's run. A user's
+            # cancellation remains cancellation, never a synthetic tool failure.
+            if category == 'cancelled':
+                async with pool.acquire() as conn, conn.transaction():
+                    current = await conn.fetchrow('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE', run_id)
+                    if (current and current['deleted_at'] is None and current['status'] == 'cancelled'
+                            and current['lease_owner'] == run['lease_owner']):
+                        uncertain = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM agent_run_steps WHERE run_id=$1 "
+                            "AND status='running' AND NOT read_only)", run_id)
+                        await conn.execute("UPDATE agent_run_steps SET status='cancelled',error_category='cancelled',"
+                            "error_message='User cancellation stopped further tool admission',completed_at=now() "
+                            "WHERE run_id=$1 AND status='running'", run_id)
+                        await conn.execute('''UPDATE agent_runs SET lease_owner=NULL,lease_expires_at=NULL,
+                          side_effect_integrity=CASE WHEN $2 THEN 0 ELSE side_effect_integrity END
+                          WHERE id=$1''', run_id, uncertain)
+                        await conn.execute('''INSERT INTO agent_run_events(run_id,user_id,event_type,phase,message,payload)
+                          VALUES($1,$2,'execution_cancelled','cancelled','Further tool admission stopped',$3::jsonb)''',
+                          run_id, user_id, json.dumps({'uncertain_write': bool(uncertain)}))
+            return
         retrying = False
-        async with pool.acquire() as conn, conn.transaction():
+        async with fenced_postgres_commit(pool, run) as conn:
+            all_completed = await conn.fetchval(
+                "SELECT count(*)>0 AND bool_and(status='completed') "
+                "FROM agent_run_steps WHERE run_id=$1", run_id,
+            )
+            completion_retries = await conn.fetchval(
+                "SELECT coalesce((result->>'completion_retries')::integer,0) "
+                "FROM agent_runs WHERE id=$1", run_id,
+            )
+            if all_completed and completion_retries < 3:
+                await conn.execute(
+                    """UPDATE agent_runs SET status='queued',current_phase='completion_retry',
+                       result=jsonb_set(result,'{completion_retries}',to_jsonb($1::integer)),
+                       error_category='completion_persistence',
+                       error_message='Completion metadata persistence will be retried; tools will not be repeated',
+                       lease_owner=NULL,lease_expires_at=NULL,current_step_id=NULL WHERE id=$2""",
+                    completion_retries + 1, run_id,
+                )
+                await append_event_conn(conn, run_id, user_id, 'completion_retry_scheduled', phase='recovery',
+                    message='Retrying completion metadata only',
+                    payload={'attempt': completion_retries + 1, 'max_retries': 3, 'provider_reexecution': False})
+                retrying = True
             running_steps = await conn.fetch(
                 "SELECT * FROM agent_run_steps WHERE run_id=$1 AND status='running'",
                 run_id,
             )
             if (
-                running_steps and all(step["read_only"] for step in running_steps)
+                not retrying and running_steps and all(step["read_only"] for step in running_steps)
                 and category in {"network", "rate_limit", "worker"}
                 and all(step["attempt_count"] < step["max_attempts"] for step in running_steps)
             ):
@@ -1957,14 +2011,12 @@ async def execute_run(app, pool, run):
                     category, str(exc), run_id,
                 )
                 retrying = True
+                await append_event_conn(conn, run_id, user_id, 'retry_scheduled', phase='recovery',
+                    message=str(exc), payload={'category': category})
         if retrying:
-            await append_event(
-                pool, run_id, user_id, "retry_scheduled", phase="recovery",
-                message=str(exc), payload={"category": category},
-            )
             run_transitions.labels("queued").inc()
             return
-        async with pool.acquire() as conn:
+        async with fenced_postgres_commit(pool, run) as conn:
             await conn.execute(
                 """UPDATE agent_run_steps SET status='failed',error_category=$1,
                    error_message=$2,completed_at=now()
@@ -1999,10 +2051,8 @@ async def execute_run(app, pool, run):
                 completion["side_effect_integrity"], category, str(exc),
                 usage["models"], usage["input_tokens"], usage["output_tokens"], run_id,
             )
-        await append_event(
-            pool, run_id, user_id, f"run_{terminal_status}", phase=terminal_status,
-            message=str(exc), payload={"category": category},
-        )
+            await append_event_conn(conn, run_id, user_id, f'run_{terminal_status}', phase=terminal_status,
+                message=str(exc), payload={'category': category})
         failed_step = next((step for step in steps if step["status"] == "failed"), None)
         try:
             failure_record = await record_failure_incident(
@@ -2039,6 +2089,7 @@ async def execute_run(app, pool, run):
         run_failures.labels(category).inc()
         run_duration.labels(terminal_status).observe(time.perf_counter() - started)
     finally:
+        execution_authority.reset(authority_token)
         if credential_token is not None:
             request_google_credentials.reset(credential_token)
         heartbeat.cancel()
@@ -2053,7 +2104,12 @@ async def worker_loop(app, pool, stop_event: asyncio.Event):
         if run:
             if run.get("_terminal_recovery"):
                 continue
-            await execute_run(app, pool, run)
+            try:
+                await execute_run(app, pool, run)
+            except (WorkflowOwnershipError, ToolAdmissionDenied):
+                # Do not load credentials or finalize a run now owned elsewhere.
+                # Retain authoritative state for its actual owner/reconciliation.
+                logger.warning('Workspace worker execution ownership fence rejected a stale claim')
             continue
         try:
             await asyncio.wait_for(

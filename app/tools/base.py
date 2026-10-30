@@ -80,7 +80,7 @@ class GoogleWorkspaceTool(GoogleWorkspaceBaseTool):
                 tool_session_id.get(), self.name, kwargs,
                 project_tool_result(
                     self.name, result,
-                    max_tokens=get_settings().groq_tool_result_max_tokens,
+                    max_tokens=get_settings().runtime_tool_result_max_tokens,
                 ).compact_result,
                 "success", total_latency_ms=int(elapsed * 1000),
             )
